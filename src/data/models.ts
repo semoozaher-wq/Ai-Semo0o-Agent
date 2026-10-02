@@ -14,6 +14,7 @@ export const PROVIDERS: Record<ProviderId, ModelProvider> = {
     supportsVision: true,
     supportsEmbeddings: true,
     accent: '#10A37F',
+    baseUrl: 'https://api.openai.com/v1',
   },
   anthropic: {
     id: 'anthropic',
@@ -28,6 +29,7 @@ export const PROVIDERS: Record<ProviderId, ModelProvider> = {
     supportsVision: true,
     supportsEmbeddings: false,
     accent: '#D97757',
+    baseUrl: 'https://api.anthropic.com/v1',
   },
   google: {
     id: 'google',
@@ -42,6 +44,7 @@ export const PROVIDERS: Record<ProviderId, ModelProvider> = {
     supportsVision: true,
     supportsEmbeddings: true,
     accent: '#4285F4',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
   },
   mistral: {
     id: 'mistral',
@@ -56,6 +59,7 @@ export const PROVIDERS: Record<ProviderId, ModelProvider> = {
     supportsVision: false,
     supportsEmbeddings: true,
     accent: '#FF7000',
+    baseUrl: 'https://api.mistral.ai/v1',
   },
   meta: {
     id: 'meta',
@@ -85,6 +89,11 @@ export const PROVIDERS: Record<ProviderId, ModelProvider> = {
   },
 };
 
+/**
+ * Friendly catalog shown in the UI. `apiModel` is the exact slug sent over the
+ * wire — change it to whatever your account/endpoint exposes (e.g. point it at
+ * an Azure deployment name or an OpenRouter slug).
+ */
 export const MODELS: ModelSpec[] = [
   {
     id: 'gpt-5',
@@ -99,6 +108,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
+    apiModel: 'gpt-4o',
   },
   {
     id: 'gpt-5-mini',
@@ -112,6 +122,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 2,
     speed: 5,
     quality: 4,
+    apiModel: 'gpt-4o-mini',
   },
   {
     id: 'claude-4.5-sonnet',
@@ -126,6 +137,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
+    apiModel: 'claude-3-5-sonnet-latest',
   },
   {
     id: 'claude-4.5-haiku',
@@ -139,6 +151,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 4,
     speed: 5,
     quality: 4,
+    apiModel: 'claude-3-5-haiku-latest',
   },
   {
     id: 'gemini-3-pro',
@@ -153,6 +166,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
+    apiModel: 'gemini-2.5-pro',
   },
   {
     id: 'gemini-3-flash',
@@ -166,6 +180,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 0.4,
     speed: 5,
     quality: 4,
+    apiModel: 'gemini-2.5-flash',
   },
   {
     id: 'mistral-large',
@@ -179,6 +194,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 6,
     speed: 4,
     quality: 4,
+    apiModel: 'mistral-large-latest',
   },
   {
     id: 'llama-4-70b',
