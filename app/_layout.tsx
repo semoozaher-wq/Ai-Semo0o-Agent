@@ -41,6 +41,7 @@ function RootNavigator() {
       >
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="agent/[id]" />
+        <Stack.Screen name="workspace" />
         <Stack.Screen name="anatomy" />
         <Stack.Screen name="analytics" />
         <Stack.Screen name="settings" />
