@@ -1,9 +1,0 @@
-export { Dashboard } from './Dashboard';
-export { Store } from './Store';
-export { AgentDetail } from './AgentDetail';
-export { Chat } from './Chat';
-export { Agents } from './Agents';
-export { Files } from './Files';
-export { Analytics } from './Analytics';
-export { Settings } from './Settings';
-export { Anatomy } from './Anatomy';
