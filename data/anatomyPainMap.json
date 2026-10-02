@@ -1,1 +1,6147 @@
-
+{
+  "generatedFrom": "react-native-body-parts-anatomy@1.2.0",
+  "fragmentCount": 317,
+  "reviewNote": "Generated technical map. Medical causes, warnings, and recommendations require professional review before release.",
+  "groups": {
+    "chest": {
+      "labelAr": "عضلات الصدر",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "obliques": {
+      "labelAr": "العضلات المائلة",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "abs": {
+      "labelAr": "عضلات البطن",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "biceps": {
+      "labelAr": "العضلة ذات الرأسين",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "triceps": {
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "neck": {
+      "labelAr": "الرقبة",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "trapezius": {
+      "labelAr": "العضلة شبه المنحرفة",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "deltoids": {
+      "labelAr": "عضلات الكتف",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "adductors": {
+      "labelAr": "العضلات المقربة",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "quadriceps": {
+      "labelAr": "العضلات الرباعية",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "knees": {
+      "labelAr": "الركبة",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "tibialis": {
+      "labelAr": "العضلة الظنبوبية",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "calves": {
+      "labelAr": "عضلات الساق الخلفية",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "forearm": {
+      "labelAr": "الساعد",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "hands": {
+      "labelAr": "اليد",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "ankles": {
+      "labelAr": "الكاحل",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "feet": {
+      "labelAr": "القدم",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "head": {
+      "labelAr": "الرأس",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "hair": {
+      "labelAr": "الشعر",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "upper-back": {
+      "labelAr": "أعلى الظهر",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "lower-back": {
+      "labelAr": "أسفل الظهر",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "gluteal": {
+      "labelAr": "عضلات الألوية",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    },
+    "hamstring": {
+      "labelAr": "العضلات الخلفية للفخذ",
+      "defaultWarning": null,
+      "defaultRecommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته."
+    }
+  },
+  "muscles": {
+    "chest-male-front-1": {
+      "id": "chest-male-front-1",
+      "labelAr": "عضلات الصدر",
+      "labelEn": "chest \"left\"",
+      "group": "chest",
+      "region": "torso_front",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "chest-male-front-2": {
+      "id": "chest-male-front-2",
+      "labelAr": "عضلات الصدر",
+      "labelEn": "chest \"right\"",
+      "group": "chest",
+      "region": "torso_front",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-1": {
+      "id": "obliques-male-front-1",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-2": {
+      "id": "obliques-male-front-2",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-3": {
+      "id": "obliques-male-front-3",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-4": {
+      "id": "obliques-male-front-4",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-5": {
+      "id": "obliques-male-front-5",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-6": {
+      "id": "obliques-male-front-6",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-7": {
+      "id": "obliques-male-front-7",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-8": {
+      "id": "obliques-male-front-8",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-9": {
+      "id": "obliques-male-front-9",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-10": {
+      "id": "obliques-male-front-10",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-11": {
+      "id": "obliques-male-front-11",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-12": {
+      "id": "obliques-male-front-12",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-13": {
+      "id": "obliques-male-front-13",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-14": {
+      "id": "obliques-male-front-14",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-15": {
+      "id": "obliques-male-front-15",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-male-front-16": {
+      "id": "obliques-male-front-16",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-1": {
+      "id": "abs-male-front-1",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-2": {
+      "id": "abs-male-front-2",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"middle\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-3": {
+      "id": "abs-male-front-3",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-4": {
+      "id": "abs-male-front-4",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"lower\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-5": {
+      "id": "abs-male-front-5",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-6": {
+      "id": "abs-male-front-6",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-7": {
+      "id": "abs-male-front-7",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"middle\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-male-front-8": {
+      "id": "abs-male-front-8",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"lower\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "biceps-male-front-1": {
+      "id": "biceps-male-front-1",
+      "labelAr": "العضلة ذات الرأسين",
+      "labelEn": "biceps \"left\"",
+      "group": "biceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "biceps-male-front-2": {
+      "id": "biceps-male-front-2",
+      "labelAr": "العضلة ذات الرأسين",
+      "labelEn": "biceps \"right\"",
+      "group": "biceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-front-1": {
+      "id": "triceps-male-front-1",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-front-2": {
+      "id": "triceps-male-front-2",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-front-1": {
+      "id": "neck-male-front-1",
+      "labelAr": "الرقبة",
+      "labelEn": "neck",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-front-2": {
+      "id": "neck-male-front-2",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\" \"upper\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-front-3": {
+      "id": "neck-male-front-3",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\" \"lower\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-front-4": {
+      "id": "neck-male-front-4",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\" \"upper\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-front-5": {
+      "id": "neck-male-front-5",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\" \"lower\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-male-front-1": {
+      "id": "trapezius-male-front-1",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"left\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-male-front-2": {
+      "id": "trapezius-male-front-2",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"right\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-male-front-1": {
+      "id": "deltoids-male-front-1",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"left\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-male-front-2": {
+      "id": "deltoids-male-front-2",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"right\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-1": {
+      "id": "adductors-male-front-1",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-2": {
+      "id": "adductors-male-front-2",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"middle\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-3": {
+      "id": "adductors-male-front-3",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-4": {
+      "id": "adductors-male-front-4",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-5": {
+      "id": "adductors-male-front-5",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"middle\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-front-6": {
+      "id": "adductors-male-front-6",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-1": {
+      "id": "quadriceps-male-front-1",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"upper\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-2": {
+      "id": "quadriceps-male-front-2",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"middle\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-3": {
+      "id": "quadriceps-male-front-3",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"lower\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-4": {
+      "id": "quadriceps-male-front-4",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"upper\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-5": {
+      "id": "quadriceps-male-front-5",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"middle\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-male-front-6": {
+      "id": "quadriceps-male-front-6",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"lower\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-male-front-1": {
+      "id": "knees-male-front-1",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"left\" \"upper\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-male-front-2": {
+      "id": "knees-male-front-2",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"left\" \"lower\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-male-front-3": {
+      "id": "knees-male-front-3",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"right\" \"upper\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-male-front-4": {
+      "id": "knees-male-front-4",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"right\" \"lower\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "tibialis-male-front-1": {
+      "id": "tibialis-male-front-1",
+      "labelAr": "العضلة الظنبوبية",
+      "labelEn": "tibialis \"left\"",
+      "group": "tibialis",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "tibialis-male-front-2": {
+      "id": "tibialis-male-front-2",
+      "labelAr": "العضلة الظنبوبية",
+      "labelEn": "tibialis \"right\"",
+      "group": "tibialis",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-front-1": {
+      "id": "calves-male-front-1",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"outer\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-front-2": {
+      "id": "calves-male-front-2",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"inner\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-front-3": {
+      "id": "calves-male-front-3",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"outer\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-front-4": {
+      "id": "calves-male-front-4",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"inner\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-1": {
+      "id": "forearm-male-front-1",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"outer\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-2": {
+      "id": "forearm-male-front-2",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"center\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-3": {
+      "id": "forearm-male-front-3",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"inner\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-4": {
+      "id": "forearm-male-front-4",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"outer\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-5": {
+      "id": "forearm-male-front-5",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"center\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-front-6": {
+      "id": "forearm-male-front-6",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"inner\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-1": {
+      "id": "hands-male-front-1",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-2": {
+      "id": "hands-male-front-2",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-3": {
+      "id": "hands-male-front-3",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-4": {
+      "id": "hands-male-front-4",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-5": {
+      "id": "hands-male-front-5",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-6": {
+      "id": "hands-male-front-6",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-7": {
+      "id": "hands-male-front-7",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-8": {
+      "id": "hands-male-front-8",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-9": {
+      "id": "hands-male-front-9",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-10": {
+      "id": "hands-male-front-10",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-11": {
+      "id": "hands-male-front-11",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-front-12": {
+      "id": "hands-male-front-12",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-front-1": {
+      "id": "ankles-male-front-1",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"left\" \"upper\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-front-2": {
+      "id": "ankles-male-front-2",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"left\" \"lower\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-front-3": {
+      "id": "ankles-male-front-3",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"right\" \"upper\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-front-4": {
+      "id": "ankles-male-front-4",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"right\" \"lower\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-front-1": {
+      "id": "feet-male-front-1",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\" \"outer\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-front-2": {
+      "id": "feet-male-front-2",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\" \"inner\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-front-3": {
+      "id": "feet-male-front-3",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\" \"outer\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-front-4": {
+      "id": "feet-male-front-4",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\" \"inner\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "head-male-front-1": {
+      "id": "head-male-front-1",
+      "labelAr": "الرأس",
+      "labelEn": "head",
+      "group": "head",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-male-front-1": {
+      "id": "hair-male-front-1",
+      "labelAr": "الشعر",
+      "labelEn": "hair",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-back-1": {
+      "id": "neck-male-back-1",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-male-back-2": {
+      "id": "neck-male-back-2",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-male-back-1": {
+      "id": "trapezius-male-back-1",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"left\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-male-back-2": {
+      "id": "trapezius-male-back-2",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"right\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-male-back-1": {
+      "id": "deltoids-male-back-1",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"left\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-male-back-2": {
+      "id": "deltoids-male-back-2",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"right\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-1": {
+      "id": "upper-back-male-back-1",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"left\" \"upper\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-2": {
+      "id": "upper-back-male-back-2",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"left\" \"lower\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-3": {
+      "id": "upper-back-male-back-3",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"left\" \"middle\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-4": {
+      "id": "upper-back-male-back-4",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"right\" \"upper\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-5": {
+      "id": "upper-back-male-back-5",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"right\" \"middle\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-male-back-6": {
+      "id": "upper-back-male-back-6",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"right\" \"lower\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-1": {
+      "id": "triceps-male-back-1",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"upper\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-2": {
+      "id": "triceps-male-back-2",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"lower\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-3": {
+      "id": "triceps-male-back-3",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"middle\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-4": {
+      "id": "triceps-male-back-4",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"upper\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-5": {
+      "id": "triceps-male-back-5",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"lower\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-male-back-6": {
+      "id": "triceps-male-back-6",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"middle\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-male-back-1": {
+      "id": "lower-back-male-back-1",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"left\" \"outer\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-male-back-2": {
+      "id": "lower-back-male-back-2",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"left\" \"inner\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-male-back-3": {
+      "id": "lower-back-male-back-3",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"right\" \"inner\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-male-back-4": {
+      "id": "lower-back-male-back-4",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"right\" \"outer\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-1": {
+      "id": "forearm-male-back-1",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-2": {
+      "id": "forearm-male-back-2",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-3": {
+      "id": "forearm-male-back-3",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-4": {
+      "id": "forearm-male-back-4",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-5": {
+      "id": "forearm-male-back-5",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-6": {
+      "id": "forearm-male-back-6",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-7": {
+      "id": "forearm-male-back-7",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-male-back-8": {
+      "id": "forearm-male-back-8",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-male-back-1": {
+      "id": "gluteal-male-back-1",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"left\" \"upper\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-male-back-2": {
+      "id": "gluteal-male-back-2",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"left\" \"lower\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-male-back-3": {
+      "id": "gluteal-male-back-3",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"right\" \"upper\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-male-back-4": {
+      "id": "gluteal-male-back-4",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"right\" \"lower\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-back-1": {
+      "id": "adductors-male-back-1",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-male-back-2": {
+      "id": "adductors-male-back-2",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-1": {
+      "id": "hamstring-male-back-1",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-2": {
+      "id": "hamstring-male-back-2",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"middle\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-3": {
+      "id": "hamstring-male-back-3",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-4": {
+      "id": "hamstring-male-back-4",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"lower\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-5": {
+      "id": "hamstring-male-back-5",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-6": {
+      "id": "hamstring-male-back-6",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"middle\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-7": {
+      "id": "hamstring-male-back-7",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"lower\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-male-back-8": {
+      "id": "hamstring-male-back-8",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-1": {
+      "id": "calves-male-back-1",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-2": {
+      "id": "calves-male-back-2",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"middle\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-3": {
+      "id": "calves-male-back-3",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-4": {
+      "id": "calves-male-back-4",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"lower\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-5": {
+      "id": "calves-male-back-5",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-6": {
+      "id": "calves-male-back-6",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-7": {
+      "id": "calves-male-back-7",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"middle\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-male-back-8": {
+      "id": "calves-male-back-8",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"lower\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-back-1": {
+      "id": "ankles-male-back-1",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"left\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-male-back-2": {
+      "id": "ankles-male-back-2",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"right\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-back-1": {
+      "id": "feet-male-back-1",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-male-back-2": {
+      "id": "feet-male-back-2",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-1": {
+      "id": "hands-male-back-1",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-2": {
+      "id": "hands-male-back-2",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-3": {
+      "id": "hands-male-back-3",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-4": {
+      "id": "hands-male-back-4",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-5": {
+      "id": "hands-male-back-5",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-6": {
+      "id": "hands-male-back-6",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-7": {
+      "id": "hands-male-back-7",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-8": {
+      "id": "hands-male-back-8",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-9": {
+      "id": "hands-male-back-9",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"outer\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-10": {
+      "id": "hands-male-back-10",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-11": {
+      "id": "hands-male-back-11",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"inner\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-male-back-12": {
+      "id": "hands-male-back-12",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"center\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "head-male-back-1": {
+      "id": "head-male-back-1",
+      "labelAr": "الرأس",
+      "labelEn": "head",
+      "group": "head",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-male-back-1": {
+      "id": "hair-male-back-1",
+      "labelAr": "الشعر",
+      "labelEn": "hair",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "male",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-front-1": {
+      "id": "neck-female-front-1",
+      "labelAr": "الرقبة",
+      "labelEn": "neck",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-front-2": {
+      "id": "neck-female-front-2",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\" \"outer\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-front-3": {
+      "id": "neck-female-front-3",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\" \"inner\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-front-4": {
+      "id": "neck-female-front-4",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\" \"inner\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-front-5": {
+      "id": "neck-female-front-5",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\" \"outer\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-female-front-1": {
+      "id": "trapezius-female-front-1",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"left\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-female-front-2": {
+      "id": "trapezius-female-front-2",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"right\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-female-front-1": {
+      "id": "hair-female-front-1",
+      "labelAr": "الشعر",
+      "labelEn": "hair \"lower\"",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-female-front-2": {
+      "id": "hair-female-front-2",
+      "labelAr": "الشعر",
+      "labelEn": "hair \"upper\"",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-front-1": {
+      "id": "deltoids-female-front-1",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"left\" \"outer\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-front-2": {
+      "id": "deltoids-female-front-2",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"left\" \"inner\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-front-3": {
+      "id": "deltoids-female-front-3",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"right\" \"outer\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-front-4": {
+      "id": "deltoids-female-front-4",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"right\" \"inner\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "head-female-front-1": {
+      "id": "head-female-front-1",
+      "labelAr": "الرأس",
+      "labelEn": "head",
+      "group": "head",
+      "region": "head_neck",
+      "side": "center",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "chest-female-front-1": {
+      "id": "chest-female-front-1",
+      "labelAr": "عضلات الصدر",
+      "labelEn": "chest \"left\"",
+      "group": "chest",
+      "region": "torso_front",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "chest-female-front-2": {
+      "id": "chest-female-front-2",
+      "labelAr": "عضلات الصدر",
+      "labelEn": "chest \"right\"",
+      "group": "chest",
+      "region": "torso_front",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "biceps-female-front-1": {
+      "id": "biceps-female-front-1",
+      "labelAr": "العضلة ذات الرأسين",
+      "labelEn": "biceps \"left\"",
+      "group": "biceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "biceps-female-front-2": {
+      "id": "biceps-female-front-2",
+      "labelAr": "العضلة ذات الرأسين",
+      "labelEn": "biceps \"right\"",
+      "group": "biceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-front-1": {
+      "id": "triceps-female-front-1",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-front-2": {
+      "id": "triceps-female-front-2",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-1": {
+      "id": "obliques-female-front-1",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-2": {
+      "id": "obliques-female-front-2",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-3": {
+      "id": "obliques-female-front-3",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-4": {
+      "id": "obliques-female-front-4",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-5": {
+      "id": "obliques-female-front-5",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-6": {
+      "id": "obliques-female-front-6",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"left\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-7": {
+      "id": "obliques-female-front-7",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-8": {
+      "id": "obliques-female-front-8",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-9": {
+      "id": "obliques-female-front-9",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-10": {
+      "id": "obliques-female-front-10",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"middle\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-11": {
+      "id": "obliques-female-front-11",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"lower\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "obliques-female-front-12": {
+      "id": "obliques-female-front-12",
+      "labelAr": "العضلات المائلة",
+      "labelEn": "obliques \"right\" \"upper\"",
+      "group": "obliques",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-1": {
+      "id": "abs-female-front-1",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-2": {
+      "id": "abs-female-front-2",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"lower\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-3": {
+      "id": "abs-female-front-3",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-4": {
+      "id": "abs-female-front-4",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"left\" \"middle\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-5": {
+      "id": "abs-female-front-5",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"middle\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-6": {
+      "id": "abs-female-front-6",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-7": {
+      "id": "abs-female-front-7",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"lower\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "abs-female-front-8": {
+      "id": "abs-female-front-8",
+      "labelAr": "عضلات البطن",
+      "labelEn": "abs \"right\" \"upper\"",
+      "group": "abs",
+      "region": "torso_front",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-1": {
+      "id": "forearm-female-front-1",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-2": {
+      "id": "forearm-female-front-2",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-3": {
+      "id": "forearm-female-front-3",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-4": {
+      "id": "forearm-female-front-4",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-5": {
+      "id": "forearm-female-front-5",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-6": {
+      "id": "forearm-female-front-6",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-7": {
+      "id": "forearm-female-front-7",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-front-8": {
+      "id": "forearm-female-front-8",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-1": {
+      "id": "hands-female-front-1",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-2": {
+      "id": "hands-female-front-2",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-3": {
+      "id": "hands-female-front-3",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-4": {
+      "id": "hands-female-front-4",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-5": {
+      "id": "hands-female-front-5",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-6": {
+      "id": "hands-female-front-6",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-7": {
+      "id": "hands-female-front-7",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-8": {
+      "id": "hands-female-front-8",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-9": {
+      "id": "hands-female-front-9",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-10": {
+      "id": "hands-female-front-10",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-11": {
+      "id": "hands-female-front-11",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-front-12": {
+      "id": "hands-female-front-12",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-1": {
+      "id": "adductors-female-front-1",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"middle\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-2": {
+      "id": "adductors-female-front-2",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-3": {
+      "id": "adductors-female-front-3",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-4": {
+      "id": "adductors-female-front-4",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-5": {
+      "id": "adductors-female-front-5",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-front-6": {
+      "id": "adductors-female-front-6",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"middle\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-1": {
+      "id": "quadriceps-female-front-1",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"upper\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-2": {
+      "id": "quadriceps-female-front-2",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"middle\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-3": {
+      "id": "quadriceps-female-front-3",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"left\" \"lower\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-4": {
+      "id": "quadriceps-female-front-4",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"upper\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-5": {
+      "id": "quadriceps-female-front-5",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"middle\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "quadriceps-female-front-6": {
+      "id": "quadriceps-female-front-6",
+      "labelAr": "العضلات الرباعية",
+      "labelEn": "quadriceps \"right\" \"lower\"",
+      "group": "quadriceps",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-1": {
+      "id": "knees-female-front-1",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"left\" \"center\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-2": {
+      "id": "knees-female-front-2",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"left\" \"outer\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-3": {
+      "id": "knees-female-front-3",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"left\" \"inner\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-4": {
+      "id": "knees-female-front-4",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"right\" \"center\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-5": {
+      "id": "knees-female-front-5",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"right\" \"inner\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "knees-female-front-6": {
+      "id": "knees-female-front-6",
+      "labelAr": "الركبة",
+      "labelEn": "knees \"right\" \"outer\"",
+      "group": "knees",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "tibialis-female-front-1": {
+      "id": "tibialis-female-front-1",
+      "labelAr": "العضلة الظنبوبية",
+      "labelEn": "tibialis \"left\"",
+      "group": "tibialis",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "tibialis-female-front-2": {
+      "id": "tibialis-female-front-2",
+      "labelAr": "العضلة الظنبوبية",
+      "labelEn": "tibialis \"right\"",
+      "group": "tibialis",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-front-1": {
+      "id": "calves-female-front-1",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"inner\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-front-2": {
+      "id": "calves-female-front-2",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"outer\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-front-3": {
+      "id": "calves-female-front-3",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"inner\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-front-4": {
+      "id": "calves-female-front-4",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"outer\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-female-front-1": {
+      "id": "ankles-female-front-1",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"left\" \"upper\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-female-front-2": {
+      "id": "ankles-female-front-2",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"left\" \"lower\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-female-front-3": {
+      "id": "ankles-female-front-3",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"right\" \"upper\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "ankles-female-front-4": {
+      "id": "ankles-female-front-4",
+      "labelAr": "الكاحل",
+      "labelEn": "ankles \"right\" \"lower\"",
+      "group": "ankles",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-front-1": {
+      "id": "feet-female-front-1",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\" \"outer\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-front-2": {
+      "id": "feet-female-front-2",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\" \"inner\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-front-3": {
+      "id": "feet-female-front-3",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\" \"outer\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-front-4": {
+      "id": "feet-female-front-4",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\" \"inner\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "front"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-female-back-1": {
+      "id": "hair-female-back-1",
+      "labelAr": "الشعر",
+      "labelEn": "hair \"lower\"",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hair-female-back-2": {
+      "id": "hair-female-back-2",
+      "labelAr": "الشعر",
+      "labelEn": "hair \"upper\"",
+      "group": "hair",
+      "region": "head_neck",
+      "side": "center",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-back-1": {
+      "id": "neck-female-back-1",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"left\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "neck-female-back-2": {
+      "id": "neck-female-back-2",
+      "labelAr": "الرقبة",
+      "labelEn": "neck \"right\"",
+      "group": "neck",
+      "region": "head_neck",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-female-back-1": {
+      "id": "trapezius-female-back-1",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"left\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "trapezius-female-back-2": {
+      "id": "trapezius-female-back-2",
+      "labelAr": "العضلة شبه المنحرفة",
+      "labelEn": "trapezius \"right\"",
+      "group": "trapezius",
+      "region": "back",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-back-1": {
+      "id": "deltoids-female-back-1",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"left\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "deltoids-female-back-2": {
+      "id": "deltoids-female-back-2",
+      "labelAr": "عضلات الكتف",
+      "labelEn": "deltoids \"right\"",
+      "group": "deltoids",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-female-back-1": {
+      "id": "upper-back-female-back-1",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"left\" \"upper\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-female-back-2": {
+      "id": "upper-back-female-back-2",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"left\" \"lower\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-female-back-3": {
+      "id": "upper-back-female-back-3",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"right\" \"upper\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "upper-back-female-back-4": {
+      "id": "upper-back-female-back-4",
+      "labelAr": "أعلى الظهر",
+      "labelEn": "upper-back \"right\" \"lower\"",
+      "group": "upper-back",
+      "region": "back",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-female-back-1": {
+      "id": "lower-back-female-back-1",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"left\" \"outer\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-female-back-2": {
+      "id": "lower-back-female-back-2",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"left\" \"inner\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-female-back-3": {
+      "id": "lower-back-female-back-3",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"right\" \"inner\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "lower-back-female-back-4": {
+      "id": "lower-back-female-back-4",
+      "labelAr": "أسفل الظهر",
+      "labelEn": "lower-back \"right\" \"outer\"",
+      "group": "lower-back",
+      "region": "back",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-1": {
+      "id": "triceps-female-back-1",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"outer\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-2": {
+      "id": "triceps-female-back-2",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"center\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "center",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-3": {
+      "id": "triceps-female-back-3",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"left\" \"inner\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-4": {
+      "id": "triceps-female-back-4",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"inner\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "inner",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-5": {
+      "id": "triceps-female-back-5",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"outer\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "outer",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "triceps-female-back-6": {
+      "id": "triceps-female-back-6",
+      "labelAr": "العضلة ثلاثية الرؤوس",
+      "labelEn": "triceps \"right\" \"center\"",
+      "group": "triceps",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "center",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-1": {
+      "id": "forearm-female-back-1",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-2": {
+      "id": "forearm-female-back-2",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-3": {
+      "id": "forearm-female-back-3",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-4": {
+      "id": "forearm-female-back-4",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"left\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-5": {
+      "id": "forearm-female-back-5",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-6": {
+      "id": "forearm-female-back-6",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"lower\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-7": {
+      "id": "forearm-female-back-7",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"upper\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "forearm-female-back-8": {
+      "id": "forearm-female-back-8",
+      "labelAr": "الساعد",
+      "labelEn": "forearm \"right\" \"middle\"",
+      "group": "forearm",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-1": {
+      "id": "hands-female-back-1",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-2": {
+      "id": "hands-female-back-2",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-3": {
+      "id": "hands-female-back-3",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-4": {
+      "id": "hands-female-back-4",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-5": {
+      "id": "hands-female-back-5",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-6": {
+      "id": "hands-female-back-6",
+      "labelAr": "اليد",
+      "labelEn": "hands \"left\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-7": {
+      "id": "hands-female-back-7",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-8": {
+      "id": "hands-female-back-8",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"upper\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-9": {
+      "id": "hands-female-back-9",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-10": {
+      "id": "hands-female-back-10",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"middle\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-11": {
+      "id": "hands-female-back-11",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hands-female-back-12": {
+      "id": "hands-female-back-12",
+      "labelAr": "اليد",
+      "labelEn": "hands \"right\" \"lower\"",
+      "group": "hands",
+      "region": "upper_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-female-back-1": {
+      "id": "gluteal-female-back-1",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"left\" \"upper\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-female-back-2": {
+      "id": "gluteal-female-back-2",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"left\" \"lower\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-female-back-3": {
+      "id": "gluteal-female-back-3",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"right\" \"lower\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "gluteal-female-back-4": {
+      "id": "gluteal-female-back-4",
+      "labelAr": "عضلات الألوية",
+      "labelEn": "gluteal \"right\" \"upper\"",
+      "group": "gluteal",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-back-1": {
+      "id": "adductors-female-back-1",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-back-2": {
+      "id": "adductors-female-back-2",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"left\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-back-3": {
+      "id": "adductors-female-back-3",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"upper\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "adductors-female-back-4": {
+      "id": "adductors-female-back-4",
+      "labelAr": "العضلات المقربة",
+      "labelEn": "adductors \"right\" \"lower\"",
+      "group": "adductors",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-1": {
+      "id": "hamstring-female-back-1",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-2": {
+      "id": "hamstring-female-back-2",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"lower\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-3": {
+      "id": "hamstring-female-back-3",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"left\" \"middle\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-4": {
+      "id": "hamstring-female-back-4",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"lower\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-5": {
+      "id": "hamstring-female-back-5",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"middle\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "hamstring-female-back-6": {
+      "id": "hamstring-female-back-6",
+      "labelAr": "العضلات الخلفية للفخذ",
+      "labelEn": "hamstring \"right\" \"upper\"",
+      "group": "hamstring",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-1": {
+      "id": "calves-female-back-1",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-2": {
+      "id": "calves-female-back-2",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"lower\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-3": {
+      "id": "calves-female-back-3",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-4": {
+      "id": "calves-female-back-4",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"left\" \"middle\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-5": {
+      "id": "calves-female-back-5",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-6": {
+      "id": "calves-female-back-6",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"middle\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "middle",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-7": {
+      "id": "calves-female-back-7",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"lower\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "lower",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "calves-female-back-8": {
+      "id": "calves-female-back-8",
+      "labelAr": "عضلات الساق الخلفية",
+      "labelEn": "calves \"right\" \"upper\"",
+      "group": "calves",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": "upper",
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-back-1": {
+      "id": "feet-female-back-1",
+      "labelAr": "القدم",
+      "labelEn": "feet \"left\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "left",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    },
+    "feet-female-back-2": {
+      "id": "feet-female-back-2",
+      "labelAr": "القدم",
+      "labelEn": "feet \"right\"",
+      "group": "feet",
+      "region": "lower_limb",
+      "side": "right",
+      "axis": null,
+      "gender": "female",
+      "views": [
+        "back"
+      ],
+      "commonCauses": [
+        "محتوى طبي يحتاج مراجعة مختص"
+      ],
+      "warning": null,
+      "recommendation": "راجع طبيبًا مختصًا عند استمرار الألم أو زيادته.",
+      "reviewStatus": "needs_medical_review"
+    }
+  }
+}
