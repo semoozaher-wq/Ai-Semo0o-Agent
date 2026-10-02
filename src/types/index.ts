@@ -5,4 +5,5 @@ export * from './chat';
 export * from './task';
 export * from './agent';
 export * from './file';
+export * from './workspace';
 export * from './anatomy';

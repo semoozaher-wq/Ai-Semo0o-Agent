@@ -12,6 +12,11 @@ export interface ToolParameter {
   required?: boolean;
   default?: unknown;
   enumValues?: string[];
+  /** For array parameters: the item type (defaults to string). */
+  items?: ToolParameterType;
+  /** Numeric bounds forwarded to the JSON schema. */
+  minimum?: number;
+  maximum?: number;
 }
 
 export type ToolCategory =
@@ -22,7 +27,9 @@ export type ToolCategory =
   | 'media'
   | 'system'
   | 'productivity'
-  | 'ai';
+  | 'ai'
+  | 'github'
+  | 'zip';
 
 export interface ToolDefinition {
   id: string;
@@ -35,6 +42,10 @@ export interface ToolDefinition {
   /** Whether the tool performs side effects (writes, network calls). */
   dangerous?: boolean;
   icon?: string;
+  /** Human-readable description of the tool's return value. */
+  returns?: string;
+  /** Emit a strict JSON schema (OpenAI structured outputs). */
+  strict?: boolean;
 }
 
 export interface ToolInvocation {
