@@ -192,6 +192,23 @@ export function Dashboard() {
           />
         </View>
 
+        {/* --------------------------- workspace ---------------------------- */}
+        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing['2xl'] }}>
+          <Card onPress={() => router.push('/workspace')} gradient="brand">
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1 }}>
+                <Text variant="subtitle" weight="bold" style={{ color: '#FFFFFF' }}>
+                  مساحة العمل · GitHub و ZIP
+                </Text>
+                <Text variant="caption" style={{ marginTop: 2, color: 'rgba(255,255,255,0.9)' }}>
+                  استورد مستودعًا أو ارفع أرشيفًا، عدّل الملفات، ثم صدّرها كـ ZIP.
+                </Text>
+              </View>
+              <Icon name="cube-outline" size={26} color="#FFFFFF" />
+            </View>
+          </Card>
+        </View>
+
         {/* -------------------------- quick actions ------------------------- */}
         <View style={{ marginTop: theme.spacing['2xl'] }}>
           <View style={{ paddingHorizontal: theme.spacing.lg }}>

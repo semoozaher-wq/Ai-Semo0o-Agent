@@ -4,6 +4,7 @@ export { AgentDetail } from './AgentDetail';
 export { Chat } from './Chat';
 export { Agents } from './Agents';
 export { Files } from './Files';
+export { Workspace } from './Workspace';
 export { Analytics } from './Analytics';
 export { Settings } from './Settings';
 export { Anatomy } from './Anatomy';
