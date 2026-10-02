@@ -4,4 +4,5 @@ export * from './useChatStore';
 export * from './useAgentsStore';
 export * from './useStoreStore';
 export * from './useFilesStore';
+export * from './useWorkspaceStore';
 export * from './useAnalyticsStore';
