@@ -4,6 +4,7 @@ import { useChatStore } from '../store/useChatStore';
 import { useAgentsStore } from '../store/useAgentsStore';
 import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
+import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 
 /**
@@ -25,6 +26,7 @@ export function useBootstrap(): { ready: boolean } {
         useAgentsStore.getState().hydrate(),
         useStoreStore.getState().hydrate(),
         useFilesStore.getState().hydrate(),
+        useWorkspaceStore.getState().hydrate(),
         useAnalyticsStore.getState().hydrate(),
       ]);
       if (!cancelled) setReady(true);
