@@ -1,7 +1,25 @@
-import { getTool } from '../../data/tools';
+/**
+ * Tool runtime — the bridge between the LLM "brain" and the real world.
+ *
+ * This module is the upgraded `tools.js`. It:
+ *
+ *   1. Compiles the {@link TOOLS} catalog into provider-ready JSON schemas
+ *      (OpenAI / Gemini / Anthropic) via the `tool-schema` compiler.
+ *   2. Validates every model-supplied argument object against the tool's strict
+ *      JSON schema *before* execution (the "قواعد JSON دقيقة" layer).
+ *   3. Exposes a registry so real implementations (GitHub, ZIP, workspace, …)
+ *      can be plugged in — mock implementations remain the safe default.
+ *   4. Provides a {@link ToolRunner} adapter that plugs straight into the
+ *      agentic `runToolLoop` / `streamToolLoop`.
+ */
+
+import { getTool, TOOLS } from '../../data/tools';
 import { ToolDefinition } from '../../types/tool';
+import { ToolSchema } from '../../types/model';
 import { sleep } from '../../utils/async';
 import { uid } from '../../utils/id';
+import { toOpenAITools, validateToolArguments } from '../ai/tool-schema';
+import type { ToolRunOutcome, ToolRunner } from '../ai/tool-loop';
 
 export interface ToolRunResult {
   toolId: string;
@@ -12,18 +30,26 @@ export interface ToolRunResult {
   error?: string;
 }
 
-type ToolImpl = (args: Record<string, unknown>) => Promise<{
+export interface ToolImplementationResult {
   output: unknown;
   logs?: string[];
-}>;
+}
+
+export type ToolImplementation = (
+  args: Record<string, unknown>,
+) => Promise<ToolImplementationResult>;
+
+/* -------------------------------------------------------------------------- */
+/*  Default (sandboxed) implementations                                        */
+/* -------------------------------------------------------------------------- */
 
 /**
- * Sandboxed tool implementations. In production these would call real
- * services (search API, sandboxed runtime, storage). Here they return
- * deterministic, realistic output so the autonomous engine is fully
- * demonstrable without external credentials.
+ * Sandboxed default implementations. They return deterministic, realistic
+ * output so the autonomous engine is fully demonstrable without external
+ * credentials. Real implementations (registered via {@link registerTool}) take
+ * precedence over these.
  */
-const IMPLEMENTATIONS: Record<string, ToolImpl> = {
+const DEFAULT_IMPLEMENTATIONS: Record<string, ToolImplementation> = {
   'web.search': async (args) => {
     const query = String(args.query ?? '');
     const limit = Number(args.limit ?? 5);
@@ -168,17 +194,78 @@ const IMPLEMENTATIONS: Record<string, ToolImpl> = {
   }),
 };
 
-export function isToolImplemented(toolId: string): boolean {
-  return toolId in IMPLEMENTATIONS;
+/* -------------------------------------------------------------------------- */
+/*  Registry                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Real implementations registered at runtime, keyed by tool id. */
+const REGISTERED_IMPLEMENTATIONS: Record<string, ToolImplementation> = {};
+
+/**
+ * Register (or override) a real implementation for a tool. Services such as
+ * GitHub / ZIP / workspace call this on import so the LLM can drive them.
+ */
+export function registerTool(toolId: string, impl: ToolImplementation): void {
+  REGISTERED_IMPLEMENTATIONS[toolId] = impl;
 }
 
+export function unregisterTool(toolId: string): void {
+  delete REGISTERED_IMPLEMENTATIONS[toolId];
+}
+
+function resolveImplementation(toolId: string): ToolImplementation | undefined {
+  return REGISTERED_IMPLEMENTATIONS[toolId] ?? DEFAULT_IMPLEMENTATIONS[toolId];
+}
+
+export function isToolImplemented(toolId: string): boolean {
+  return Boolean(resolveImplementation(toolId));
+}
+
+/** True when a *real* (non-sandboxed) implementation is registered. */
+export function isToolLive(toolId: string): boolean {
+  return toolId in REGISTERED_IMPLEMENTATIONS;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Schema compilation                                                         */
+/* -------------------------------------------------------------------------- */
+
+/** Compile the full tool catalog into OpenAI-style function schemas. */
+export function agentToolSchemas(): ToolSchema[] {
+  return toOpenAITools(TOOLS);
+}
+
+/** Compile only the requested tools (by id) into provider schemas. */
+export function toolSchemasFor(toolIds: string[]): ToolSchema[] {
+  const defs = toolIds
+    .map((id) => getTool(id))
+    .filter((d): d is ToolDefinition => Boolean(d));
+  return toOpenAITools(defs);
+}
+
+export function listAgentTools(): ToolDefinition[] {
+  return [...TOOLS];
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Execution                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Run a tool by id with strict JSON-schema validation.
+ *
+ * Validation runs against the *compiled* schema, so enum, type, required and
+ * numeric-bound rules are all enforced. Invalid input never reaches the
+ * implementation — the error is returned so it can be fed back to the model.
+ */
 export async function runTool(
   toolId: string,
   args: Record<string, unknown> = {},
+  options: { simulateLatency?: boolean } = {},
 ): Promise<ToolRunResult> {
   const started = Date.now();
-  const definition: ToolDefinition | undefined = getTool(toolId);
   const logs: string[] = [];
+  const definition = getTool(toolId);
 
   if (!definition) {
     return {
@@ -191,7 +278,7 @@ export async function runTool(
     };
   }
 
-  const impl = IMPLEMENTATIONS[toolId];
+  const impl = resolveImplementation(toolId);
   if (!impl) {
     return {
       toolId,
@@ -203,24 +290,27 @@ export async function runTool(
     };
   }
 
-  // Validate required parameters.
-  const missing = definition.parameters
-    .filter((p) => p.required && args[p.name] == null)
-    .map((p) => p.name);
-  if (missing.length > 0) {
+  // Strict validation against the compiled JSON schema.
+  const schema = toOpenAITools([definition])[0].function.parameters;
+  const validation = validateToolArguments(schema, args);
+  if (!validation.ok) {
     return {
       toolId,
       ok: false,
-      output: null,
+      output: { issues: validation.issues },
       logs,
       durationMs: Date.now() - started,
-      error: `معطيات مطلوبة مفقودة: ${missing.join(', ')}`,
+      error: `معطيات غير صالحة: ${validation.issues
+        .map((i) => `${i.path || '<root>'} ${i.message}`)
+        .join('; ')}`,
     };
   }
 
   try {
-    await sleep(120 + Math.random() * 260);
-    const { output, logs: implLogs } = await impl(args);
+    if (options.simulateLatency !== false && !isToolLive(toolId)) {
+      await sleep(120 + Math.random() * 260);
+    }
+    const { output, logs: implLogs } = await impl(validation.value);
     logs.push(...(implLogs ?? []));
     return {
       toolId,
@@ -240,3 +330,21 @@ export async function runTool(
     };
   }
 }
+
+/**
+ * Adapter that lets the agentic tool-calling loop drive this runtime directly.
+ * Pass it as `runTool` to {@link runToolLoop} / {@link streamToolLoop}.
+ */
+export const toolRunner: ToolRunner = async (
+  toolId: string,
+  args: Record<string, unknown>,
+): Promise<ToolRunOutcome> => {
+  const result = await runTool(toolId, args);
+  return {
+    ok: result.ok,
+    output: result.output,
+    error: result.error,
+    logs: result.logs,
+    durationMs: result.durationMs,
+  };
+};
