@@ -2,6 +2,8 @@ import {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResult,
+  ProviderConfig,
+  ProviderConfigMap,
   ProviderId,
   TokenUsage,
 } from '../../types/model';
@@ -9,12 +11,14 @@ import { getModel } from '../../data/models';
 import { estimateTokens } from '../../utils/text';
 import { uid } from '../../utils/id';
 import { sleep } from '../../utils/async';
+import { LLMProvider, ProviderFactory } from './provider';
+import {
+  createAnthropicProvider,
+  createGeminiProvider,
+  createOpenAIProvider,
+} from './providers';
 
-export interface LLMProvider {
-  id: ProviderId;
-  complete(req: ChatCompletionRequest): Promise<ChatCompletionResult>;
-  stream(req: ChatCompletionRequest): AsyncGenerator<ChatCompletionChunk>;
-}
+export type { LLMProvider } from './provider';
 
 /* -------------------------------------------------------------------------- */
 /*  Intent-aware mock response generator                                      */
@@ -82,6 +86,7 @@ function buildResponseText(req: ChatCompletionRequest): string {
 /* -------------------------------------------------------------------------- */
 
 export class MockProvider implements LLMProvider {
+  readonly live = false;
   constructor(public id: ProviderId, private latencyMs = 220) {}
 
   private usage(req: ChatCompletionRequest, output: string): TokenUsage {
@@ -158,10 +163,37 @@ export class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 
 // Register mock providers for every known provider id so the app is fully
-// functional out of the box. Real providers can replace these at runtime.
+// functional out of the box. Real providers replace these at runtime whenever
+// an API key is configured (see `configureProviders`).
 (['openai', 'anthropic', 'google', 'mistral', 'meta', 'local'] as ProviderId[]).forEach(
   (id) => providerRegistry.register(new MockProvider(id)),
 );
+
+/**
+ * Swap in real HTTP providers for every provider that has an API key.
+ * Providers without a key keep their mock fallback, so the app never breaks.
+ */
+export function configureProviders(configs: ProviderConfigMap): void {
+  const factories: Partial<Record<ProviderId, ProviderFactory>> = {
+    openai: createOpenAIProvider,
+    anthropic: createAnthropicProvider,
+    google: createGeminiProvider,
+  };
+
+  (Object.keys(factories) as ProviderId[]).forEach((id) => {
+    const config = configs[id];
+    const factory = factories[id];
+    if (!factory || !config?.apiKey) return;
+    providerRegistry.register(factory({ config }));
+  });
+}
+
+/** True when a real (non-mock) provider is active for the given model. */
+export function isLiveModel(modelId: string): boolean {
+  const model = getModel(modelId);
+  const providerId = model?.provider ?? 'openai';
+  return providerRegistry.get(providerId)?.live ?? false;
+}
 
 export interface AIServiceOptions {
   /** Simulated network latency for the mock runtime. */
@@ -171,7 +203,12 @@ export interface AIServiceOptions {
 export class AIService {
   constructor(private registry: ProviderRegistry = providerRegistry) {}
 
-  private resolve(modelId: string): LLMProvider {
+  /** Register real providers from a `settings.apiKeys` map. */
+  configure(configs: ProviderConfigMap): void {
+    configureProviders(configs);
+  }
+
+  resolveProvider(modelId: string): LLMProvider {
     const model = getModel(modelId);
     const providerId = model?.provider ?? 'openai';
     const provider = this.registry.get(providerId);
@@ -182,11 +219,11 @@ export class AIService {
   }
 
   async chat(req: ChatCompletionRequest): Promise<ChatCompletionResult> {
-    return this.resolve(req.model).complete(req);
+    return this.resolveProvider(req.model).complete(req);
   }
 
   stream(req: ChatCompletionRequest): AsyncGenerator<ChatCompletionChunk> {
-    return this.resolve(req.model).stream(req);
+    return this.resolveProvider(req.model).stream(req);
   }
 
   /** Deterministic pseudo-embedding for local similarity search. */
