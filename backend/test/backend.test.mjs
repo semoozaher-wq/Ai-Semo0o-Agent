@@ -62,3 +62,32 @@ test('backend enforces tenant isolation and dangerous approval transitions', asy
     assert.equal(crossRead.status, 404);
   } finally { await fx.close(); }
 });
+
+test('chat mode answers through LLM without creating an agent run', async () => {
+  const fx = await fixture();
+  const chatLlm = { status: () => [{ id: 'test', model: 'test', configured: true }], async complete() { return { provider: 'test', text: 'رد محادثة مباشر', usage: { promptTokens: 2, completionTokens: 3, totalTokens: 5 } }; } };
+  fx.app.server.close(); fx.db.close(); fx.queue.stop();
+  const dir = fx.dir;
+  const db = new Database(path.join(dir, 'chat.sqlite'));
+  const queue = new RunQueue(db, { pollMs: 5 });
+  const app = createApp({ db, queue, llm: chatLlm });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  try {
+    const registered = await request(base, '/auth/register', { method: 'POST', body: { email: 'chat@example.test', password: 'correct horse battery staple', tenantName: 'Chat' } });
+    const response = await request(base, '/chat', { method: 'POST', token: registered.body.session.token, body: { message: 'مرحبا' } });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.text, 'رد محادثة مباشر');
+    assert.equal(db.get('SELECT COUNT(*) AS count FROM runs').count, 0);
+  } finally { queue.stop(); await new Promise((resolve) => app.server.close(resolve)); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('project creation fails closed when no workspace root is provided', async () => {
+  const fx = await fixture();
+  try {
+    const registered = await request(fx.base, '/auth/register', { method: 'POST', body: { email: 'root-required@example.test', password: 'correct horse battery staple', tenantName: 'Root' } });
+    const response = await request(fx.base, '/projects', { method: 'POST', token: registered.body.session.token, body: { name: 'Unsafe project' } });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, 'WORKSPACE_ROOT_REQUIRED');
+  } finally { await fx.close(); }
+});
