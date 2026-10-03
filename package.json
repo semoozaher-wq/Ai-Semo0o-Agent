@@ -4,11 +4,15 @@
   "main": "expo-router/entry",
   "description": "Semo0o AI — Integrated autonomous AI platform (agents, store, chat, data engine)",
   "scripts": {
+    "test": "npm run test:legacy-harness && npm run test:execution",
+    "test:legacy-harness": "tsx test/harness.ts",
+    "test:execution": "node --test test/*.test.mjs",
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "export:web": "expo export --platform web",
+    "build": "npm run export:web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "doctor": "expo-doctor",
@@ -40,7 +44,10 @@
     "babel-preset-expo": "^57.0.13",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
+    "expo-doctor": "^1.20.4",
+    "tsx": "^4.20.6",
     "typescript": "~6.0.3"
   },
-  "private": true
+  "private": true,
+  "packageManager": "npm@10.9.2"
 }
