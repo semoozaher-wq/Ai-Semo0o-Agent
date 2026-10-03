@@ -56,6 +56,8 @@ test('project intelligence creates symbols, imports, dependency graph and test m
   assert.ok(result.imports.some((item) => item.specifier === './b'));
   assert.ok(result.importGraph.some((edge) => edge.from === 'a.ts'));
   assert.ok(result.testMapping.some((item) => item.test.endsWith('a.test.ts')));
+  assert.ok(result.symbols.some((symbol) => symbol.name === 'b' && symbol.parser === 'typescript-ast'));
+  assert.deepEqual(result.testMapping.find((item) => item.test.endsWith('a.test.ts')).importedSources, ['a.ts']);
   assert.equal(result.parser, 'typescript-ast');
   assert.ok(result.symbols.some((symbol) => symbol.parser === 'typescript-ast'));
 });
@@ -65,11 +67,25 @@ test('RAG chunks, persists vectors, retrieves and reranks', async () => {
   const store = await new PersistentVectorStore(path.join(root, 'vectors.json')).load();
   assert.equal(chunkText('a'.repeat(100), { size: 25, overlap: 5 }).length, 5);
   await store.replaceDocuments([{ id: 'doc', text: 'terminal permissions and safe workspace writes', metadata: { source: 'security.md' } }]);
-  const results = store.query('workspace permissions', 3);
+  const results = await store.query('workspace permissions', 3);
   assert.equal(results.length, 1);
   assert.ok(rerank('workspace permissions', results)[0].rerankScore >= results[0].score);
   const restored = await new PersistentVectorStore(path.join(root, 'vectors.json')).load();
   assert.equal(restored.records.length, 1);
+});
+
+test('RAG accepts a remote semantic embedding adapter without storing API secrets', async () => {
+  const root = await temp();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: [{ embedding: [1, 0, 1] }] }), { status: 200 });
+  try {
+    const { createRemoteEmbeddingProvider } = await import('../phase2-core/platform.mjs');
+    const store = new PersistentVectorStore(path.join(root, 'remote-vectors.json'), { embed: createRemoteEmbeddingProvider({ endpoint: 'https://embedding.test/v1/embeddings', apiKey: 'secret', model: 'semantic-model' }) });
+    await store.replaceDocuments([{ id: 'remote', text: 'semantic retrieval' }]);
+    assert.deepEqual((await store.query('semantic'))[0].vector, [1, 0, 1]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('persistent memory stores failures and recalls previous fixes', async () => {
@@ -111,5 +127,6 @@ test('browser agent requires an explicit CDP connection and exposes verification
   assert.throws(() => new BrowserAgent(''), /BROWSER_CDP_URL_REQUIRED/);
   const browser = new BrowserAgent('ws://127.0.0.1:9222/devtools/page/test');
   assert.equal(typeof browser.verify, 'function');
+  assert.equal(typeof browser.type, 'function');
   assert.deepEqual(browser.evidence().events, []);
 });
