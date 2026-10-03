@@ -76,5 +76,5 @@ A deployment is accepted only when all are true:
 - `code.run` returns real evidence or a structured failure; it never returns simulated success.
 - Tavily succeeds only when the server secret is present and is never logged.
 - Chromium E2E passes against the deployed web route and browser host.
-- Backups and restore have been tested.
+- A scheduled, encrypted/off-site backup has completed and its restore has been rehearsed against a candidate production database; the local SQLite archive CLI tests alone do not satisfy this criterion.
 - Alerts exist for worker death, queue age, failed runs, rate-limit spikes, and secret/configuration failures.
