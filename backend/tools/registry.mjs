@@ -70,7 +70,7 @@ function profile(content, file) {
   return { format: 'json', rows: rows.length, columns: keys.map((key) => ({ name: key, nonEmpty: rows.filter((row) => row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '').length })) };
 }
 
-export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || process.cwd() } = {}) {
+export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || (() => { throw new Error('WORKSPACE_ROOT_REQUIRED'); })() } = {}) {
   const tools = new Map();
   if (tavily) tools.set('web.search', async (args) => await tavily(args));
   tools.set('web.scrape', async (args) => ({ output: await fetchText(args) }));
