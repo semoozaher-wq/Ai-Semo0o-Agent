@@ -1,11 +1,11 @@
 import { create } from 'zustand';
-import { Conversation, Message } from '../types/chat';
-import { ChatCompletionMessage } from '../types/model';
-import { aiService } from '../services/ai';
-import { storage, STORAGE_KEYS } from '../services/storage';
-import { uid } from '../utils/id';
-import { titleFromPrompt } from '../utils/text';
-import { DEFAULT_MODEL_ID } from '../data/models';
+import { Conversation, Message } from '../../types/chat';
+import { ChatCompletionMessage } from '../../types/model';
+import { aiService } from '../ai';
+import { storage, STORAGE_KEYS } from '../storage';
+import { uid } from '../../utils/id';
+import { titleFromPrompt } from '../../utils/text';
+import { DEFAULT_MODEL_ID } from '../../data/models';
 import { useAgentsStore } from './useAgentsStore';
 
 /** Monotonic token used to cancel an in-flight stream. */

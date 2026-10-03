@@ -1,12 +1,12 @@
 import { create } from 'zustand';
-import { Task, TaskStep } from '../types/task';
-import { LogLevel } from '../services/agent-engine/executor';
-import { agentOrchestrator, OrchestratorEvent } from '../services/agent-engine/orchestrator';
+import { Task, TaskStep } from '../../types/task';
+import { LogLevel } from '../agent-engine/executor';
+import { agentOrchestrator, OrchestratorEvent } from '../agent-engine/orchestrator';
 import { TOOLS } from '../../data/tools';
-import { providerRegistry } from '../services/ai';
-import { storage, STORAGE_KEYS } from '../services/storage';
-import { uid } from '../utils/id';
-import { DEFAULT_MODEL_ID } from '../data/models';
+import { providerRegistry } from '../ai';
+import { storage, STORAGE_KEYS } from '../storage';
+import { uid } from '../../utils/id';
+import { DEFAULT_MODEL_ID } from '../../data/models';
 
 export interface ApprovalRequest {
   id: string;
