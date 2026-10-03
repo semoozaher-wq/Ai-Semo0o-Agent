@@ -130,3 +130,21 @@ test('browser agent requires an explicit CDP connection and exposes verification
   assert.equal(typeof browser.type, 'function');
   assert.deepEqual(browser.evidence().events, []);
 });
+
+test('browser load waits for a new page load event instead of reusing stale evidence', async () => {
+  const browser = new BrowserAgent('ws://127.0.0.1:9222/devtools/page/test', { timeoutMs: 20 });
+  browser.loadSequence = 1;
+  await assert.rejects(() => browser.waitForLoad(5, 1), /BROWSER_LOAD_TIMEOUT/);
+  browser.loadSequence = 2;
+  assert.equal(await browser.waitForLoad(5, 1), true);
+});
+
+test('persistent stores reject corrupted JSON instead of silently resetting state', async () => {
+  const root = await temp();
+  const file = path.join(root, 'corrupted.json');
+  await writeFile(file, '{not-json', 'utf8');
+  await assert.rejects(
+    () => new PersistentVectorStore(file).load(),
+    /PERSISTENCE_INVALID_JSON/,
+  );
+});
