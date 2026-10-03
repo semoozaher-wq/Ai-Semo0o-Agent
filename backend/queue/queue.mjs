@@ -10,6 +10,8 @@ export class RunQueue {
     this.handlers = new Map();
     this.timer = null;
     this.stopped = false;
+    this.processing = false;
+    this.activeControllers = new Map();
   }
   register(kind, handler) { this.handlers.set(kind, handler); }
   enqueue({ taskId, tenantId, payload, kind = 'code.run' }) {
@@ -33,7 +35,8 @@ export class RunQueue {
     this.db.run("UPDATE runs SET status='queued', updated_at=? WHERE status='running'", now());
   }
   async tick() {
-    if (this.stopped) return;
+    if (this.stopped || this.processing) return;
+    this.processing = true;
     const run = this.db.transaction(() => {
       const candidate = this.db.get("SELECT * FROM runs WHERE status='queued' ORDER BY created_at LIMIT 1");
       if (!candidate) return null;
@@ -41,22 +44,29 @@ export class RunQueue {
       this.db.run("UPDATE tasks SET status='running', updated_at=? WHERE id=?", now(), candidate.task_id);
       return this.db.get('SELECT * FROM runs WHERE id=?', candidate.id);
     });
-    if (!run) return;
+    if (!run) { this.processing = false; return; }
     const payload = JSON.parse(run.payload_json);
     const handler = this.handlers.get(payload.kind);
-    if (!handler) return this.finish(run, 'failed', { error: `NO_HANDLER:${payload.kind}` });
+    if (!handler) { await this.finish(run, 'failed', { error: `NO_HANDLER:${payload.kind}` }); this.processing = false; return; }
+    const controller = new AbortController();
+    this.activeControllers.set(run.id, controller);
     try {
-      const result = await handler({ run, payload });
-      if (this.db.get("SELECT status FROM runs WHERE id=?", run.id)?.status === 'cancelled') return;
+      const result = await handler({ run, payload, signal: controller.signal });
+      const currentStatus = this.db.get("SELECT status FROM runs WHERE id=?", run.id)?.status;
+      if (currentStatus === 'cancelled' || currentStatus === 'paused') return;
       await this.finish(run, result?.status ?? 'completed', result);
     } catch (error) {
-      await this.finish(run, 'failed', { error: error instanceof Error ? error.message : String(error) });
+      if (!controller.signal.aborted) await this.finish(run, 'failed', { error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      this.activeControllers.delete(run.id);
+      this.processing = false;
     }
   }
   async finish(run, status, result) {
     const timestamp = now();
     this.db.transaction(() => {
-      this.db.run('UPDATE runs SET status=?, result_json=?, updated_at=? WHERE id=?', status, JSON.stringify(result ?? {}), timestamp, run.id);
+      const changed = this.db.run("UPDATE runs SET status=?, result_json=?, updated_at=? WHERE id=? AND status='running'", status, JSON.stringify(result ?? {}), timestamp, run.id);
+      if (changed.changes !== 1) return;
       this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=?', status, timestamp, run.task_id);
       this.db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), run.tenant_id, `run.${status}`, 'run', run.id, JSON.stringify({ attempts: run.attempts }), timestamp);
     });
@@ -69,6 +79,7 @@ export class RunQueue {
     if (!RUN_STATES.includes(to)) throw new Error('INVALID_RUN_STATE');
     const result = this.db.run(`UPDATE runs SET status=?, updated_at=? WHERE id=? AND tenant_id=? AND status IN (${from.map(() => '?').join(',')})`, to, now(), runId, tenantId, ...from);
     if (result.changes !== 1) throw new Error('INVALID_RUN_TRANSITION');
+    if (to === 'cancelled' || to === 'paused') this.activeControllers.get(runId)?.abort();
     this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)', to, now(), runId);
     return this.get(runId, tenantId);
   }
