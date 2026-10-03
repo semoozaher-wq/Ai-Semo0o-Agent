@@ -9,6 +9,7 @@ import type {
 import type { LLMProvider } from '../src/services/ai/provider';
 import { LLMPlanner } from '../src/services/agent-engine/llm-planner';
 import { AgentOrchestrator } from '../src/services/agent-engine/orchestrator';
+import { registerTool, unregisterTool } from '../src/services/agent-engine/tools';
 
 const usage = { promptTokens: 40, completionTokens: 30, totalTokens: 70 };
 
@@ -62,6 +63,20 @@ const planJson = JSON.stringify({
 });
 
 const tools = TOOLS.filter((tool) => ['code.analyze', 'code.run', 'email.send'].includes(tool.id));
+
+function singleVerificationPlan(): string {
+  return JSON.stringify({
+    reasoning: 'تنفيذ ثم تحقق بالدليل.',
+    steps: [{
+      title: 'تنفيذ قابل للتحقق',
+      description: 'تنفيذ أداة حقيقية والتحقق من ناتجها.',
+      kind: 'verify',
+      dependsOn: [],
+      toolId: 'code.run',
+      toolArgs: { language: 'javascript', source: 'return 1' },
+    }],
+  });
+}
 
 test('LLM planner requests strict JSON and normalizes a validated plan', async () => {
   const provider = new DeterministicProvider(planJson);
@@ -152,4 +167,89 @@ test('planner rejects unknown tools and cyclic dependencies before execution', a
     () => new LLMPlanner().plan('طلب', { model: 'gpt-5', providers: [invalid], tools }),
     /PLANNER_UNKNOWN_TOOL|PLANNER_UNKNOWN_DEPENDENCY/,
   );
+});
+
+test('verification gate marks real output with evidence as completed', async () => {
+  registerTool('code.run', async () => ({ output: { value: 1 } }));
+  try {
+    const result = await new AgentOrchestrator().run({ goal: 'نفذ وتحقق', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, requestPermission: async () => true });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.verifications.at(-1)?.status, 'VERIFIED');
+    assert.equal(result.evidence.length, 1);
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('false tool success cannot become completed when verification fails', async () => {
+  registerTool('code.run', async () => ({ output: { claimed: true } }));
+  try {
+    const result = await new AgentOrchestrator().run({
+      goal: 'تحقق من النتيجة', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools,
+      requestPermission: async () => true,
+      verifyStep: async () => ({ status: 'FAILED', criteria: [], evidenceIds: [], summary: 'actual result disagrees', failureKind: 'VALIDATION_FAILURE', verifiedAt: new Date().toISOString() }),
+    });
+    assert.notEqual(result.status, 'completed');
+    assert.equal(result.verifications.at(-1)?.status, 'FAILED');
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('execution failure invokes self-healing and succeeds on a bounded retry', async () => {
+  let calls = 0;
+  registerTool('code.run', async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('execution timeout');
+    return { output: { fixed: true } };
+  });
+  try {
+    const result = await new AgentOrchestrator().run({
+      goal: 'أصلح ثم تحقق', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools,
+      requestPermission: async () => true,
+      selfHeal: async ({ failureKind }) => { assert.equal(failureKind, 'EXECUTION_FAILURE'); return { action: 'retry' }; },
+    });
+    assert.equal(result.status, 'completed');
+    assert.equal(calls, 2);
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('retry limit stops repeated failures without an infinite loop', async () => {
+  let calls = 0;
+  registerTool('code.run', async () => { calls += 1; throw new Error('tool unavailable'); });
+  try {
+    const result = await new AgentOrchestrator().run({
+      goal: 'أعد المحاولة بحد', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, maxAttempts: 2,
+      requestPermission: async () => true,
+      selfHeal: async () => ({ action: 'retry' }),
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(calls, 2);
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('missing actual output is UNVERIFIED, not completed', async () => {
+  registerTool('code.run', async () => ({ output: null }));
+  try {
+    const result = await new AgentOrchestrator().run({ goal: 'تحقق من دليل مفقود', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, requestPermission: async () => true });
+    assert.equal(result.status, 'unverified');
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('simulated tool output cannot produce production verification evidence', async () => {
+  registerTool('code.run', async () => ({ output: { demo: true }, simulated: true }));
+  try {
+    const result = await new AgentOrchestrator().run({ goal: 'لا تعتمد المحاكاة', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, requestPermission: async () => true });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.evidence[0].simulated, true);
+    assert.equal(result.verifications[0].status, 'FAILED');
+  } finally {
+    unregisterTool('code.run');
+  }
 });
