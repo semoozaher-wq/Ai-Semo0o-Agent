@@ -181,6 +181,28 @@ test('verification gate marks real output with evidence as completed', async () 
   }
 });
 
+test('orchestrator emits live planning, step, tool, and verification events', async () => {
+  registerTool('code.run', async () => ({ output: { value: 2 } }));
+  const events: string[] = [];
+  try {
+    await new AgentOrchestrator().run({
+      goal: 'نفذ مع Timeline',
+      model: 'gpt-5',
+      providers: [new DeterministicProvider(singleVerificationPlan())],
+      tools,
+      requestPermission: async () => true,
+      onEvent: (next) => events.push(next.type),
+    });
+    assert.equal(events[0], 'planning_started');
+    assert.ok(events.includes('planning_completed'));
+    assert.ok(events.includes('step_started'));
+    assert.ok(events.includes('tool_completed'));
+    assert.ok(events.includes('step_completed'));
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
 test('false tool success cannot become completed when verification fails', async () => {
   registerTool('code.run', async () => ({ output: { claimed: true } }));
   try {
