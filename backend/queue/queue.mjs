@@ -14,15 +14,19 @@ export class RunQueue {
     this.activeControllers = new Map();
   }
   register(kind, handler) { this.handlers.set(kind, handler); }
-  enqueue({ taskId, tenantId, payload, kind = 'code.run' }) {
+  enqueue({ taskId, tenantId, payload, kind = 'code.run', idempotencyKey = null }) {
     const runId = id('run');
     const timestamp = now();
-    this.db.transaction(() => {
-      this.db.run('INSERT INTO runs(id,task_id,tenant_id,status,payload_json,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)', runId, taskId, tenantId, 'queued', JSON.stringify({ kind, ...payload }), 0, timestamp, timestamp);
+    return this.db.transaction(() => {
+      if (idempotencyKey) {
+        const existing = this.db.get('SELECT * FROM runs WHERE tenant_id=? AND idempotency_key=?', tenantId, idempotencyKey);
+        if (existing) return existing;
+      }
+      this.db.run('INSERT INTO runs(id,task_id,tenant_id,status,payload_json,attempts,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', runId, taskId, tenantId, 'queued', JSON.stringify({ kind, ...payload }), 0, idempotencyKey, timestamp, timestamp);
       this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=? AND tenant_id=?', 'queued', timestamp, taskId, tenantId);
       this.db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), tenantId, 'run.queued', 'run', runId, JSON.stringify({ kind }), timestamp);
+      return this.db.get('SELECT * FROM runs WHERE id=?', runId);
     });
-    return this.db.get('SELECT * FROM runs WHERE id=?', runId);
   }
   start() {
     if (this.timer) return;
