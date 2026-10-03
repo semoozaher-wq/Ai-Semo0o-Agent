@@ -1,15 +1,13 @@
 import { create } from 'zustand';
 import { Conversation, Message } from '../types/chat';
-import { ChatCompletionMessage } from '../types/model';
-import { aiService } from '../services/ai';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
 import { DEFAULT_MODEL_ID } from '../../data/models';
-import { useAgentsStore } from './useAgentsStore';
+import { backendApi, ApiEvent } from '../services/api/client';
 
-/** Monotonic token used to cancel an in-flight stream. */
 let streamToken = 0;
+let activeController: AbortController | null = null;
 
 interface ChatState {
   conversations: Conversation[];
@@ -27,13 +25,7 @@ interface ChatState {
   clear(): Promise<void>;
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function requiresAgentExecution(content: string): boolean {
-  return content.length >= 180 || /(حلل|افحص|أصلح|شغّل|شغل|اختبر|نفّذ|نفذ|مشروع|مستودع|ملفات|analy[sz]e|fix|run tests|repository|codebase|execute)/i.test(content);
-}
+function nowIso(): string { return new Date().toISOString(); }
 
 export const useChatStore = create<ChatState>((set, get) => {
   const persist = () => {
@@ -41,224 +33,62 @@ export const useChatStore = create<ChatState>((set, get) => {
     void storage.set(STORAGE_KEYS.conversations, conversations);
     void storage.set(STORAGE_KEYS.messages, messages);
   };
-
-  const patchMessage = (
-    conversationId: string,
-    messageId: string,
-    patch: Partial<Message>,
-  ) => {
-    set((state) => {
-      const list = state.messages[conversationId] ?? [];
-      return {
-        messages: {
-          ...state.messages,
-          [conversationId]: list.map((m) =>
-            m.id === messageId ? { ...m, ...patch } : m,
-          ),
-        },
-      };
-    });
+  const patchMessage = (conversationId: string, messageId: string, patch: Partial<Message>) => set((state) => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map((message) => message.id === messageId ? { ...message, ...patch } : message) } }));
+  const projectPromise = { value: null as { projectId: string; workspaceId: string } | null, pending: null as Promise<{ projectId: string; workspaceId: string }> | null };
+  const ensureProject = async () => {
+    await backendApi.ensureSession();
+    if (projectPromise.value) return projectPromise.value;
+    projectPromise.pending ??= backendApi.createProject({ name: 'Semo0o Agent Workspace' }).then((project) => { projectPromise.value = project; return project; });
+    return projectPromise.pending;
+  };
+  const handleEvent = (conversationId: string, assistantId: string, event: ApiEvent) => {
+    if (event.type === 'planning_started') patchMessage(conversationId, assistantId, { content: 'بدأ التخطيط الآمن للمهمة…', status: 'streaming' });
+    else if (event.type === 'planning_completed') patchMessage(conversationId, assistantId, { content: `تم إنشاء خطة من ${String(event.steps ?? 0)} خطوات…`, status: 'streaming' });
+    else if (event.type === 'permission_requested') patchMessage(conversationId, assistantId, { content: `بانتظار موافقة المستخدم على الأداة: ${String(event.toolId ?? '')}`, status: 'streaming' });
+    else if (event.type === 'tool_completed') patchMessage(conversationId, assistantId, { content: `تم تنفيذ ${String(event.toolId ?? 'الأداة')} والتحقق من النتيجة…`, status: 'streaming' });
+    else if (event.type === 'step_completed') patchMessage(conversationId, assistantId, { content: `تم التحقق من الخطوة ${String(event.stepId ?? '')}…`, status: 'streaming' });
+    else if (event.type === 'run_finished' && typeof event.final === 'string') patchMessage(conversationId, assistantId, { content: event.final, status: 'complete' });
   };
 
   return {
-    conversations: [],
-    messages: {},
-    activeId: null,
-    streaming: false,
-    hydrated: false,
-
+    conversations: [], messages: {}, activeId: null, streaming: false, hydrated: false,
     async hydrate() {
-      const conversations =
-        (await storage.get<Conversation[]>(STORAGE_KEYS.conversations)) ?? [];
-      const messages =
-        (await storage.get<Record<string, Message[]>>(STORAGE_KEYS.messages)) ??
-        {};
-      set({
-        conversations,
-        messages,
-        activeId: conversations[0]?.id ?? null,
-        hydrated: true,
-      });
+      const conversations = (await storage.get<Conversation[]>(STORAGE_KEYS.conversations)) ?? [];
+      const messages = (await storage.get<Record<string, Message[]>>(STORAGE_KEYS.messages)) ?? {};
+      set({ conversations, messages, activeId: conversations[0]?.id ?? null, hydrated: true });
     },
-
     newConversation(model) {
       const id = uid('conv');
-      const conversation: Conversation = {
-        id,
-        title: 'محادثة جديدة',
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-        model: model ?? get().conversations[0]?.model ?? DEFAULT_MODEL_ID,
-        messageCount: 0,
-      };
-      set((state) => ({
-        conversations: [conversation, ...state.conversations],
-        messages: { ...state.messages, [id]: [] },
-        activeId: id,
-      }));
+      const conversation: Conversation = { id, title: 'محادثة جديدة', createdAt: nowIso(), updatedAt: nowIso(), model: model ?? get().conversations[0]?.model ?? DEFAULT_MODEL_ID, messageCount: 0 };
+      set((state) => ({ conversations: [conversation, ...state.conversations], messages: { ...state.messages, [id]: [] }, activeId: id }));
       persist();
       return id;
     },
-
-    setActive(id) {
-      set({ activeId: id });
-    },
-
-    async deleteConversation(id) {
-      set((state) => {
-        const conversations = state.conversations.filter((c) => c.id !== id);
-        const messages = { ...state.messages };
-        delete messages[id];
-        return {
-          conversations,
-          messages,
-          activeId: state.activeId === id ? conversations[0]?.id ?? null : state.activeId,
-        };
-      });
-      persist();
-    },
-
-    renameConversation(id, title) {
-      set((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === id ? { ...c, title, updatedAt: nowIso() } : c,
-        ),
-      }));
-      persist();
-    },
-
+    setActive(id) { set({ activeId: id }); },
+    async deleteConversation(id) { set((state) => { const conversations = state.conversations.filter((item) => item.id !== id); const messages = { ...state.messages }; delete messages[id]; return { conversations, messages, activeId: state.activeId === id ? conversations[0]?.id ?? null : state.activeId }; }); persist(); },
+    renameConversation(id, title) { set((state) => ({ conversations: state.conversations.map((item) => item.id === id ? { ...item, title, updatedAt: nowIso() } : item) })); persist(); },
     async send(text, opts) {
-      const content = text.trim();
-      if (!content) return;
-
-      let conversationId = get().activeId;
-      if (!conversationId) conversationId = get().newConversation(opts?.model);
-
-      const conversation = get().conversations.find((c) => c.id === conversationId);
+      const content = text.trim(); if (!content) return;
+      let conversationId = get().activeId; if (!conversationId) conversationId = get().newConversation(opts?.model);
+      const conversation = get().conversations.find((item) => item.id === conversationId);
       const model = opts?.model ?? conversation?.model ?? DEFAULT_MODEL_ID;
-
-      const userMessage: Message = {
-        id: uid('msg'),
-        conversationId,
-        role: 'user',
-        content,
-        createdAt: nowIso(),
-        status: 'complete',
-      };
+      const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete' };
       const assistantId = uid('msg');
-      const assistantMessage: Message = {
-        id: assistantId,
-        conversationId,
-        role: 'assistant',
-        content: '',
-        createdAt: nowIso(),
-        status: 'streaming',
-        model,
-      };
-
-      set((state) => {
-        const existing = state.messages[conversationId] ?? [];
-        const isFirst = existing.length === 0;
-        return {
-          messages: {
-            ...state.messages,
-            [conversationId]: [...existing, userMessage, assistantMessage],
-          },
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId
-              ? {
-                  ...c,
-                  title: isFirst ? titleFromPrompt(content) : c.title,
-                  updatedAt: nowIso(),
-                  messageCount: c.messageCount + 2,
-                  lastMessagePreview: content.slice(0, 80),
-                }
-              : c,
-          ),
-          streaming: true,
-        };
-      });
-
-      const token = ++streamToken;
-
+      const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…', createdAt: nowIso(), status: 'streaming', model };
+      set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(content) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: content.slice(0, 80) } : item), streaming: true }; });
+      const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
       try {
-        if (requiresAgentExecution(content)) {
-          const task = useAgentsStore.getState().createTask(content, { model });
-          patchMessage(conversationId, assistantId, {
-            content: 'بدأت تشغيل الوكيل: التخطيط والتنفيذ والتحقق…',
-            status: 'streaming',
-            agentTaskId: task.id,
-          });
-          await useAgentsStore.getState().runTask(task.id, { model });
-          const finished = useAgentsStore.getState().tasks.find((item) => item.id === task.id);
-          const status = finished?.status ?? 'failed';
-          const summary = finished?.result ?? finished?.error ?? 'لم ينتج الوكيل نتيجة قابلة للتحقق.';
-          patchMessage(conversationId, assistantId, {
-            content: `حالة الوكيل: ${status}\n\n${summary}`,
-            status: status === 'completed' ? 'complete' : 'error',
-            agentTaskId: task.id,
-          });
-          return;
-        }
-        const history: ChatCompletionMessage[] = (get().messages[conversationId] ?? [])
-          .filter((m) => m.status !== 'streaming' && m.role !== 'tool')
-          .map((m) => ({ role: m.role, content: m.content }));
-
-        let acc = '';
-        for await (const chunk of aiService.stream({ model, messages: history })) {
-          if (token !== streamToken) break;
-          if (chunk.delta) {
-            acc += chunk.delta;
-            patchMessage(conversationId, assistantId, {
-              content: acc,
-              status: 'streaming',
-            });
-          }
-          if (chunk.done) break;
-        }
-
-        if (token === streamToken) {
-          patchMessage(conversationId, assistantId, {
-            content: acc,
-            status: 'complete',
-          });
-        }
+        const project = await ensureProject();
+        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
+        await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId!, assistantId, event); }, activeController.signal);
+        const snapshot = await backendApi.getRun(run.runId);
+        const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
+        if (token === streamToken) patchMessage(conversationId, assistantId, { content: finalText, status: snapshot.status === 'completed' ? 'complete' : 'error', error: snapshot.status === 'completed' ? undefined : snapshot.status });
       } catch (error) {
-        patchMessage(conversationId, assistantId, {
-          status: 'error',
-          error: error instanceof Error ? error.message : 'فشل توليد الرد',
-          content: 'تعذّر توليد الرد. حاول مرة أخرى.',
-        });
-      } finally {
-        if (token === streamToken) set({ streaming: false });
-        persist();
-      }
+        if (token === streamToken) patchMessage(conversationId, assistantId, { content: 'تعذّر تشغيل الوكيل عبر الـBackend.', status: 'error', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED' });
+      } finally { if (token === streamToken) set({ streaming: false }); persist(); }
     },
-
-    stop() {
-      streamToken += 1;
-      set({ streaming: false });
-      set((state) => {
-        const id = state.activeId;
-        if (!id) return state;
-        const list = state.messages[id] ?? [];
-        return {
-          messages: {
-            ...state.messages,
-            [id]: list.map((m) =>
-              m.status === 'streaming' ? { ...m, status: 'complete' } : m,
-            ),
-          },
-        };
-      });
-      persist();
-    },
-
-    async clear() {
-      streamToken += 1;
-      set({ conversations: [], messages: {}, activeId: null, streaming: false });
-      await storage.remove(STORAGE_KEYS.conversations);
-      await storage.remove(STORAGE_KEYS.messages);
-    },
+    stop() { streamToken += 1; activeController?.abort(); activeController = null; set({ streaming: false }); persist(); },
+    async clear() { streamToken += 1; activeController?.abort(); set({ conversations: [], messages: {}, activeId: null, streaming: false }); await storage.remove(STORAGE_KEYS.conversations); await storage.remove(STORAGE_KEYS.messages); },
   };
 });
