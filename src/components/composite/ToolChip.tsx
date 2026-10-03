@@ -14,6 +14,8 @@ const CATEGORY_ICON: Record<ToolDefinition['category'], IconName> = {
   system: 'settings-outline',
   productivity: 'briefcase-outline',
   ai: 'sparkles-outline',
+  github: 'logo-github',
+  zip: 'archive-outline',
 };
 
 export interface ToolChipProps {
