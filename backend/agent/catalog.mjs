@@ -1,1 +1,24 @@
+export const TOOL_CATALOG = [
+  { id: 'web.search', description: 'Search the live web and return ranked sources.', parameters: { type: 'object', additionalProperties: false, properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'] } },
+  { id: 'web.scrape', description: 'Fetch a public web page and extract bounded text.', parameters: { type: 'object', additionalProperties: false, properties: { url: { type: 'string' }, maxChars: { type: 'integer', minimum: 100, maximum: 50000 } }, required: ['url'] } },
+  { id: 'code.run', description: 'Run JavaScript or Python inside the server sandbox with strict resource limits.', dangerous: true, parameters: { type: 'object', additionalProperties: false, properties: { language: { type: 'string', enum: ['javascript', 'python'] }, source: { type: 'string', maxLength: 100000 }, timeoutMs: { type: 'integer', minimum: 100, maximum: 30000 } }, required: ['language', 'source'] } },
+  { id: 'code.analyze', description: 'Analyze a workspace source file without modifying it.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' } }, required: ['path'] } },
+  { id: 'files.read', description: 'Read a bounded text file from the isolated project workspace.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, maxChars: { type: 'integer', minimum: 100, maximum: 200000 } }, required: ['path'] } },
+  { id: 'files.write', description: 'Write a text file inside the isolated project workspace.', dangerous: true, parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, content: { type: 'string', maxLength: 200000 } }, required: ['path', 'content'] } },
+  { id: 'files.scan', description: 'List bounded files in the isolated project workspace.', parameters: { type: 'object', additionalProperties: false, properties: { scope: { type: 'string' }, maxFiles: { type: 'integer', minimum: 1, maximum: 1000 } } } },
+  { id: 'data.profile', description: 'Profile a CSV or JSON dataset from the workspace.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, maxRows: { type: 'integer', minimum: 1, maximum: 10000 } }, required: ['path'] } },
+  { id: 'doc.summarize', description: 'Summarize a workspace text document using the configured server LLM.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, length: { type: 'string', enum: ['short', 'medium', 'long'] } }, required: ['path'] } },
+  { id: 'pdf.extract', description: 'Extract text from a workspace PDF using the server PDF tool.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, maxChars: { type: 'integer', minimum: 100, maximum: 200000 } }, required: ['path'] } },
+  { id: 'translate', description: 'Translate text with the configured server LLM.', parameters: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', maxLength: 50000 }, target: { type: 'string' } }, required: ['text', 'target'] } },
+  { id: 'image.generate', description: 'Generate an image only when an image provider is configured server-side.', parameters: { type: 'object', additionalProperties: false, properties: { prompt: { type: 'string', maxLength: 10000 }, size: { type: 'string' } }, required: ['prompt'] } },
+  { id: 'image.analyze', description: 'Analyze a workspace image with a configured vision-capable server model.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' } }, required: ['path'] } },
+  { id: 'calendar.schedule', description: 'Calendar integration is unavailable until a calendar connector is configured.', parameters: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, when: { type: 'string' } }, required: ['title', 'when'] } },
+  { id: 'email.send', description: 'Email integration is unavailable until an email connector is configured.', dangerous: true, parameters: { type: 'object', additionalProperties: false, properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'subject', 'body'] } },
+];
 
+export const TOOL_BY_ID = new Map(TOOL_CATALOG.map((tool) => [tool.id, tool]));
+export const DANGEROUS_TOOLS = new Set(TOOL_CATALOG.filter((tool) => tool.dangerous).map((tool) => tool.id));
+export function openAITools() {
+  return TOOL_CATALOG.map((tool) => ({ type: 'function', function: { name: tool.id.replaceAll('.', '__'), description: tool.description, parameters: tool.parameters } }));
+}
+export function fromProviderToolName(name) { return String(name).replaceAll('__', '.'); }
