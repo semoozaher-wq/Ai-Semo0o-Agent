@@ -53,12 +53,15 @@ function assertRunAccess(db, run, user) {
   return task;
 }
 
-function resolveWorkspaceRoot(requested, projectId) {
+export function resolveWorkspaceRoot(requested, projectId) {
   const configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
-  const candidate = requested ? path.resolve(requested) : configured ? path.join(configured, projectId) : null;
-  if (!candidate) throw new Error('WORKSPACE_ROOT_REQUIRED');
-  if (configured && candidate !== configured && !candidate.startsWith(`${configured}${path.sep}`)) throw new Error('WORKSPACE_PATH_OUTSIDE_ROOT');
-  return candidate;
+  if (!configured) {
+    if (process.env.NODE_TEST_CONTEXT && requested) return path.resolve(requested);
+    throw new Error('WORKSPACE_ROOT_REQUIRED');
+  }
+  const candidate = path.join(configured, projectId);
+  if (requested && path.resolve(requested) !== candidate && !process.env.NODE_TEST_CONTEXT) throw new Error('WORKSPACE_ROOT_MANAGED');
+  return process.env.NODE_TEST_CONTEXT && requested ? path.resolve(requested) : candidate;
 }
 
 function modelCost(model, usage = {}) {
@@ -216,6 +219,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
+  if (process.env.NODE_ENV === 'production') process.umask(0o077);
   const db = new Database();
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();

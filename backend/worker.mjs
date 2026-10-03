@@ -6,6 +6,7 @@ import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost } from './runtime-shared.mjs';
 
+if (process.env.NODE_ENV === 'production') process.umask(0o077);
 const db = new Database();
 const queue = new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250) });
 queue.register('code.run', createCodeRunHandler(db));

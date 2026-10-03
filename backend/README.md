@@ -19,13 +19,25 @@ This directory contains a real Node 22 backend foundation for Ai-Semo0o-Agent. I
 ## Run
 
 ```bash
-DATABASE_FILE=./data/agent.sqlite PORT=8787 npm run start:backend
+DATABASE_FILE=./.data/agent.sqlite WORKSPACE_ROOT=./.data/workspaces PORT=8787 npm run start:backend
 
 # Run the durable worker as a separate supervised process.
-DATABASE_FILE=./data/agent.sqlite npm run start:worker
+DATABASE_FILE=./.data/agent.sqlite npm run start:worker
 ```
 
-The service binds to `0.0.0.0` for container deployment. Put TLS, rate limiting, secret management, and an authenticated reverse proxy in front of it in production.
+The standalone service defaults to loopback binding; set `BIND_HOST=0.0.0.0` only behind an authenticated TLS reverse proxy. The default database is `./.data/agent.sqlite`; the database directory must not be group/world accessible and the database file is forced to `0600`. Production systemd units create `/var/lib/semo0o` as a private `0700` state directory and apply `UMask=0077` so SQLite WAL/SHM files remain private. The service does not load `.env` files: inject settings through the process supervisor or secret manager. Production project roots are derived by the backend as `<WORKSPACE_ROOT>/<projectId>`; callers cannot select arbitrary host paths. Put TLS, rate limiting, secret management, and an authenticated reverse proxy in front of it in production.
+
+## SQLite archive operations
+
+Create a consistent snapshot using SQLite `VACUUM INTO`, verify an archive, or restore it to a **new** database file (the tool never overwrites an existing file):
+
+```bash
+npm run db:backup -- /var/lib/ai-semo0o/agent.sqlite /var/backups/ai-semo0o/agent-2026-10-04.sqlite
+npm run db:verify -- /var/backups/ai-semo0o/agent-2026-10-04.sqlite
+npm run db:restore -- /var/backups/ai-semo0o/agent-2026-10-04.sqlite /var/lib/ai-semo0o/restore-candidate/agent.sqlite
+```
+
+The tool validates `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and required application tables, emits a SHA-256 digest, and creates archive files with mode `0600` inside a directory with no group/other permissions. Test the restored candidate before stopping the service and changing `DATABASE_FILE`. This utility does **not** schedule backups, encrypt/off-site them, implement retention, or replace a production restore rehearsal; those remain deployment responsibilities.
 
 ## API outline
 
