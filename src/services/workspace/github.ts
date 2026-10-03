@@ -10,7 +10,6 @@
 import { getBytes, getJson } from '../ai/http';
 import { bytesToBase64, decodeBase64 } from '../../utils/base64';
 import type {
-  FileEncoding,
   GitHubFileContent,
   GitHubRepoRef,
   GitHubTreeEntry,
@@ -103,7 +102,7 @@ export function parseGitHubUrl(input: string): GitHubRepoRef | null {
 /* -------------------------------------------------------------------------- */
 
 interface RawTreeResponse {
-  tree?: Array<{ path: string; type: string; size?: number; sha: string }>;
+  tree?: { path: string; type: string; size?: number; sha: string }[];
   truncated?: boolean;
 }
 
