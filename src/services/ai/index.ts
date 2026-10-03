@@ -1,4 +1,13 @@
-export * from './runtime';
+export {
+  AIService,
+  MockProvider,
+  ProviderRegistry,
+  aiService,
+  configureProviders,
+  isLiveModel,
+  providerRegistry,
+} from './runtime';
+export type { AIServiceOptions } from './runtime';
 export * from './provider';
 export * from './tool-schema';
 export * from './tool-loop';

@@ -2,7 +2,6 @@ import {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResult,
-  ProviderConfig,
   ProviderConfigMap,
   ProviderId,
   TokenUsage,
@@ -11,14 +10,12 @@ import { getModel } from '../../data/models';
 import { estimateTokens } from '../../utils/text';
 import { uid } from '../../utils/id';
 import { sleep } from '../../utils/async';
-import { LLMProvider, ProviderFactory } from './provider';
+import type { LLMProvider, ProviderFactory } from './provider';
 import {
   createAnthropicProvider,
   createGeminiProvider,
   createOpenAIProvider,
 } from './providers';
-
-export type { LLMProvider } from './provider';
 
 /* -------------------------------------------------------------------------- */
 /*  Intent-aware mock response generator                                      */

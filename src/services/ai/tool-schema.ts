@@ -116,7 +116,7 @@ interface GeminiSchema {
   properties?: Record<string, GeminiSchema>;
   items?: GeminiSchema;
   required?: string[];
-  enum?: Array<string | number | boolean>;
+  enum?: (string | number | boolean)[];
   format?: string;
 }
 
