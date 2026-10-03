@@ -34,6 +34,10 @@ export interface PlanStep {
   description: string;
   dependsOn: string[];
   status: StepStatus;
+  /** Optional tool selected by an LLM planner for this step. */
+  toolId?: string;
+  /** Arguments are validated again by the tool runtime before execution. */
+  toolArgs?: Record<string, unknown>;
 }
 
 export interface TaskStep extends PlanStep {

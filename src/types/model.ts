@@ -151,6 +151,15 @@ export interface ChatCompletionRequest {
   /** JSON-schema tool descriptors. */
   tools?: ToolSchema[];
   toolChoice?: ToolChoice;
+  /** Optional structured JSON response contract for planning/extraction. */
+  responseFormat?: {
+    type: 'json_schema';
+    jsonSchema: {
+      name: string;
+      strict?: boolean;
+      schema: Record<string, unknown>;
+    };
+  };
   /** Abort in-flight network requests. */
   signal?: AbortSignal;
 }
