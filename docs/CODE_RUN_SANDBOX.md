@@ -17,6 +17,35 @@ The current sandbox runner is intentionally fail-closed:
 - The temporary workspace is deleted after every run.
 - The result contains exit code, signal, output, timeout/truncation state, duration and isolation metadata.
 
+## Agent tool integration
+
+`src/services/agent-engine/code-run.ts` is the explicit bridge between the
+Agent tool registry and the server runner. It is deliberately not auto-wired
+into the Expo/browser bundle:
+
+- `registerCodeRunTool()` registers the `code.run` tool boundary.
+- Without `configureCodeRunAdapter(...)`, execution fails with
+  `CODE_RUNNER_NOT_CONFIGURED`; it never returns demo output.
+- A backend configures the bridge with
+  `createDockerCodeRunAdapter(...)` from `execution-core/code-run-tool.mjs`.
+- The adapter returns real stdout, stderr, exitCode, duration, isolation,
+  network policy, workspace file list, and evidence directory metadata.
+
+Example server bootstrap (run in a Node backend, not Expo):
+
+```ts
+import { createDockerCodeRunAdapter } from './execution-core/code-run-tool.mjs';
+import { configureCodeRunAdapter, registerCodeRunTool } from './src/services/agent-engine/code-run';
+
+configureCodeRunAdapter(createDockerCodeRunAdapter({
+  getWorkspaceFiles: async () => workspaceFiles,
+}));
+registerCodeRunTool();
+```
+
+The backend must still enforce authentication, workspace ownership, approval
+for the dangerous capability, concurrency quotas, and evidence persistence.
+
 ## Controlled Node VM runner
 
 `runJavaScriptInVm()` is also available for low-risk server-side snippets and

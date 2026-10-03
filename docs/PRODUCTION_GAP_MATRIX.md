@@ -13,7 +13,7 @@
 | Self-healing | Orchestrator retry/selfHeal callback | Yes in orchestrator tests | Yes, bounded to 3 attempts | Yes: retry success and retry limit | Repair through safe patch/workspace in client path |
 | Dangerous-tool permission gate | Orchestrator `requestPermission`, execution-core permission gateway | Partial; Agents UI currently deny-by-default | Yes in core | Yes: permission denial tests | User Approval UI and approval persistence |
 | Task statuses | `TaskStatus` plus orchestrator statuses | Partial | `blocked` exists in orchestrator but UI mapping is incomplete | Partial | Add `blocked`, `completed_with_warnings`, `pending` consistently to UI/task model |
-| `code.run` | Catalog and Docker/VM sandbox modules | Not registered in TypeScript production registry | Sandbox implementation real, production tool adapter absent | Sandbox unit tests pass | Wire tool to execution-core from Agent runtime |
+| `code.run` | Catalog, configurable registry bridge, Docker/VM sandbox modules | Yes at the server-runner boundary; not auto-wired into Expo client | Docker adapter and sandbox are real; live container requires backend runtime | 14 Phase 1 tests + 28 execution tests pass; no live Docker smoke test in Sandbox | Deploy Node backend with Docker/Podman, configure adapter, persist evidence, run live container smoke/E2E |
 | `code.analyze` | Analyzer service exists | Not registered in agent tool registry | Service real, Agent path absent | Existing analyzer coverage partial | Register adapter with workspace/evidence contract |
 | Workspace tools | `workspace/tools.ts` | Imported by `useWorkspaceStore` | Real in local workspace | Existing Phase 2 tests | Authenticated backend workspace boundary |
 | `files.read/write/scan` | Catalog entries | Not registered as matching Agent tools | No unified live adapter | No direct Agent-path tests | Register or mark unavailable |
@@ -45,7 +45,7 @@
 
 **Phase 1 is partially implemented, not fully closed:** the unified Chat/Agents runtime, verification/evidence flow, self-healing loop, and live timeline are connected and tested. The remaining Phase 1 blockers are the user Approval UI and complete task status model (`BLOCKED`, `COMPLETED_WITH_WARNINGS`, `CANCELLED`) across the UI and stores.
 
-**Phase 2 is not started from the master-task definition:** `code.run` has a tested sandbox module, but the Agent tool registry does not yet connect it to the execution-core runtime.
+**Phase 2 is partially implemented:** `code.run` now has a strict Agent Registry bridge and a Node-side Docker adapter that forwards workspace files and returns real sandbox evidence. A live container smoke test and authenticated backend deployment are still required before calling the capability production-running.
 
 **Phases 3–10 remain open:** backend/database/auth/multi-tenancy, durable workers, browser E2E, production memory/RAG, model routing/live tools, plugins/secrets, observability/security/CI, and final audit.
 
