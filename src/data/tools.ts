@@ -36,6 +36,8 @@ export const TOOLS: ToolDefinition[] = [
     parameters: [
       { name: 'language', type: 'string', description: 'Language', required: true, enumValues: ['javascript', 'python'] },
       { name: 'source', type: 'string', description: 'Source code', required: true },
+      { name: 'timeoutMs', type: 'number', description: 'Execution timeout in milliseconds', minimum: 1, maximum: 120000, default: 30000 },
+      { name: 'maxOutputBytes', type: 'number', description: 'Maximum combined stdout/stderr bytes', minimum: 1, maximum: 2000000, default: 256000 },
     ],
     dangerous: true,
     icon: 'terminal',
