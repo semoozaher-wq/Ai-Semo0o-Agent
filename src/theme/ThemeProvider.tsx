@@ -3,9 +3,10 @@ import React, {
   useCallback,
   useContext,
   useMemo,
+  useEffect,
   useState,
 } from 'react';
-import { I18nManager, useColorScheme } from 'react-native';
+import { I18nManager, Platform, useColorScheme } from 'react-native';
 import { darkTheme, lightTheme, Theme, ThemeMode } from './theme';
 
 export type ThemePreference = 'system' | ThemeMode;
@@ -16,6 +17,7 @@ interface ThemeContextValue {
   preference: ThemePreference;
   isRTL: boolean;
   setPreference: (pref: ThemePreference) => void;
+  setRTL: (rtl: boolean) => void;
   toggleMode: () => void;
 }
 
@@ -48,10 +50,26 @@ export function ThemeProvider({
 
   const theme = resolvedMode === 'dark' ? darkTheme : lightTheme;
 
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.documentElement.dir = isRTL ? 'rtl' : 'ltr';
+      document.documentElement.lang = isRTL ? 'ar' : 'en';
+    }
+  }, [isRTL]);
+
+  const setRTL = useCallback((rtl: boolean) => {
+    setIsRTL(rtl);
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.documentElement.dir = rtl ? 'rtl' : 'ltr';
+      document.documentElement.lang = rtl ? 'ar' : 'en';
+    } else if (I18nManager.isRTL !== rtl) {
+      I18nManager.allowRTL(rtl);
+      I18nManager.forceRTL(rtl);
+    }
+  }, []);
+
   const setPreference = useCallback((pref: ThemePreference) => {
     setPreferenceState(pref);
-    const rtl = pref === 'light' ? I18nManager.isRTL : true;
-    setIsRTL(rtl);
   }, []);
 
   const toggleMode = useCallback(() => {
@@ -73,9 +91,10 @@ export function ThemeProvider({
       preference,
       isRTL,
       setPreference,
+      setRTL,
       toggleMode,
     }),
-    [theme, resolvedMode, preference, isRTL, setPreference, toggleMode],
+    [theme, resolvedMode, preference, isRTL, setPreference, setRTL, toggleMode],
   );
 
   return (
