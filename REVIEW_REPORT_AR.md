@@ -1,105 +1,139 @@
-# تقرير الفحص والإكمال — Ai-Semo0o-Agent
+# تقرير فحص وربط Ai-Semo0o-Agent
 
-**المستودع:** `semoozaher-wq/Ai-Semo0o-Agent`  
-**الفرع المفحوص:** `master`  
-**آخر commit قبل التعديل:** `53dd2f8` (`Add files via upload`)  
-**تاريخ الفحص:** 2026-10-03
+## النتيجة التنفيذية
 
-## 1. نطاق الفحص
+تم تحويل مسار التشغيل الرئيسي من تنفيذ محلي في الواجهة إلى مسار Backend فعلي:
 
-تمت مراجعة بنية المشروع، تطبيق Expo/React Native، خدمات الذكاء الاصطناعي، محرّك الوكلاء، الـ backend، اختبارات الأمان، تكامل GitHub/ZIP، بيانات BodyMap، إعدادات TypeScript وESLint وExpo، وسير بناء الويب.
+> **User → Auth → Project/Workspace isolation → Queue → Server LLM → Plan → Permission → Tool → Evidence → Verify → Final LLM result → SSE → Expo**
 
-## 2. المشاكل التي تم اكتشافها ومعالجتها
+تم الحفاظ على الواجهة الحالية وRTL، ولم تتم إعادة بناء طبقات موجودة؛ أُضيفت طبقة الربط الخلفية فوقها، مع إزالة اعتماد Chat/Agents على `AIService` المباشر في العميل.
 
-### أ) أخطاء TypeScript بسبب استيرادات نسبية خاطئة
+## ما كان موجودًا قبل التنفيذ
 
-كانت مخازن الحالة تحتوي على مسارات لا تطابق مكانها الفعلي بعد نقلها إلى `src/store`، مثل استيراد `../../types/chat` من ملف موجود داخل `src/store`. أدى ذلك إلى أخطاء `TS2307` وأخطاء `implicit any` متسلسلة.
+- تطبيق Expo/Web بواجهة عربية RTL وStores للمحادثات والوكلاء.
+- Backend بـ SQLite وAuth وTenant/Project/Workspace isolation.
+- Queue/Worker وCode Runner بحدود Sandbox موجودة.
+- Planner/Orchestrator/Tool Calling واختبارات Phase 1/2 موجودة في طبقة التنفيذ.
+- Tool Registry كان يعلن أدوات كثيرة، لكن معظمها لم يكن متصلًا بمسار Backend الفعلي.
+- الاختبارات السابقة كانت قوية، لكن لم يكن هناك مسار موحد من API إلى LLM والأدوات وSSE.
 
-**الإجراء:** تصحيح استيرادات `useChatStore.ts` و`useWorkspaceStore.ts` و`useAgentsStore.ts` لتستخدم المسارات الصحيحة، وإضافة نوع `WorkspaceFile` الصريح في شاشة مساحة العمل.
+## ما تم ربطه وتنفيذه
 
-### ب) نسخة مكررة غير مستخدمة من مخازن Zustand
+### 1. LLM Server-side
 
-كان هناك تكرار غير مستخدم داخل `src/services/store/useAgentsStore.ts` و`useChatStore.ts` و`useWorkspaceStore.ts`، مع استيرادات مكسورة. النسخة المستخدمة فعليًا من التطبيق موجودة في `src/store`.
+- أُضيف `backend/llm/providers.mjs` لدعم OpenAI-compatible وGemini وAnthropic.
+- المفاتيح لا تدخل إلى Expo ولا تُرسل من العميل؛ تُقرأ من متغيرات بيئة Backend فقط.
+- Retry وTimeout وHTTP error handling موحدة.
+- تم دعم `OPENAI_API_BASE` حتى يعمل الخادم مع OpenAI-compatible proxy.
+- تم التحقق فعليًا من موصل OpenAI مع `gpt-5` وكانت الاستجابة `BACKEND_LLM_OK`.
 
-**الإجراء:** حذف الملفات المكررة فقط، مع الإبقاء على `src/services/store/index.ts` لأنه خدمة متجر الوكلاء وليس مخزن Zustand.
+### 2. Agent Runtime
 
-### ج) فحص Phase 2 غير مضمّن في `npm test`
+- أُضيف `backend/agent/runtime.mjs` لدورة:
+  - Planner ينتج خطة JSON مقيدة بالأدوات المسجلة.
+  - إعادة تخطيط واحدة عند اختيار Tool غير موجود أو خطة غير صالحة.
+  - Tool Calling من LLM مع التحقق من اسم الأداة.
+  - Permission gate للأدوات الخطرة.
+  - تنفيذ فعلي للأداة.
+  - Evidence hash وTool Call record.
+  - Verification gate يمنع إعلان النجاح بلا output صالح.
+  - Final LLM synthesis مع ذكر الدليل والقيود.
+  - Self-healing محدود: Diagnose → Repair args → Retry مرة واحدة → Verify.
+  - يمنع مسار الإصلاح الذاتي تعديل security/auth/policy.
 
-كان سكربت `test:phase2` موجودًا لكنه غير مستدعًى داخل الاختبار الشامل.
+### 3. أدوات حقيقية
 
-**الإجراء:** إضافة `npm run test:phase2` إلى سكربت `npm test`.
+تم توصيل الأدوات التالية بتنفيذ Backend حقيقي:
 
-### د) غياب `.gitignore`
+- `web.scrape`: جلب صفحة عامة مع SSRF protection وحد نص.
+- `web.search`: Tavily عند ضبط `TAVILY_API_KEY`.
+- `files.read`, `files.write`, `files.scan`: داخل Workspace مع منع traversal.
+- `code.run`: يمر عبر Sandbox/runner الموجود مع حدود التنفيذ.
+- `code.analyze`: فحص static bounded بدون تعديل.
+- `data.profile`: CSV/JSON profiling.
+- `pdf.extract`: `pdftotext` على ملف داخل Workspace.
+- `doc.summarize`, `translate`: عبر LLM الخادمي.
 
-كان `expo-doctor` يفشل لأن مجلد `.expo` غير مستثنى من Git، كما لم تكن هناك حماية كافية لملفات البيئة والاعتماديات وبيانات backend المحلية.
+الأدوات التالية **ليست Mock**؛ وهي مرفوضة بوضوح حتى يتم توصيل Connector فعلي:
 
-**الإجراء:** إضافة `.gitignore` يشمل `.expo/` و`node_modules/` وملفات `.env` والمفاتيح المحلية ومخرجات البناء وملفات SQLite المحلية.
+- `image.generate`
+- `image.analyze`
+- `calendar.schedule`
+- `email.send`
 
-### هـ) غياب فحص CI موحّد
+### 4. Queue وWorker وSSE
 
-لم يكن هناك سير عمل GitHub Actions يضمن استمرار نجاح الفحوصات بعد الدمج.
+- تسجيل `agent.run` في Queue وWorker.
+- حالات التشغيل: queued/running/waiting_approval/completed/failed/blocked/cancelled/unverified.
+- Cancel وRetry عبر API.
+- حفظ checkpoint للعودة بعد Permission.
+- SSE على `/runs/:id/events` للأحداث: planning, permission, tool, self-healing, verification, run_finished.
+- عميل Expo يستهلك SSE ويعرض تقدم Agent بدل استدعاء AI مباشر.
 
-**الإجراء:** إضافة `.github/workflows/quality.yml` ليشغّل التثبيت، TypeScript، ESLint، الاختبارات الشاملة، Expo Doctor، وبناء الويب على كل Push وPull Request.
+### 5. Auth وIsolation وSecrets
 
-## 3. نتائج التحقق النهائية
+- تسجيل دخول/تسجيل جهاز تلقائي بحساب مستقل لكل تثبيت، مع Session token.
+- عزل Tenant/Project/Workspace بقي كما هو، مع تثبيت `root_path` للمشروع بدل قيمة فارغة.
+- إزالة حفظ API keys من الواجهة؛ شاشة Settings تعرض أن المفاتيح تُدار على الخادم.
+- قالب إعداد آمن في `backend/.env.example` بلا أسرار.
+- Audit log وEvidence وUsage/Token/Cost tracking مضافة إلى SQLite.
 
-| الفحص | النتيجة |
-|---|---:|
-| `npm run typecheck` | ✅ ناجح — 0 أخطاء |
-| `npm run lint` | ✅ ناجح |
-| `npm test` | ✅ ناجح |
-| Harness | ✅ 80/80 |
-| Execution tests | ✅ 28/28 |
-| Phase 1 tests | ✅ 14/14 |
-| Phase 2 tests | ✅ 11/11 |
-| Backend tests | ✅ 7/7 |
-| Pain-map validation | ✅ ناجح |
-| `npm run doctor` | ✅ 21/21 |
-| `npm run build` | ✅ ناجح — 17 مسار ويب |
-| `git diff --check` | ✅ بلا أخطاء مسافات أو patch |
+## الملفات المضافة
 
-## 4. مراجعة الأمان والاعتماديات
+- `backend/agent/catalog.mjs`
+- `backend/agent/runtime.mjs`
+- `backend/llm/providers.mjs`
+- `backend/runtime-shared.mjs`
+- `backend/test/agent-runtime.test.mjs`
+- `backend/.env.example`
 
-تم التحقق من وجود اختبارات تمنع traversal وSSRF، وتفرض الصلاحيات على الأدوات الخطرة، وتعزل المستأجرين في الـ backend، وتمنع تسريب الأسرار، وتتحقق من تشغيل الكود داخل حدود آمنة.
+## الملفات المعدلة
 
-أظهر `npm audit --omit=dev` وجود **30 تنبيهًا** في سلسلة Expo/Metro/React Native الحالية: **19 عاليًا و11 متوسطًا**. معظم الإصلاحات المقترحة من npm تتطلب الرجوع إلى Expo 44 أو React Native 0.72 أو ترقية رئيسية مختلفة، وهو ما قد يكسر توافق Expo SDK 57. لذلك لم أطبّق `npm audit fix --force` تلقائيًا؛ التوصية هي تنفيذ ترقية Expo رئيسية مخططة مع قراءة دليل الإصدار، ثم إعادة اختبار Android وiOS والويب.
+- `backend/db/schema.sql`
+- `backend/queue/queue.mjs`
+- `backend/server.mjs`
+- `backend/tools/registry.mjs`
+- `backend/worker.mjs`
+- `src/services/api/client.ts`
+- `src/store/useChatStore.ts`
+- `src/store/useAgentsStore.ts`
+- `src/store/useAppStore.ts`
+- `src/hooks/useBootstrap.ts`
+- `src/screens/Settings.tsx`
+- ملفات Store/imports التي كانت مكررة أو ذات مسارات مفقودة من الفحص السابق.
+- تمت إعادة ملفات `dist` المولدة إلى حالة Git الأصلية حتى لا تختلط مخرجات البناء بتعديلات المصدر.
 
-هذه التنبيهات في معظمها ضمن أدوات البناء وسلسلة Metro، وليست دليلًا على وجود أسرار داخل المستودع. لم يتم العثور على ملفات أسرار متتبعة مثل `.env` أو مفاتيح خاصة.
+## الاختبارات والتحقق
 
-## 5. الملفات المعدلة
+نجحت جميع الفحوصات:
 
-- `package.json` — إدراج اختبارات Phase 2 ضمن `npm test`.
-- `src/store/useAgentsStore.ts` — تصحيح الاستيرادات النسبية.
-- `src/store/useChatStore.ts` — تصحيح الاستيرادات النسبية.
-- `src/store/useWorkspaceStore.ts` — تصحيح استيرادات workspace والـ tools.
-- `src/screens/Workspace.tsx` — إضافة typing صريح لـ `WorkspaceFile`.
-- ملفات `dist/` — إعادة توليد مخرجات الويب بعد الإصلاحات.
+- `npm run typecheck`: **نجاح**
+- `npm run lint`: **نجاح، دون أخطاء أو تحذيرات**
+- الاختبار الشامل: **80/80** في harness
+- اختبارات execution: **28/28**
+- اختبارات Phase 1: **14/14**
+- اختبارات Phase 2: **11/11**
+- اختبارات Backend: **8/8**
+- `npm run doctor`: **21/21**
+- `npm run build`: **نجاح**
+- اختبار E2E Auth → Project → Queue → Tool → Evidence → SSE: **نجاح**
+- اختبار E2E حقيقي مع OpenAI `gpt-5`: **نجاح**؛ نفّذ `files.scan` وأنتج جوابًا نهائيًا بالدليل، وسُجلت 2 Evidence وUsage: 2,943 token مع cost tracking.
 
-## 6. الملفات المحذوفة لأنها مكررة وغير مستخدمة
+## المتبقي فقط
 
-- `src/services/store/useAgentsStore.ts`
-- `src/services/store/useChatStore.ts`
-- `src/services/store/useWorkspaceStore.ts`
+1. يجب ضبط مفاتيح Gemini/Anthropic/Tavily في بيئة الإنتاج إذا أريد تفعيلها؛ البيئة الحالية تحوي OpenAI فقط.
+2. أدوات الصور والبريد والتقويم تحتاج Connectors حقيقية قبل تفعيلها، وهي الآن تفشل صراحة ولا تدعي النجاح.
+3. يلزم تشغيل `backend/worker.mjs` كخدمة مستقلة في الإنتاج مع Secret Manager ونسخ احتياطي SQLite/ترقية قاعدة بيانات مناسبة.
+4. SSE يعرض تقدم التشغيل ونتائجه؛ لا يوجد حاليًا token-by-token streaming من مزود LLM لأن مزودات proxy الحالية لا تعتمد streaming موحدًا.
+5. Bootstrap auth التلقائي مناسب لتجربة الجهاز؛ للمنتج متعدد المستخدمين يجب إضافة شاشة Login/Invite وإدارة أعضاء Workspace.
 
-تم الإبقاء على خدمة المتجر في `src/services/store/index.ts`، وعلى مخازن التطبيق الرسمية في `src/store/`.
-
-## 7. الملفات المضافة
-
-- `.gitignore`
-- `.github/workflows/quality.yml`
-- هذا التقرير: `REVIEW_REPORT_AR.md`
-
-## 8. حدود ما لم يتم ادعاؤه
-
-الفحص محلي ولم يتضمن نشرًا أو تشغيلًا على جهاز Android/iOS فعلي، ولا إعداد أسرار الإنتاج، ولا Docker/Chromium/CDP خارجيًا، ولا ترقية رئيسية لمكدس Expo. هذه أعمال نشر وتشغيل لاحقة وليست إصلاحات آمنة تلقائية.
-
-## 9. طريقة التحقق بعد استلام الملفات
+## تشغيل Backend
 
 ```bash
-npm ci
-npm run typecheck
-npm run lint
-npm test
-npm run doctor
-npm run build
+cp backend/.env.example .env
+# ضع الأسرار في Secret Manager أو بيئة التشغيل، لا في Git
+node backend/worker.mjs
+node backend/server.mjs
 ```
+
+يجب ضبط `EXPO_PUBLIC_BACKEND_URL` في Expo إلى عنوان Backend، ولا يجب وضع أي `OPENAI_API_KEY` أو مفاتيح مزودين في Expo.
