@@ -90,6 +90,11 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       const parts = routeParts(request.url);
       const method = request.method;
       if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', time: now() });
+      if (method === 'GET' && parts[0] === 'ready') {
+        const providers = llm.status?.() ?? [];
+        const ready = providers.some((provider) => provider.configured && provider.healthy !== false);
+        return send(response, ready ? 200 : 503, { ok: ready, service: 'ai-semo0o-agent-backend', providers, time: now() });
+      }
       if (method === 'POST' && parts.join('/') === 'auth/register') {
         const input = await body(request);
         const result = createUser(db, input);
@@ -104,14 +109,27 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
+      if (method === 'POST' && parts.join('/') === 'chat') {
+        const input = await body(request);
+        const message = validateText(input.message, 'MESSAGE', 12000);
+        const model = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined;
+        const result = await llm.complete({ model, messages: [
+          { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
+          { role: 'user', content: message },
+        ] });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.completed', 'chat', user.id, JSON.stringify({ provider: result.provider, model: model || null, usage: result.usage }), now());
+        return send(response, 200, { text: result.text, provider: result.provider, usage: result.usage });
+      }
       if (method === 'POST' && parts[0] === 'projects' && parts.length === 1) {
         const input = await body(request);
         const name = validateText(input.name || 'Project', 'PROJECT_NAME');
         if (input.rootPath !== undefined && typeof input.rootPath !== 'string') throw new Error('INVALID_ROOT_PATH');
+        const rootPath = input.rootPath || process.env.WORKSPACE_ROOT;
+        if (!rootPath) throw new Error('WORKSPACE_ROOT_REQUIRED');
         const projectId = id('project'); const workspaceId = id('workspace'); const timestamp = now();
         db.transaction(() => {
           db.run('INSERT INTO projects(id,tenant_id,owner_id,name,created_at) VALUES(?,?,?,?,?)', projectId, user.tenantId, user.id, name, timestamp);
-          db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, projectId, input.rootPath || process.env.WORKSPACE_ROOT || process.cwd(), timestamp);
+          db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, projectId, rootPath, timestamp);
         });
         return send(response, 201, { projectId, workspaceId });
       }
@@ -171,7 +189,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
     }
   });
@@ -186,5 +204,8 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
   const port = Number(process.env.PORT || 8787);
+  const shutdown = () => { app.queue.stop(); app.server.close(() => db.close()); };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
   app.server.listen(port, process.env.BIND_HOST || '127.0.0.1', () => console.log(`backend listening on ${port}`));
 }
