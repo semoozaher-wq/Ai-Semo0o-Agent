@@ -29,11 +29,11 @@ The remaining repository-level gaps were implemented as real code and deployable
 - `npm run lint`: PASS.
 - `npm run build`: PASS.
 
-## Items that cannot be truthfully completed inside this Sandbox
+## Items that cannot be truthfully activated inside this Sandbox
 
 The current execution device has no Docker/Podman daemon. Therefore no live container run is claimed here; `.github/workflows/docker-smoke.yml` is the real execution gate for a Docker-enabled CI/worker host. The backend fails closed and persists failure evidence when no runner exists.
 
-A managed external Secret Manager, public TLS certificate, DNS, reverse-proxy deployment, persistent worker host, and real Chromium/CDP browser pool are deployment operations. Templates and CI gates are included, but credentials and external infrastructure cannot be invented or activated from the repository alone.
+A managed external Secret Manager, public TLS certificate, DNS, reverse-proxy deployment, persistent worker host, and real Chromium/CDP browser pool are deployment operations, not repository source gaps. Templates and CI gates are included, but credentials and external infrastructure cannot be invented or activated from the repository alone. See `docs/DEPLOYMENT_OPERATIONS.md` for the acceptance runbook.
 
 ## Deployment sequence
 
