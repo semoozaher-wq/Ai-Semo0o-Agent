@@ -92,7 +92,7 @@ test('LLM planner falls back to the next provider and records the failed attempt
   assert.match(result.attempts[0].error ?? '', /PROVIDER_UNAVAILABLE/);
 });
 
-test('orchestrator never reports verified success for simulated tools', async () => {
+test('orchestrator never reports verified success for unavailable tools', async () => {
   const provider = new DeterministicProvider(planJson);
   const result = await new AgentOrchestrator().run({
     goal: 'افحص المشروع ثم تحقق منه',
@@ -102,11 +102,11 @@ test('orchestrator never reports verified success for simulated tools', async ()
     requestPermission: async () => true,
   });
 
-  assert.equal(result.status, 'completed_with_warnings');
-  assert.ok(result.warnings.includes('SIMULATED_TOOL_RESULT:code.run'));
-  assert.equal(result.outputs.length, 2);
-  assert.equal(result.outputs.every((output) => output.simulated), true);
-  assert.ok(result.costUsd > 0);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.outputs.length, 1);
+  assert.equal(result.outputs[0].ok, false);
+  assert.match(result.outputs[0].error ?? '', /لا يوجد تنفيذ للأداة/);
+  assert.ok(result.errors.some((error) => /لا يوجد تنفيذ للأداة/.test(error)));
 });
 
 test('orchestrator blocks dangerous tools without explicit permission', async () => {
