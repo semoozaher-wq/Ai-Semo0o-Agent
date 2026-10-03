@@ -113,20 +113,40 @@ export function createLLMRouter(env = process.env) {
     (env.GEMINI_API_KEY || env.GOOGLE_API_KEY) ? { id: 'gemini', key: env.GEMINI_API_KEY || env.GOOGLE_API_KEY, defaultModel: env.GEMINI_MODEL || 'gemini-3-flash-preview' } : null,
     env.ANTHROPIC_API_KEY ? { id: 'anthropic', key: env.ANTHROPIC_API_KEY, defaultModel: env.ANTHROPIC_MODEL || 'claude-haiku-4-5' } : null,
   ].filter(Boolean);
+  const health = new Map(providers.map((item) => [item.id, { failures: 0, unavailableUntil: 0 }]));
   const choose = (model) => {
     const lower = String(model || '').toLowerCase();
     const preferred = lower.includes('gemini') ? 'gemini' : lower.includes('claude') || lower.includes('anthropic') ? 'anthropic' : 'openai';
     return providers.find((item) => item.id === preferred) ?? providers[0];
   };
   return {
-    status: () => providers.map(({ id, defaultModel }) => ({ id, model: defaultModel, configured: true })),
+    status: () => providers.map(({ id, defaultModel }) => ({ id, model: defaultModel, configured: true, healthy: (health.get(id)?.unavailableUntil ?? 0) <= Date.now() })),
     async complete(input) {
-      const provider = choose(input.model);
-      if (!provider) throw new Error('NO_SERVER_LLM_PROVIDER_CONFIGURED');
-      const model = input.model && !['default', 'auto'].includes(input.model) ? input.model : provider.defaultModel;
-      if (provider.id === 'gemini') return geminiComplete({ ...input, apiKey: provider.key, model });
-      if (provider.id === 'anthropic') return anthropicComplete({ ...input, apiKey: provider.key, model });
-      return openaiComplete({ ...input, apiKey: provider.key, baseUrl: provider.baseUrl, model });
+      if (!providers.length) throw new Error('NO_SERVER_LLM_PROVIDER_CONFIGURED');
+      const requested = String(input.model || '').toLowerCase();
+      const explicitFamily = requested && !['default', 'auto'].includes(requested) ? (requested.includes('gemini') ? 'gemini' : requested.includes('claude') || requested.includes('anthropic') ? 'anthropic' : 'openai') : null;
+      const ordered = [choose(input.model), ...providers].filter((item, index, all) => item && all.findIndex((candidate) => candidate.id === item.id) === index);
+      const candidates = explicitFamily ? ordered.filter((item) => item.id === explicitFamily) : ordered;
+      let lastError;
+      for (const provider of candidates) {
+        const state = health.get(provider.id);
+        if (state?.unavailableUntil > Date.now()) continue;
+        const model = explicitFamily ? input.model : (input.model && !['default', 'auto'].includes(input.model) ? input.model : provider.defaultModel);
+        try {
+          const result = provider.id === 'gemini'
+            ? await geminiComplete({ ...input, apiKey: provider.key, model: explicitFamily ? model : provider.defaultModel })
+            : provider.id === 'anthropic'
+              ? await anthropicComplete({ ...input, apiKey: provider.key, model: explicitFamily ? model : provider.defaultModel })
+              : await openaiComplete({ ...input, apiKey: provider.key, baseUrl: provider.baseUrl, model: explicitFamily ? model : provider.defaultModel });
+          if (state) { state.failures = 0; state.unavailableUntil = 0; }
+          return result;
+        } catch (error) {
+          lastError = error;
+          if (state) { state.failures += 1; state.unavailableUntil = Date.now() + Math.min(60_000, 1_000 * (2 ** Math.min(state.failures, 6))); }
+          if (explicitFamily) break;
+        }
+      }
+      throw lastError ?? new Error('NO_HEALTHY_LLM_PROVIDER');
     },
   };
 }
