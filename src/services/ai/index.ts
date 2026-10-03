@@ -1,6 +1,5 @@
 export {
   AIService,
-  MockProvider,
   ProviderRegistry,
   aiService,
   configureProviders,

@@ -11,8 +11,8 @@ import { estimateTokens } from '../../utils/text';
 import { uid } from '../../utils/id';
 
 /**
- * The contract every model backend implements. `MockProvider` and the real
- * HTTP providers (OpenAI, Gemini, Anthropic) all satisfy this interface, so the
+ * The contract every model backend implements. Real HTTP providers (OpenAI,
+ * Gemini, Anthropic) satisfy this interface, so the
  * rest of the app never needs to know which one is active.
  */
 export interface LLMProvider {
