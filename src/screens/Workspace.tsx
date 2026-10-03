@@ -170,13 +170,13 @@ export function Workspace() {
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return files
-      .filter((f) => (onlyModified ? f.modified : true))
-      .filter((f) => (q ? f.path.toLowerCase().includes(q) : true))
-      .sort((a, b) => a.path.localeCompare(b.path));
+      .filter((f: WorkspaceFile) => (onlyModified ? f.modified : true))
+      .filter((f: WorkspaceFile) => (q ? f.path.toLowerCase().includes(q) : true))
+      .sort((a: WorkspaceFile, b: WorkspaceFile) => a.path.localeCompare(b.path));
   }, [files, query, onlyModified]);
 
   const modifiedPaths = React.useMemo(
-    () => files.filter((f) => f.modified).map((f) => f.path),
+    () => files.filter((f: WorkspaceFile) => f.modified).map((f: WorkspaceFile) => f.path),
     [files],
   );
 
@@ -474,7 +474,7 @@ export function Workspace() {
             />
           ) : (
             <View style={{ marginTop: theme.spacing.md }}>
-              {filtered.map((file) => (
+              {filtered.map((file: WorkspaceFile) => (
                 <Pressable
                   key={file.id}
                   onPress={() =>
