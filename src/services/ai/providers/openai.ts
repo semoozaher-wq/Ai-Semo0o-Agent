@@ -157,6 +157,16 @@ export class OpenAIProvider implements LLMProvider {
       const choice = normalizeToolChoice(req.toolChoice);
       body.tool_choice = choice.openai;
     }
+    if (req.responseFormat) {
+      body.response_format = {
+        type: req.responseFormat.type,
+        json_schema: {
+          name: req.responseFormat.jsonSchema.name,
+          strict: req.responseFormat.jsonSchema.strict ?? true,
+          schema: req.responseFormat.jsonSchema.schema,
+        },
+      };
+    }
     return body;
   }
 
