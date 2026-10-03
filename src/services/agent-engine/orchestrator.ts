@@ -5,6 +5,13 @@ import type { Plan, PlanStep } from '../../types/task';
 import type { ToolDefinition } from '../../types/tool';
 import { runTool } from './tools';
 import { LLMPlanner, type LLMPlanResult } from './llm-planner';
+import {
+  classifyFailure,
+  verifyEvidence,
+  type Evidence,
+  type FailureKind,
+  type VerificationResult,
+} from './verification';
 
 export type OrchestratorStatus =
   | 'completed'
@@ -32,6 +39,7 @@ export interface OrchestratorEvent {
 }
 
 export interface OrchestratorInput {
+  taskId?: string;
   goal: string;
   model: string;
   providers: LLMProvider[];
@@ -44,6 +52,19 @@ export interface OrchestratorInput {
     tool: ToolDefinition;
     step: PlanStep;
   }) => boolean | Promise<boolean>;
+  maxAttempts?: number;
+  verifyStep?: (input: {
+    step: PlanStep;
+    output: unknown;
+    evidence: Evidence[];
+  }) => VerificationResult | Promise<VerificationResult>;
+  selfHeal?: (input: {
+    step: PlanStep;
+    failureKind: FailureKind;
+    verification: VerificationResult;
+    evidence: Evidence[];
+    attempt: number;
+  }) => Promise<{ action: 'retry' | 'repair' | 'replan' | 'block'; toolArgs?: Record<string, unknown> } | undefined>;
 }
 
 export interface OrchestratorResult {
@@ -64,6 +85,8 @@ export interface OrchestratorResult {
   errors: string[];
   usage: LLMPlanResult['usage'];
   costUsd: number;
+  evidence: Evidence[];
+  verifications: VerificationResult[];
 }
 
 const emptyUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -88,6 +111,8 @@ export class AgentOrchestrator {
     const outputs: OrchestratorResult['outputs'] = [];
     const warnings: string[] = [];
     const errors: string[] = [];
+    const evidence: Evidence[] = [];
+    const verifications: VerificationResult[] = [];
     const tools = input.tools ?? [];
     const maxSteps = Math.max(1, Math.min(input.maxSteps ?? 20, 20));
 
@@ -118,6 +143,8 @@ export class AgentOrchestrator {
         errors,
         usage: emptyUsage,
         costUsd: 0,
+        evidence,
+        verifications,
       };
     }
 
@@ -135,21 +162,23 @@ export class AgentOrchestrator {
         errors,
         usage: planned.usage,
         costUsd: aiService.estimateCostUsd(input.model, planned.usage),
+        evidence,
+        verifications,
       };
     }
 
     let usage = planned.usage;
     let hasExecutableStep = false;
-    let hasVerification = false;
+    let hasVerifiedEvidence = false;
+    const maxAttempts = Math.max(1, Math.min(input.maxAttempts ?? 3, 3));
 
     for (const step of plan.steps) {
       if (input.signal?.cancelled) {
         warnings.push('RUN_CANCELLED_BY_USER');
-        return this.finish('cancelled', plan, planned, events, outputs, warnings, errors, usage, input.model);
+        return this.finish('cancelled', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
       }
 
       events.push(event('step_started', { title: step.title, kind: step.kind }, step.id, step.toolId));
-      if (step.kind === 'verify') hasVerification = true;
       if (!step.toolId) {
         events.push(event('step_completed', { verified: false, reason: 'no_tool' }, step.id));
         continue;
@@ -160,7 +189,7 @@ export class AgentOrchestrator {
       if (!tool) {
         errors.push(`UNKNOWN_TOOL:${step.toolId}`);
         events.push(event('tool_completed', { ok: false, simulated: false, error: 'UNKNOWN_TOOL' }, step.id, step.toolId));
-        return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model);
+        return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
       }
 
       if (tool.dangerous) {
@@ -169,40 +198,94 @@ export class AgentOrchestrator {
         if (!allowed) {
           const message = `PERMISSION_DENIED:${tool.id}`;
           errors.push(message);
-          return this.finish('blocked', plan, planned, events, outputs, warnings, errors, usage, input.model);
+          return this.finish('blocked', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
         }
       }
 
-      const result = await runTool(step.toolId, step.toolArgs ?? {});
-      outputs.push({
-        stepId: step.id,
-        toolId: step.toolId,
-        ok: result.ok,
-        simulated: false,
-        output: result.output,
-        error: result.error,
-        durationMs: result.durationMs,
-      });
-      events.push(event('tool_completed', {
-        ok: result.ok,
-        simulated: false,
-        durationMs: result.durationMs,
-        error: result.error,
-      }, step.id, step.toolId));
+      let toolArgs = step.toolArgs ?? {};
+      let verified = false;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const result = await runTool(step.toolId, toolArgs);
+        const evidenceItem: Evidence = {
+          id: `${plan.id}:${step.id}:${attempt}`,
+          runId: plan.id,
+          taskId: input.taskId ?? plan.id,
+          stepId: step.id,
+          kind: 'toolResult',
+          input: toolArgs,
+          output: { ok: result.ok, value: result.output, error: result.error },
+          durationMs: result.durationMs,
+          simulated: Boolean(result.simulated),
+          timestamp: new Date().toISOString(),
+        };
+        evidence.push(evidenceItem);
+        outputs.push({
+          stepId: step.id,
+          toolId: step.toolId,
+          ok: result.ok,
+          simulated: Boolean(result.simulated),
+          output: result.output,
+          error: result.error,
+          durationMs: result.durationMs,
+        });
+        events.push(event('tool_completed', {
+          ok: result.ok,
+          simulated: Boolean(result.simulated),
+          durationMs: result.durationMs,
+          error: result.error,
+          attempt,
+        }, step.id, step.toolId));
 
-      if (!result.ok) {
-        errors.push(result.error ?? `TOOL_FAILED:${step.toolId}`);
-        return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model);
+        const verification = input.verifyStep
+          ? await input.verifyStep({ step, output: result.output, evidence: [evidenceItem] })
+          : verifyEvidence({ task: step, actualResult: result.output, evidence: [evidenceItem] });
+        verifications.push(verification);
+        events.push(event('step_completed', {
+          verified: verification.status === 'VERIFIED',
+          verification: verification.status,
+          attempt,
+        }, step.id, step.toolId));
+
+        if (verification.status === 'VERIFIED') {
+          verified = true;
+          hasVerifiedEvidence = true;
+          break;
+        }
+
+        const failureKind = result.ok
+          ? verification.failureKind ?? 'VALIDATION_FAILURE'
+          : classifyFailure(result.error, 'TOOL_FAILURE');
+        if (attempt >= maxAttempts || !input.selfHeal) {
+          errors.push(`${failureKind}:${result.error || verification.summary || step.toolId}`);
+          break;
+        }
+        const decision = await input.selfHeal({
+          step,
+          failureKind,
+          verification,
+          evidence: [evidenceItem],
+          attempt,
+        });
+        if (!decision || decision.action === 'block') {
+          errors.push(`${failureKind}:${result.error || verification.summary || step.toolId}`);
+          return this.finish(decision?.action === 'block' ? 'blocked' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+        }
+        if (decision.toolArgs) toolArgs = decision.toolArgs;
+        events.push(event('step_started', { recovery: decision.action, attempt: attempt + 1 }, step.id, step.toolId));
       }
-      events.push(event('step_completed', { verified: true }, step.id, step.toolId));
+
+      if (!verified) {
+        const lastVerification = verifications[verifications.length - 1];
+        return this.finish(lastVerification?.status === 'UNVERIFIED' ? 'unverified' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+      }
     }
 
-    if (!hasExecutableStep || !hasVerification) {
-      events.push(event('verification_required', { hasExecutableStep, hasVerification }));
-      warnings.push('NO_REAL_VERIFICATION_STEP');
-      return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model);
+    if (!hasExecutableStep || !hasVerifiedEvidence) {
+      events.push(event('verification_required', { hasExecutableStep, hasVerifiedEvidence }));
+      warnings.push('NO_VERIFIED_EVIDENCE');
+      return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
     }
-    return this.finish('completed', plan, planned, events, outputs, warnings, errors, usage, input.model);
+    return this.finish('completed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
   }
 
   private finish(
@@ -215,6 +298,8 @@ export class AgentOrchestrator {
     errors: string[],
     usage: LLMPlanResult['usage'],
     model: string,
+    evidence: Evidence[],
+    verifications: VerificationResult[],
   ): OrchestratorResult {
     const result = {
       status,
@@ -226,6 +311,8 @@ export class AgentOrchestrator {
       errors,
       usage: mergeUsage(emptyUsage, usage),
       costUsd: aiService.estimateCostUsd(model, usage),
+      evidence,
+      verifications,
     };
     return result;
   }

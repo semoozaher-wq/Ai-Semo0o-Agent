@@ -25,11 +25,13 @@ export interface ToolRunResult {
   output: unknown;
   logs: string[];
   durationMs: number;
+  simulated?: boolean;
   error?: string;
 }
 
 export interface ToolImplementationResult {
   output: unknown;
+  simulated?: boolean;
   logs?: string[];
 }
 
@@ -154,12 +156,13 @@ export async function runTool(
   }
 
   try {
-    const { output, logs: implLogs } = await impl(validation.value);
+    const { output, logs: implLogs, simulated } = await impl(validation.value);
     logs.push(...(implLogs ?? []));
     return {
       toolId,
       ok: true,
       output,
+      simulated,
       logs,
       durationMs: Date.now() - started,
     };
