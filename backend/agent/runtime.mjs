@@ -37,7 +37,8 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
   return async ({ run, payload, signal }) => {
     const task = db.get('SELECT * FROM tasks WHERE id=?', run.task_id);
     const workspace = db.get('SELECT * FROM workspaces WHERE id=?', task?.workspace_id);
-    const workspaceRoot = workspace?.root_path || process.env.WORKSPACE_ROOT || process.cwd();
+    const workspaceRoot = workspace?.root_path || process.env.WORKSPACE_ROOT;
+    if (!workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
     let usage = {};
     const outputs = [];
     const approvedTools = new Set(payload.approvedTools || []);
