@@ -1,6 +1,6 @@
-# Phase 2 package manifest
+# Phase 2 audit-fix release
 
-This archive contains only the independent Phase 2 Intelligence + Browser + Platform artifacts.
+This archive contains the corrected Phase 2 intelligence/browser/platform artifacts.
 
 - phase2-core/platform.mjs
 - phase2-core/browser-agent.mjs
@@ -8,5 +8,4 @@ This archive contains only the independent Phase 2 Intelligence + Browser + Plat
 - docs/PHASE2_INTELLIGENCE_PLATFORM.md
 - package.json
 
-Verification evidence: /home/ubuntu/workspace/phase2-evidence/final-summary.tsv
-Phase 2 tests: 8 passed; full project tests: 14 passed; typecheck/lint/build: exit code 0.
+Verification: 9 Phase 2 tests, 15 total Node tests, 80 legacy harness checks, typecheck/lint/build all exit 0.
