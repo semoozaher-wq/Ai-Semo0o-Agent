@@ -1,0 +1,13 @@
+Ai-Semo0o-Agent — Tavily web.search integration
+Generated: 2026-10-03
+
+Included:
+- Server-side Tavily Search adapter
+- Timeout and bounded retries
+- Retry-After support for rate limits
+- Normalized source evidence
+- Isolated adapter tests
+- Secure deployment documentation
+
+No API keys, node_modules, Expo cache, or temporary files are included.
+The adapter is backend-side and must not be imported into the Expo client bundle.
