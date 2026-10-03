@@ -6,6 +6,7 @@ import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
 import { DEFAULT_MODEL_ID } from '../data/models';
+import { useAgentsStore } from './useAgentsStore';
 
 /** Monotonic token used to cancel an in-flight stream. */
 let streamToken = 0;
@@ -28,6 +29,10 @@ interface ChatState {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function requiresAgentExecution(content: string): boolean {
+  return content.length >= 180 || /(حلل|افحص|أصلح|شغّل|شغل|اختبر|نفّذ|نفذ|مشروع|مستودع|ملفات|analy[sz]e|fix|run tests|repository|codebase|execute)/i.test(content);
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
@@ -177,6 +182,24 @@ export const useChatStore = create<ChatState>((set, get) => {
       const token = ++streamToken;
 
       try {
+        if (requiresAgentExecution(content)) {
+          const task = useAgentsStore.getState().createTask(content, { model });
+          patchMessage(conversationId, assistantId, {
+            content: 'بدأت تشغيل الوكيل: التخطيط والتنفيذ والتحقق…',
+            status: 'streaming',
+            agentTaskId: task.id,
+          });
+          await useAgentsStore.getState().runTask(task.id, { model });
+          const finished = useAgentsStore.getState().tasks.find((item) => item.id === task.id);
+          const status = finished?.status ?? 'failed';
+          const summary = finished?.result ?? finished?.error ?? 'لم ينتج الوكيل نتيجة قابلة للتحقق.';
+          patchMessage(conversationId, assistantId, {
+            content: `حالة الوكيل: ${status}\n\n${summary}`,
+            status: status === 'completed' ? 'complete' : 'error',
+            agentTaskId: task.id,
+          });
+          return;
+        }
         const history: ChatCompletionMessage[] = (get().messages[conversationId] ?? [])
           .filter((m) => m.status !== 'streaming' && m.role !== 'tool')
           .map((m) => ({ role: m.role, content: m.content }));
