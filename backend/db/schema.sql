@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS runs (
   payload_json TEXT NOT NULL,
   result_json TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
+  idempotency_key TEXT,
   checkpoint_json TEXT,
   worker_id TEXT,
   lease_until TEXT,
@@ -198,6 +199,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_runs_tenant_status ON runs(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_runs_lease ON runs(status, lease_until);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_tenant_idempotency ON runs(tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_approvals_run_decision ON approvals(run_id, decision);
 CREATE INDEX IF NOT EXISTS idx_evidence_run ON evidence(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_time ON audit_logs(tenant_id, created_at);

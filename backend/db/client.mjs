@@ -17,9 +17,14 @@ export class Database {
   migrate() {
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     this.db.exec(schema);
-    for (const statement of ['ALTER TABLE runs ADD COLUMN worker_id TEXT', 'ALTER TABLE runs ADD COLUMN lease_until TEXT']) {
+    for (const statement of [
+      'ALTER TABLE runs ADD COLUMN worker_id TEXT',
+      'ALTER TABLE runs ADD COLUMN lease_until TEXT',
+      'ALTER TABLE runs ADD COLUMN idempotency_key TEXT',
+    ]) {
       try { this.db.exec(statement); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
     }
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_tenant_idempotency ON runs(tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL');
     this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)").run(now());
   }
   run(sql, ...params) { return this.db.prepare(sql).run(...params); }
