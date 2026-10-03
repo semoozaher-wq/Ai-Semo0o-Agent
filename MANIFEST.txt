@@ -1,25 +1,24 @@
-Ai-Semo0o-Agent — PHASE 1 Final Unified Runtime
+Ai-Semo0o-Agent — PHASE 2 code.run bridge
 Generated: 2026-10-03
 
-Included modified/added files:
+Included:
+- src/services/agent-engine/code-run.ts
+- src/data/tools.ts
+- execution-core/code-run-tool.mjs
+- test/code-run-integration.test.ts
+- test/sandbox-runner.test.mjs
+- docs/CODE_RUN_SANDBOX.md
 - docs/PRODUCTION_GAP_MATRIX.md
-- docs/PHASE1_UNIFIED_RUNTIME_REPORT.md
-- src/services/agent-engine/orchestrator.ts
-- src/store/useAgentsStore.ts
-- src/store/useChatStore.ts
-- src/hooks/useBootstrap.ts
-- src/types/task.ts
-- src/types/chat.ts
-- src/screens/Agents.tsx
-- src/screens/Analytics.tsx
-- test/phase1-orchestrator.test.ts
+- docs/PHASE2_CODE_RUN_REPORT.md
+- package.json
 
 Validation:
-- npm test: PASS (80/80 harness, 27/27 execution, 12/12 Phase 1)
+- npm test: PASS (80/80 harness, 28/28 execution, 14/14 Phase 1)
 - npm run test:phase2: PASS (11/11)
 - npm run typecheck: PASS
 - npm run lint: PASS
 - npm run build: PASS
 
-Audit baseline SHA: 761a045
+Important limitation:
+The active Sandbox has no Docker/Podman runtime. The Docker invocation and runner contract are tested with injected process adapters; a live container smoke test is required on the authenticated backend/worker host.
 No credentials, node_modules, Expo cache, or temporary files included.
