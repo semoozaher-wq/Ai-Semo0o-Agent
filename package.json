@@ -57,5 +57,9 @@
     "typescript": "~6.0.3"
   },
   "private": true,
-  "packageManager": "npm@10.9.2"
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": ">=22.5.0",
+    "npm": ">=10.9.0"
+  }
 }
