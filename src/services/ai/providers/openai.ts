@@ -39,21 +39,21 @@ interface OpenAIToolCallDelta {
 interface OpenAIChoiceMessage {
   role: 'assistant';
   content: string | null;
-  tool_calls?: Array<{
+  tool_calls?: {
     id: string;
     type: 'function';
     function: { name: string; arguments: string };
-  }>;
+  }[];
 }
 
 interface OpenAIResponse {
   id: string;
   model: string;
-  choices: Array<{
+  choices: {
     index: number;
     message: OpenAIChoiceMessage;
     finish_reason: string;
-  }>;
+  }[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -64,14 +64,14 @@ interface OpenAIResponse {
 interface OpenAIStreamChunk {
   id: string;
   model: string;
-  choices: Array<{
+  choices: {
     index: number;
     delta: {
       content?: string | null;
       tool_calls?: OpenAIToolCallDelta[];
     };
     finish_reason: string | null;
-  }>;
+  }[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -96,7 +96,7 @@ function mapFinishReason(reason: string | null | undefined): ChatCompletionResul
 /** Internal messages → OpenAI wire format. */
 export function toOpenAIMessages(
   messages: ChatCompletionMessage[],
-): Array<Record<string, unknown>> {
+): Record<string, unknown>[] {
   return messages.map((m) => {
     if (m.role === 'tool') {
       return {

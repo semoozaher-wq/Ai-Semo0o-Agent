@@ -270,7 +270,7 @@ function extractBlocks(blocks: AnthropicBlock[] | undefined): {
 /** OpenAI tool schemas → Anthropic tools (already JSON Schema compatible). */
 function toAnthropicToolsFromSchemas(
   tools: NonNullable<ChatCompletionRequest['tools']>,
-): Array<{ name: string; description: string; input_schema: unknown }> {
+): { name: string; description: string; input_schema: unknown }[] {
   return tools.map((tool) => ({
     name: tool.function.name,
     description: tool.function.description,

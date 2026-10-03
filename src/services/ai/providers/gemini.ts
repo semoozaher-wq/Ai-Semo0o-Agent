@@ -42,10 +42,10 @@ interface GeminiContent {
 }
 
 interface GeminiResponse {
-  candidates?: Array<{
+  candidates?: {
     content?: GeminiContent;
     finishReason?: string;
-  }>;
+  }[];
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
