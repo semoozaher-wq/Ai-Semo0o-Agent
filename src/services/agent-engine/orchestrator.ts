@@ -65,6 +65,7 @@ export interface OrchestratorInput {
     evidence: Evidence[];
     attempt: number;
   }) => Promise<{ action: 'retry' | 'repair' | 'replan' | 'block'; toolArgs?: Record<string, unknown> } | undefined>;
+  onEvent?: (event: OrchestratorEvent) => void;
 }
 
 export interface OrchestratorResult {
@@ -108,6 +109,11 @@ export class AgentOrchestrator {
 
   async run(input: OrchestratorInput): Promise<OrchestratorResult> {
     const events: OrchestratorEvent[] = [event('planning_started')];
+    input.onEvent?.(events[0]);
+    const pushEvent = (next: OrchestratorEvent): void => {
+      events.push(next);
+      input.onEvent?.(next);
+    };
     const outputs: OrchestratorResult['outputs'] = [];
     const warnings: string[] = [];
     const errors: string[] = [];
@@ -125,7 +131,7 @@ export class AgentOrchestrator {
         context: input.context,
         signal: undefined,
       });
-      events.push(event('planning_completed', {
+      pushEvent(event('planning_completed', {
         providerId: planned.providerId,
         steps: planned.plan.steps.length,
         latencyMs: planned.latencyMs,
@@ -134,7 +140,7 @@ export class AgentOrchestrator {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(message);
-      events.push(event('planning_failed', { error: message }));
+      pushEvent(event('planning_failed', { error: message }));
       return {
         status: 'failed',
         events: [...events, event('run_finished', { status: 'failed' })],
@@ -178,9 +184,9 @@ export class AgentOrchestrator {
         return this.finish('cancelled', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
       }
 
-      events.push(event('step_started', { title: step.title, kind: step.kind }, step.id, step.toolId));
+      pushEvent(event('step_started', { title: step.title, kind: step.kind }, step.id, step.toolId));
       if (!step.toolId) {
-        events.push(event('step_completed', { verified: false, reason: 'no_tool' }, step.id));
+        pushEvent(event('step_completed', { verified: false, reason: 'no_tool' }, step.id));
         continue;
       }
 
@@ -188,12 +194,12 @@ export class AgentOrchestrator {
       const tool = getTool(step.toolId);
       if (!tool) {
         errors.push(`UNKNOWN_TOOL:${step.toolId}`);
-        events.push(event('tool_completed', { ok: false, simulated: false, error: 'UNKNOWN_TOOL' }, step.id, step.toolId));
+        pushEvent(event('tool_completed', { ok: false, simulated: false, error: 'UNKNOWN_TOOL' }, step.id, step.toolId));
         return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
       }
 
       if (tool.dangerous) {
-        events.push(event('permission_requested', { dangerous: true }, step.id, tool.id));
+        pushEvent(event('permission_requested', { dangerous: true }, step.id, tool.id));
         const allowed = await input.requestPermission?.({ tool, step }) ?? false;
         if (!allowed) {
           const message = `PERMISSION_DENIED:${tool.id}`;
@@ -228,7 +234,7 @@ export class AgentOrchestrator {
           error: result.error,
           durationMs: result.durationMs,
         });
-        events.push(event('tool_completed', {
+        pushEvent(event('tool_completed', {
           ok: result.ok,
           simulated: Boolean(result.simulated),
           durationMs: result.durationMs,
@@ -240,7 +246,7 @@ export class AgentOrchestrator {
           ? await input.verifyStep({ step, output: result.output, evidence: [evidenceItem] })
           : verifyEvidence({ task: step, actualResult: result.output, evidence: [evidenceItem] });
         verifications.push(verification);
-        events.push(event('step_completed', {
+        pushEvent(event('step_completed', {
           verified: verification.status === 'VERIFIED',
           verification: verification.status,
           attempt,
@@ -271,7 +277,7 @@ export class AgentOrchestrator {
           return this.finish(decision?.action === 'block' ? 'blocked' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
         }
         if (decision.toolArgs) toolArgs = decision.toolArgs;
-        events.push(event('step_started', { recovery: decision.action, attempt: attempt + 1 }, step.id, step.toolId));
+        pushEvent(event('step_started', { recovery: decision.action, attempt: attempt + 1 }, step.id, step.toolId));
       }
 
       if (!verified) {
@@ -281,7 +287,7 @@ export class AgentOrchestrator {
     }
 
     if (!hasExecutableStep || !hasVerifiedEvidence) {
-      events.push(event('verification_required', { hasExecutableStep, hasVerifiedEvidence }));
+      pushEvent(event('verification_required', { hasExecutableStep, hasVerifiedEvidence }));
       warnings.push('NO_VERIFIED_EVIDENCE');
       return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
     }
