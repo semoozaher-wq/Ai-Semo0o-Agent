@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import vm from 'node:vm';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -27,6 +28,94 @@ export class SandboxError extends Error {
     this.name = 'SandboxError';
     this.code = code;
     this.details = details;
+  }
+}
+
+/**
+ * Execute a controlled JavaScript snippet in a fresh VM context.
+ * Node's vm is not a hostile-code security boundary; Docker/microVM remains
+ * mandatory for untrusted production code. This runner is for bounded server
+ * snippets and deterministic tests only.
+ */
+export async function runJavaScriptInVm({
+  source,
+  timeoutMs = 3_000,
+  maxOutputBytes = 64_000,
+  filename = 'sandbox.js',
+  globals = {},
+} = {}) {
+  if (typeof source !== 'string' || source.length === 0) {
+    throw new SandboxError('source must be a non-empty string.', 'INVALID_SOURCE');
+  }
+  const timeout = bounded(timeoutMs, 3_000, 'timeoutMs', 5_000);
+  const outputLimit = bounded(maxOutputBytes, 64_000, 'maxOutputBytes', 1_000_000);
+  const logs = [];
+  let outputBytes = 0;
+  let outputTruncated = false;
+  const started = Date.now();
+  const timerHandles = new Set();
+  const appendLog = (level, values) => {
+    const message = values.map((value) => {
+      try { return typeof value === 'string' ? value : JSON.stringify(value); }
+      catch { return '[unserializable]'; }
+    }).join(' ');
+    const bytes = Buffer.byteLength(message, 'utf8');
+    if (outputBytes + bytes > outputLimit) {
+      outputTruncated = true;
+      const remaining = Math.max(0, outputLimit - outputBytes);
+      logs.push({ level, message: message.slice(0, remaining), at: new Date().toISOString() });
+      outputBytes = outputLimit;
+      return;
+    }
+    outputBytes += bytes;
+    logs.push({ level, message, at: new Date().toISOString() });
+  };
+  const context = vm.createContext({
+    ...globals,
+    setTimeout: (callback, delay = 0, ...args) => {
+      const handle = setTimeout(() => {
+        timerHandles.delete(handle);
+        callback(...args);
+      }, Math.min(Math.max(Number(delay) || 0, 0), timeout));
+      timerHandles.add(handle);
+      return handle;
+    },
+    clearTimeout: (handle) => {
+      clearTimeout(handle);
+      timerHandles.delete(handle);
+    },
+    console: Object.freeze({
+      log: (...values) => appendLog('log', values),
+      info: (...values) => appendLog('info', values),
+      warn: (...values) => appendLog('warn', values),
+      error: (...values) => appendLog('error', values),
+    }),
+  }, { name: 'semo0o-code-run' });
+  let timer;
+  try {
+    const script = new vm.Script(`(async () => {\n${source}\n})()`, { filename });
+    const execution = script.runInContext(context, { timeout });
+    const result = await Promise.race([
+      Promise.resolve(execution),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new SandboxError('VM execution timed out.', 'VM_TIMEOUT')), timeout);
+      }),
+    ]);
+    return { ok: !outputTruncated, result, logs, outputTruncated, durationMs: Date.now() - started };
+  } catch (error) {
+    return {
+      ok: false,
+      result: null,
+      logs,
+      outputTruncated,
+      durationMs: Date.now() - started,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: error?.code ?? 'VM_EXECUTION_FAILED',
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+    for (const handle of timerHandles) clearTimeout(handle);
+    timerHandles.clear();
   }
 }
 
