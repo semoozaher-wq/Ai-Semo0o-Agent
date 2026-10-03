@@ -2,13 +2,29 @@ export interface ApiUser { id: string; tenantId: string; email: string; role: st
 export interface ApiSession { token: string; expiresAt: string }
 export interface ApiProject { projectId: string; workspaceId: string }
 export interface ApiRun { runId: string; taskId: string; status: string }
+export interface ApiRunSnapshot { status: string; result?: { final?: string; outputs?: unknown[]; error?: string } | null; events?: { type: string; payload_json: string }[]; usage?: unknown[] }
+export interface ApiEvent { type: string; at?: string; stepId?: string; toolId?: string; approvalId?: string; title?: string; reason?: string; final?: string; steps?: number; details?: Record<string, unknown>; [key: string]: unknown }
+
+type StoredBootstrap = { email: string; password: string };
+
+function randomSecret(): string {
+  const bytes = new Uint8Array(24);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
 
 class BackendApiClient {
   private token: string | null = null;
+  private user: ApiUser | null = null;
   constructor(private readonly baseUrl = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_BACKEND_URL) || '') {}
   get enabled(): boolean { return Boolean(this.baseUrl); }
-  setSession(session: ApiSession | null): void { this.token = session?.token ?? null; }
-  clearSession(): void { this.token = null; }
+  setSession(session: ApiSession | null, user?: ApiUser): void { this.token = session?.token ?? null; if (user) this.user = user; }
+  clearSession(): void { this.token = null; this.user = null; }
+  private storedCredentials(): StoredBootstrap | null {
+    try { const raw = globalThis.localStorage?.getItem('semo0o.backend.bootstrap'); return raw ? JSON.parse(raw) as StoredBootstrap : null; } catch { return null; }
+  }
+  private saveCredentials(value: StoredBootstrap): void { try { globalThis.localStorage?.setItem('semo0o.backend.bootstrap', JSON.stringify(value)); } catch { /* native memory session */ } }
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
@@ -19,14 +35,51 @@ class BackendApiClient {
     if (!response.ok) throw new Error(String(payload.error ?? `BACKEND_${response.status}`));
     return payload as T;
   }
-  async register(input: { email: string; password: string; tenantName?: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/register', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session); return value; }
-  async login(input: { email: string; password: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/login', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session); return value; }
+  async ensureSession(): Promise<ApiUser> {
+    if (this.token && this.user) return this.user;
+    const configured: StoredBootstrap | null = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_AGENT_EMAIL && process.env.EXPO_PUBLIC_AGENT_PASSWORD
+      ? { email: process.env.EXPO_PUBLIC_AGENT_EMAIL, password: process.env.EXPO_PUBLIC_AGENT_PASSWORD }
+      : null;
+    const saved = configured ?? this.storedCredentials();
+    const credentials = saved ?? { email: `device-${randomSecret().slice(0, 16)}@local.semo0o`, password: randomSecret() };
+    try {
+      const registered = await this.register({ ...credentials, tenantName: 'Semo0o Device Workspace' });
+      this.user = registered.user;
+      this.saveCredentials(credentials);
+      return registered.user;
+    } catch (error) {
+      if (!String(error).includes('already') && !String(error).includes('UNIQUE')) throw error;
+      const loggedIn = await this.login(credentials);
+      this.user = loggedIn.user;
+      return loggedIn.user;
+    }
+  }
+  async register(input: { email: string; password: string; tenantName?: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/register', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session, value.user); return value; }
+  async login(input: { email: string; password: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/login', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session, value.user); return value; }
   async logout(): Promise<void> { await this.request('/auth/logout', { method: 'POST' }); this.clearSession(); }
   async createProject(input: { name: string; rootPath?: string }): Promise<ApiProject> { return this.request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(input) }); }
   async createRun(input: Record<string, unknown>): Promise<ApiRun> { return this.request<ApiRun>('/runs', { method: 'POST', body: JSON.stringify(input) }); }
-  async getRun(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}`); }
+  async getRun(runId: string): Promise<ApiRunSnapshot> { return this.request<ApiRunSnapshot>(`/runs/${encodeURIComponent(runId)}`); }
   async approve(runId: string, decision: 'allow' | 'deny' | 'cancel'): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/approval`, { method: 'POST', body: JSON.stringify({ decision }) }); }
   async cancel(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }); }
+  async retry(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }); }
+  async streamEvents(runId: string, onEvent: (event: ApiEvent) => void, signal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`, { headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, signal });
+    if (!response.ok || !response.body) throw new Error(`BACKEND_SSE_${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      buffer += decoder.decode(next.value, { stream: true });
+      const chunks = buffer.split('\n\n'); buffer = chunks.pop() ?? '';
+      for (const chunk of chunks) {
+        const data = chunk.split('\n').find((line) => line.startsWith('data: '))?.slice(6);
+        if (data) { try { onEvent(JSON.parse(data) as ApiEvent); } catch { /* ignore malformed event */ } }
+      }
+    }
+  }
 }
 
 export const backendApi = new BackendApiClient();
