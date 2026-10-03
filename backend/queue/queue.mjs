@@ -75,6 +75,12 @@ export class RunQueue {
   cancel(runId, tenantId) { return this.transition(runId, tenantId, ['queued','running','paused','waiting_approval'], 'cancelled'); }
   pause(runId, tenantId) { return this.transition(runId, tenantId, ['queued','running'], 'paused'); }
   resume(runId, tenantId) { return this.transition(runId, tenantId, ['paused'], 'queued'); }
+  retry(runId, tenantId) {
+    const result = this.db.run("UPDATE runs SET status='queued', result_json=NULL, updated_at=? WHERE id=? AND tenant_id=? AND status IN ('failed','cancelled','unverified','completed_with_warnings')", now(), runId, tenantId);
+    if (result.changes !== 1) throw new Error('INVALID_RETRY_TRANSITION');
+    this.db.run("UPDATE tasks SET status='queued', updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)", now(), runId);
+    return this.get(runId, tenantId);
+  }
   transition(runId, tenantId, from, to) {
     if (!RUN_STATES.includes(to)) throw new Error('INVALID_RUN_STATE');
     const result = this.db.run(`UPDATE runs SET status=?, updated_at=? WHERE id=? AND tenant_id=? AND status IN (${from.map(() => '?').join(',')})`, to, now(), runId, tenantId, ...from);
