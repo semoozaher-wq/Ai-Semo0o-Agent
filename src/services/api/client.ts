@@ -1,3 +1,6 @@
+import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+
 export interface ApiUser { id: string; tenantId: string; email: string; role: string }
 export interface ApiSession { token: string; expiresAt: string }
 export interface ApiProject { projectId: string; workspaceId: string }
@@ -22,10 +25,21 @@ class BackendApiClient {
   get enabled(): boolean { return Boolean(this.baseUrl); }
   setSession(session: ApiSession | null, user?: ApiUser): void { this.token = session?.token ?? null; if (user) this.user = user; }
   clearSession(): void { this.token = null; this.user = null; }
-  private storedCredentials(): StoredBootstrap | null {
-    try { const raw = globalThis.localStorage?.getItem('semo0o.backend.bootstrap'); return raw ? JSON.parse(raw) as StoredBootstrap : null; } catch { return null; }
+  private async storedCredentials(): Promise<StoredBootstrap | null> {
+    try {
+      const raw = Platform.OS === 'web'
+        ? globalThis.sessionStorage?.getItem('semo0o.backend.bootstrap')
+        : await SecureStore.getItemAsync('semo0o.backend.bootstrap');
+      return raw ? JSON.parse(raw) as StoredBootstrap : null;
+    } catch { return null; }
   }
-  private saveCredentials(value: StoredBootstrap): void { try { globalThis.localStorage?.setItem('semo0o.backend.bootstrap', JSON.stringify(value)); } catch { /* native memory session */ } }
+  private async saveCredentials(value: StoredBootstrap): Promise<void> {
+    try {
+      const raw = JSON.stringify(value);
+      if (Platform.OS === 'web') globalThis.sessionStorage?.setItem('semo0o.backend.bootstrap', raw);
+      else await SecureStore.setItemAsync('semo0o.backend.bootstrap', raw, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
+    } catch { /* keep an in-memory session if secure persistence is unavailable */ }
+  }
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
@@ -41,12 +55,12 @@ class BackendApiClient {
     const configured: StoredBootstrap | null = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_AGENT_EMAIL && process.env.EXPO_PUBLIC_AGENT_PASSWORD
       ? { email: process.env.EXPO_PUBLIC_AGENT_EMAIL, password: process.env.EXPO_PUBLIC_AGENT_PASSWORD }
       : null;
-    const saved = configured ?? this.storedCredentials();
+    const saved = configured ?? await this.storedCredentials();
     const credentials = saved ?? { email: `device-${randomSecret().slice(0, 16)}@local.semo0o`, password: randomSecret() };
     try {
       const registered = await this.register({ ...credentials, tenantName: 'Semo0o Device Workspace' });
       this.user = registered.user;
-      this.saveCredentials(credentials);
+      await this.saveCredentials(credentials);
       return registered.user;
     } catch (error) {
       if (!String(error).includes('already') && !String(error).includes('UNIQUE')) throw error;
