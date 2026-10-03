@@ -277,6 +277,7 @@ export class AgentOrchestrator {
           return this.finish(decision?.action === 'block' ? 'blocked' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
         }
         if (decision.toolArgs) toolArgs = decision.toolArgs;
+        warnings.push(`SELF_HEALED:${step.id}:attempt_${attempt}`);
         pushEvent(event('step_started', { recovery: decision.action, attempt: attempt + 1 }, step.id, step.toolId));
       }
 
@@ -291,7 +292,7 @@ export class AgentOrchestrator {
       warnings.push('NO_VERIFIED_EVIDENCE');
       return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
     }
-    return this.finish('completed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+    return this.finish(warnings.length ? 'completed_with_warnings' : 'completed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
   }
 
   private finish(
