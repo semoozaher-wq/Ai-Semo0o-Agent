@@ -1,11 +1,13 @@
-Ai-Semo0o-Agent — code.run sandbox implementation
+Ai-Semo0o-Agent — Enhanced code.run Sandbox
 Generated: 2026-10-03
 
-Files:
-- execution-core/sandbox.mjs
-- test/sandbox-runner.test.mjs
-- docs/CODE_RUN_SANDBOX.md
+Included:
+- Docker-backed isolated runner
+- Node VM runner for controlled server-side snippets
+- VM and Docker regression tests
+- Sandbox deployment and security documentation
 
-Notes:
-- Docker/Podman is required on the backend host for live container execution.
+Security note:
+- node:vm is not a hostile-code security boundary.
+- Docker/Podman or a microVM is required for untrusted production code.
 - No node_modules, Expo cache, credentials, or temporary files are included.
