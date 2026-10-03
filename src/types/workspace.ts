@@ -89,11 +89,11 @@ export interface ZipEntryInfo {
 
 export interface ZipExtractResult {
   entries: ZipEntryInfo[];
-  files: Array<{
+  files: {
     path: string;
     content: string;
     encoding: FileEncoding;
     sizeBytes: number;
     isBinary: boolean;
-  }>;
+  }[];
 }
