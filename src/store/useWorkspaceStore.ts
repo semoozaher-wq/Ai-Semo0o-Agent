@@ -10,6 +10,8 @@ import {
 } from '../services/workspace';
 import type { DownloadResult } from '../services/workspace';
 import type { Workspace, WorkspaceFile } from '../types/workspace';
+// Register real GitHub/ZIP/workspace tool adapters; no mock tool fallback exists.
+import '../services/workspace/tools';
 
 export interface WorkspaceExportInfo {
   filename: string;
