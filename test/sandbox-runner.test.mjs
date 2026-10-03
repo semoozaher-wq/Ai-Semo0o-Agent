@@ -11,6 +11,7 @@ import {
   runJavaScriptInVm,
   validateCodeRunRequest,
 } from '../execution-core/sandbox.mjs';
+import { createDockerCodeRunAdapter } from '../execution-core/code-run-tool.mjs';
 
 function fakeSpawn({ exitCode = 0, stdout = 'ok\n', stderr = '' } = {}) {
   return (_command, _args, _options) => {
@@ -93,4 +94,22 @@ test('Docker runner marks non-zero execution as failed and caps output', async (
   assert.equal(result.exitCode, 2);
   assert.equal(result.outputTruncated, true);
   assert.equal(result.stdout, '1234');
+});
+
+test('Docker code-run adapter forwards workspace files and preserves sandbox evidence', async () => {
+  const seen = [];
+  const adapter = createDockerCodeRunAdapter({
+    getWorkspaceFiles: async () => [{ path: 'package.json', content: '{}' }],
+    runner: {
+      run: async (request) => {
+        seen.push(request);
+        return { ok: true, language: request.language, stdout: 'ok\n', stderr: '', exitCode: 0, durationMs: 2, isolated: true, network: 'none' };
+      },
+    },
+  });
+  const result = await adapter({ language: 'javascript', source: 'console.log("ok")' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.files, ['package.json']);
+  assert.equal(result.network, 'none');
+  assert.equal(seen[0].files[0].path, 'package.json');
 });
