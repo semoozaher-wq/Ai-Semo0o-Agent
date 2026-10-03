@@ -3,6 +3,8 @@ import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole } from './auth/security.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
+import { RateLimiter, applySecurityHeaders } from './security/http.mjs';
+import { createLiveToolRegistry } from './tools/registry.mjs';
 
 const json = (value) => JSON.stringify(value);
 function body(request) {
@@ -21,11 +23,16 @@ function bearer(request) { const value = request.headers.authorization ?? ''; re
 function requireUser(db, request) { const user = authenticateToken(db, bearer(request)); if (!user) throw new Error('UNAUTHORIZED'); return user; }
 function routeParts(url) { return new URL(url, 'http://localhost').pathname.split('/').filter(Boolean); }
 
-export function createApp({ db = new Database(), queue, codeRunner } = {}) {
+export function createApp({ db = new Database(), queue, codeRunner, liveTools, rateLimiter = new RateLimiter() } = {}) {
   const runQueue = queue ?? new RunQueue(db);
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const server = createServer(async (request, response) => {
     try {
+      const origin = process.env.ALLOWED_ORIGIN ?? '';
+      applySecurityHeaders(response, origin && request.headers.origin === origin ? origin : '');
+      if (request.headers.origin && origin && request.headers.origin !== origin) throw new Error('CORS_ORIGIN_DENIED');
+      if (!rateLimiter.allow(request.socket.remoteAddress ?? 'unknown')) throw new Error('RATE_LIMITED');
+      if (request.method === 'OPTIONS') { response.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS'); response.setHeader('access-control-allow-headers', 'authorization,content-type'); return send(response, 204, {}); }
       const parts = routeParts(request.url);
       const method = request.method;
       if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', time: now() });
@@ -40,6 +47,7 @@ export function createApp({ db = new Database(), queue, codeRunner } = {}) {
         return send(response, 200, authenticate(db, input.email, input.password));
       }
       const user = requireUser(db, request);
+      if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, liveTools?.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'POST' && parts[0] === 'projects' && parts.length === 1) {
         const input = await body(request);
@@ -88,7 +96,7 @@ export function createApp({ db = new Database(), queue, codeRunner } = {}) {
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : ['INVALID_JSON','BODY_TOO_LARGE','INVALID_APPROVAL'].includes(message) ? 400 : 500;
+      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : ['INVALID_JSON','BODY_TOO_LARGE','INVALID_APPROVAL'].includes(message) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: message });
     }
   });
@@ -96,8 +104,9 @@ export function createApp({ db = new Database(), queue, codeRunner } = {}) {
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
-  const app = createApp();
-  app.queue.start();
+  const db = new Database();
+  const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
+  if (process.env.DISABLE_WORKER !== '1') app.queue.start();
   const port = Number(process.env.PORT || 8787);
   app.server.listen(port, '0.0.0.0', () => console.log(`backend listening on ${port}`));
 }

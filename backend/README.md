@@ -10,12 +10,19 @@ This directory contains a real Node 22 backend foundation for Ai-Semo0o-Agent. I
 - `server.mjs`: authenticated HTTP API for health, auth, projects, workspaces, runs, approvals, pause/resume/cancel, and evidence retrieval.
 - `queue/queue.mjs`: SQLite-backed durable run queue with recovery of interrupted `running` jobs and state transitions.
 - `runners/code-runner.mjs`: server code-run handler that persists sandbox evidence and never converts a failed run into success.
+- `worker.mjs`: independently supervised queue worker entrypoint.
+- `security/http.mjs`: bounded IP rate limiting and security headers.
+- `tools/registry.mjs`: explicit live-versus-unwired tool registry.
+- `browser/runner.mjs`: server-only CDP runner boundary.
 - `test/backend.test.mjs`: integration tests for auth, tenant isolation, approvals, queue execution, and evidence persistence.
 
 ## Run
 
 ```bash
 DATABASE_FILE=./data/agent.sqlite PORT=8787 npm run start:backend
+
+# Run the durable worker as a separate supervised process.
+DATABASE_FILE=./data/agent.sqlite npm run start:worker
 ```
 
 The service binds to `0.0.0.0` for container deployment. Put TLS, rate limiting, secret management, and an authenticated reverse proxy in front of it in production.
@@ -34,6 +41,7 @@ The service binds to `0.0.0.0` for container deployment. Put TLS, rate limiting,
 - `POST /runs/:id/resume`
 - `POST /runs/:id/cancel`
 - `GET /health`
+- `GET /tools/status`
 
 ## Security rules
 
@@ -47,4 +55,6 @@ The service binds to `0.0.0.0` for container deployment. Put TLS, rate limiting,
 
 ## Current limits
 
-This is the first production backend slice, not a claim that every external integration is complete. Browser Chromium pooling, external queue replacement, secret-vault integration, TLS termination, rate limiting, and live Docker CI require deployment infrastructure and are documented as remaining operations in the production gap matrix.
+The repository includes deployable templates under `infra/` for Nginx TLS reverse proxying and systemd supervision, plus GitHub workflows for Docker and Chromium smoke tests. The local `npm run test:browser-smoke` command executes Chromium against the exported `/chat` route.
+
+Live Docker execution, Chromium/CDP pooling, external queue replacement, and secret-manager integration still require deployment infrastructure. The service fails closed when those runtimes are unavailable.
