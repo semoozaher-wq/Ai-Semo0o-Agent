@@ -1,4 +1,4 @@
-import { TaskTemplate } from '../types/task';
+import { TaskTemplate } from '../src/types/task';
 
 export const TASK_TEMPLATES: TaskTemplate[] = [
   {

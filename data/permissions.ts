@@ -2,7 +2,7 @@ import {
   AgentPermission,
   AgentPermissionSpec,
   PermissionRisk,
-} from '../types/agent';
+} from '../src/types/agent';
 
 export const PERMISSIONS: Record<AgentPermission, AgentPermissionSpec> = {
   internet: {

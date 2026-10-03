@@ -1,4 +1,4 @@
-import { ModelProvider, ModelSpec, ProviderId } from '../types/model';
+import { ModelProvider, ModelSpec, ProviderId } from '../src/types/model';
 
 export const PROVIDERS: Record<ProviderId, ModelProvider> = {
   openai: {

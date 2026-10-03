@@ -1,4 +1,4 @@
-import { AgentManifest, AgentReview, StoreCategory } from '../types/agent';
+import { AgentManifest, AgentReview, StoreCategory } from '../src/types/agent';
 
 function review(
   id: string,

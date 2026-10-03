@@ -1,4 +1,4 @@
-import { ChatQuickAction } from '../types/chat';
+import { ChatQuickAction } from '../src/types/chat';
 
 export const QUICK_ACTIONS: ChatQuickAction[] = [
   {
