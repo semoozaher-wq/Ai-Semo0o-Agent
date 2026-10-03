@@ -1,9 +1,7 @@
 import { create } from 'zustand';
 import { Task, TaskStep } from '../types/task';
 import { LogLevel } from '../services/agent-engine/executor';
-import { agentOrchestrator, OrchestratorEvent } from '../services/agent-engine/orchestrator';
-import { TOOLS } from '../../data/tools';
-import { providerRegistry } from '../services/ai';
+import { backendApi, ApiEvent } from '../services/api/client';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { DEFAULT_MODEL_ID } from '../data/models';
@@ -27,6 +25,7 @@ export interface LogEntry {
 }
 
 let cancelSignal = { cancelled: false };
+let activeRunId: string | null = null;
 
 interface AgentsState {
   tasks: Task[];
@@ -53,7 +52,7 @@ function runStatus(status: string): Task['status'] {
   return 'failed';
 }
 
-function eventLog(next: OrchestratorEvent): { message: string; level: LogLevel } | undefined {
+function eventLog(next: ApiEvent): { message: string; level: LogLevel } | undefined {
   switch (next.type) {
     case 'planning_started': return { message: '● فهم الهدف وبدء التخطيط…', level: 'info' };
     case 'planning_completed': return { message: `✓ تم إنشاء الخطة (${String(next.details?.steps ?? 0)} خطوات).`, level: 'success' };
@@ -72,7 +71,7 @@ function eventLog(next: OrchestratorEvent): { message: string; level: LogLevel }
   }
 }
 
-function updateLiveStep(task: Task, next: OrchestratorEvent): Task {
+function updateLiveStep(task: Task, next: ApiEvent & { stepId?: string; details?: Record<string, unknown> }): Task {
   if (!next.stepId) return task;
   const existingIndex = task.steps.findIndex((step) => step.id === next.stepId);
   const current = existingIndex >= 0 ? task.steps[existingIndex] : {
@@ -137,79 +136,47 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
       if (!task) return;
       cancelSignal = { cancelled: false };
       set((state) => ({ runningId: id, logs: { ...state.logs, [id]: [] } }));
-      const model = opts?.model ?? task.model ?? DEFAULT_MODEL_ID;
-      const providers = providerRegistry.list()
-        .map((providerId) => providerRegistry.get(providerId))
-        .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
-      if (providers.length === 0) {
-        updateTask({ ...task, status: 'failed', error: 'لا يوجد مزود AI متصل. أضف مفتاح API من الإعدادات.', updatedAt: new Date().toISOString() });
-        set({ runningId: null });
-        persist();
-        return;
-      }
-      const result = await agentOrchestrator.run({
-        taskId: id,
-        goal: task.goal,
-        model,
-        providers,
-        tools: TOOLS,
-        signal: cancelSignal,
-        requestPermission: async ({ tool, step }) => new Promise<boolean>((resolve) => {
-          const args = step.toolArgs ?? {};
-          const affectedFiles = [args.path, ...(Array.isArray(args.paths) ? args.paths : [])]
-            .filter((value): value is string => typeof value === 'string');
+      const appendBackendEvent = (next: ApiEvent, runId: string) => {
+        const log = eventLog(next);
+        if (log) appendLog(id, log.message, log.level);
+        if (next.type === 'permission_requested') {
           set({ approvalRequest: {
-            id: uid('approval'),
-            toolId: tool.id,
-            toolName: tool.nameAr,
-            reason: step.description,
-            affectedFiles,
-            reversible: !['workspace.delete', 'email.send'].includes(tool.id),
-            risk: ['workspace.delete', 'email.send', 'code.run'].includes(tool.id) ? 'high' : 'medium',
-            resolve,
+            id: String(next.approvalId ?? uid('approval')),
+            toolId: String(next.toolId ?? ''),
+            toolName: String(next.toolId ?? ''),
+            reason: String(next.reason ?? 'موافقة مطلوبة'),
+            affectedFiles: [],
+            reversible: false,
+            risk: 'high',
+            resolve: (approved) => { void backendApi.approve(runId, approved ? 'allow' : 'deny'); set({ approvalRequest: null }); },
           } });
-        }),
-        onEvent: (next) => {
-          const log = eventLog(next);
-          if (log) appendLog(id, log.message, log.level);
-          const current = get().tasks.find((item) => item.id === id);
-          if (current && next.type !== 'run_finished') updateTask(updateLiveStep(current, next));
-        },
-      });
-      const current = get().tasks.find((item) => item.id === id) ?? task;
-      const finalSteps: TaskStep[] = result.plan?.steps.map((step) => {
-        const prior = current.steps.find((item) => item.id === step.id);
-        const evidence = result.evidence.filter((item) => item.stepId === step.id);
-        let verification = result.verifications[result.verifications.length - 1];
-        for (const candidate of result.verifications) {
-          if (candidate.evidenceIds.some((evidenceId) => evidenceId.startsWith(`${result.plan?.id}:${step.id}:`))) verification = candidate;
         }
-        return {
-          ...(prior ?? step),
-          ...step,
-          status: verification?.status === 'VERIFIED' ? 'completed' : verification ? 'failed' : prior?.status ?? step.status,
-          verificationStatus: verification?.status,
-          evidenceIds: evidence.map((item) => item.id),
-          retries: Math.max(0, evidence.length - 1),
-        };
-      }) ?? current.steps;
-      const finalTask: Task = {
-        ...current,
-        status: runStatus(result.status),
-        plan: result.plan,
-        steps: finalSteps,
-        result: result.outputs.map((output) => `${output.toolId ?? 'step'}: ${JSON.stringify(output.output)}`).join('\n') || undefined,
-        error: result.errors.join('\n') || undefined,
-        progress: result.status === 'completed' ? 1 : finalSteps.length ? finalSteps.filter((step) => step.status === 'completed').length / finalSteps.length : 0,
-        updatedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
+        const current = get().tasks.find((item) => item.id === id);
+        if (current && next.type === 'step_started' && next.stepId) updateTask(updateLiveStep(current, { type: 'step_started', stepId: String(next.stepId), details: { title: next.title, kind: 'tool' } } as never));
       };
-      updateTask(finalTask);
-      appendLog(id, `انتهى التشغيل: ${result.status}`, result.status === 'completed' ? 'success' : 'warn');
-      set({ runningId: null, approvalRequest: null });
-      persist();
+      try {
+        const project = await (async () => { await backendApi.ensureSession(); return backendApi.createProject({ name: `Task ${task.title}` }); })();
+        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: task.goal, model: opts?.model ?? task.model });
+        activeRunId = run.runId;
+        await backendApi.streamEvents(run.runId, (event) => { if (!cancelSignal.cancelled) appendBackendEvent(event, run.runId); });
+        const snapshot = await backendApi.getRun(run.runId);
+        const current = get().tasks.find((item) => item.id === id) ?? task;
+        const status = runStatus(snapshot.status);
+        const finalTask: Task = { ...current, status, result: snapshot.result?.final ?? JSON.stringify(snapshot.result ?? {}), error: status === 'completed' ? undefined : snapshot.status, progress: status === 'completed' ? 1 : current.progress, updatedAt: new Date().toISOString(), finishedAt: new Date().toISOString() };
+        updateTask(finalTask);
+        appendLog(id, `انتهى التشغيل: ${snapshot.status}`, status === 'completed' ? 'success' : 'warn');
+        activeRunId = null;
+        set({ runningId: null, approvalRequest: null });
+        persist();
+      } catch (error) {
+        updateTask({ ...task, status: 'failed', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED', updatedAt: new Date().toISOString() });
+        appendLog(id, 'فشل تشغيل الوكيل عبر الـBackend.', 'error');
+        activeRunId = null;
+        set({ runningId: null, approvalRequest: null });
+        persist();
+      }
     },
-    cancel() { cancelSignal.cancelled = true; },
+    cancel() { cancelSignal.cancelled = true; if (activeRunId) void backendApi.cancel(activeRunId); const running = get().runningId; if (running) appendLog(running, 'تم طلب إلغاء التشغيل.', 'warn'); },
     approve() {
       const request = get().approvalRequest;
       if (!request) return;
