@@ -7,6 +7,8 @@ Type=simple
 User=semo0o
 WorkingDirectory=/opt/ai-semo0o-agent
 Environment=NODE_ENV=production
+Environment=DISABLE_WORKER=1
+Environment=BIND_HOST=127.0.0.1
 Environment=DATABASE_FILE=/var/lib/semo0o/agent.sqlite
 EnvironmentFile=/etc/semo0o/agent.env
 ExecStart=/usr/bin/node backend/server.mjs
@@ -15,6 +17,10 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/ai-semo0o-agent
 ReadWritePaths=/var/lib/semo0o
 
 [Install]
