@@ -9,41 +9,60 @@ import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { aiService } from '../services/ai';
 import type { ProviderConfigMap } from '../types/model';
 
-/**
- * Hydrates every persisted store exactly once when the app mounts.
- *
- * Returns `ready` so screens can render skeletons until the local data
- * (conversations, tasks, install state, workspace, usage) is available.
- */
-export function useBootstrap(): { ready: boolean } {
+/** Hydrates persisted stores and exposes a recoverable startup state. */
+export function useBootstrap(): {
+  ready: boolean;
+  error: string | null;
+  retry: () => void;
+} {
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      await Promise.all([
-        useAppStore.getState().hydrate(),
-        useChatStore.getState().hydrate(),
-        useAgentsStore.getState().hydrate(),
-        useStoreStore.getState().hydrate(),
-        useFilesStore.getState().hydrate(),
-        useWorkspaceStore.getState().hydrate(),
-        useAnalyticsStore.getState().hydrate(),
-      ]);
-      const apiKeys = useAppStore.getState().settings.apiKeys;
-      const configs = Object.fromEntries(
-        Object.entries(apiKeys).map(([provider, apiKey]) => [provider, { apiKey }]),
-      ) as ProviderConfigMap;
-      aiService.configure(configs);
-      if (!cancelled) setReady(true);
+      try {
+        await Promise.all([
+          useAppStore.getState().hydrate(),
+          useChatStore.getState().hydrate(),
+          useAgentsStore.getState().hydrate(),
+          useStoreStore.getState().hydrate(),
+          useFilesStore.getState().hydrate(),
+          useWorkspaceStore.getState().hydrate(),
+          useAnalyticsStore.getState().hydrate(),
+        ]);
+        const apiKeys = useAppStore.getState().settings.apiKeys;
+        const configs = Object.fromEntries(
+          Object.entries(apiKeys).map(([provider, apiKey]) => [provider, { apiKey }]),
+        ) as ProviderConfigMap;
+        aiService.configure(configs);
+        if (!cancelled) {
+          setError(null);
+          setReady(true);
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : 'تعذر تحميل بيانات التطبيق');
+          setReady(false);
+        }
+      }
     }
 
     void run();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
-  return { ready };
+  return {
+    ready,
+    error,
+    retry: () => {
+      setError(null);
+      setReady(false);
+      setAttempt((value) => value + 1);
+    },
+  };
 }
