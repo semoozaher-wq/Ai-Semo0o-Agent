@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Expo and local development state
+.expo/
+.expo-shared/
+
+# Build outputs and caches
+web-build/
+coverage/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Operating-system/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Backend runtime data
+backend/data/
+backend/*.sqlite
+backend/*.sqlite-*
