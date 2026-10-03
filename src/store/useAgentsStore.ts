@@ -8,6 +8,17 @@ import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { DEFAULT_MODEL_ID } from '../data/models';
 
+export interface ApprovalRequest {
+  id: string;
+  toolId: string;
+  toolName: string;
+  reason: string;
+  affectedFiles: string[];
+  reversible: boolean;
+  risk: 'medium' | 'high';
+  resolve: (approved: boolean) => void;
+}
+
 export interface LogEntry {
   id: string;
   message: string;
@@ -21,17 +32,22 @@ interface AgentsState {
   tasks: Task[];
   logs: Record<string, LogEntry[]>;
   runningId: string | null;
+  approvalRequest: ApprovalRequest | null;
   hydrated: boolean;
   hydrate(): Promise<void>;
   createTask(goal: string, opts?: { title?: string; model?: string; agentId?: string }): Task;
   runTask(id: string, opts?: { model?: string }): Promise<void>;
   cancel(): void;
+  approve(): void;
+  reject(): void;
   removeTask(id: string): Promise<void>;
   clear(): Promise<void>;
 }
 
 function runStatus(status: string): Task['status'] {
   if (status === 'completed') return 'completed';
+  if (status === 'completed_with_warnings') return 'completed_with_warnings';
+  if (status === 'blocked') return 'blocked';
   if (status === 'cancelled') return 'cancelled';
   if (status === 'unverified') return 'unverified';
   return 'failed';
@@ -42,6 +58,7 @@ function eventLog(next: OrchestratorEvent): { message: string; level: LogLevel }
     case 'planning_started': return { message: '● فهم الهدف وبدء التخطيط…', level: 'info' };
     case 'planning_completed': return { message: `✓ تم إنشاء الخطة (${String(next.details?.steps ?? 0)} خطوات).`, level: 'success' };
     case 'planning_failed': return { message: `✗ فشل التخطيط: ${String(next.details?.error ?? '')}`, level: 'error' };
+    case 'permission_requested': return { message: `⚠ بانتظار موافقة المستخدم على ${next.toolId ?? 'أداة خطرة'}`, level: 'warn' };
     case 'step_started': return { message: `● ${String(next.details?.title ?? next.stepId ?? 'بدء خطوة')}`, level: 'info' };
     case 'tool_completed': return next.details?.ok
       ? { message: `✓ اكتمل تنفيذ ${next.toolId ?? 'الأداة'}${Number(next.details?.attempt ?? 0) > 1 ? ` — محاولة ${String(next.details?.attempt)}` : ''}`, level: 'success' }
@@ -93,6 +110,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
     tasks: [],
     logs: {},
     runningId: null,
+    approvalRequest: null,
     hydrated: false,
     async hydrate() {
       set({ tasks: (await storage.get<Task[]>(STORAGE_KEYS.tasks)) ?? [], hydrated: true });
@@ -136,7 +154,21 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
         providers,
         tools: TOOLS,
         signal: cancelSignal,
-        requestPermission: async () => false,
+        requestPermission: async ({ tool, step }) => new Promise<boolean>((resolve) => {
+          const args = step.toolArgs ?? {};
+          const affectedFiles = [args.path, ...(Array.isArray(args.paths) ? args.paths : [])]
+            .filter((value): value is string => typeof value === 'string');
+          set({ approvalRequest: {
+            id: uid('approval'),
+            toolId: tool.id,
+            toolName: tool.nameAr,
+            reason: step.description,
+            affectedFiles,
+            reversible: !['workspace.delete', 'email.send'].includes(tool.id),
+            risk: ['workspace.delete', 'email.send', 'code.run'].includes(tool.id) ? 'high' : 'medium',
+            resolve,
+          } });
+        }),
         onEvent: (next) => {
           const log = eventLog(next);
           if (log) appendLog(id, log.message, log.level);
@@ -174,16 +206,28 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
       };
       updateTask(finalTask);
       appendLog(id, `انتهى التشغيل: ${result.status}`, result.status === 'completed' ? 'success' : 'warn');
-      set({ runningId: null });
+      set({ runningId: null, approvalRequest: null });
       persist();
     },
     cancel() { cancelSignal.cancelled = true; },
+    approve() {
+      const request = get().approvalRequest;
+      if (!request) return;
+      set({ approvalRequest: null });
+      request.resolve(true);
+    },
+    reject() {
+      const request = get().approvalRequest;
+      if (!request) return;
+      set({ approvalRequest: null });
+      request.resolve(false);
+    },
     async removeTask(id) {
       set((state) => { const logs = { ...state.logs }; delete logs[id]; return { tasks: state.tasks.filter((item) => item.id !== id), logs }; });
       persist();
     },
     async clear() {
-      set({ tasks: [], logs: {}, runningId: null });
+      set({ tasks: [], logs: {}, runningId: null, approvalRequest: null });
       await storage.remove(STORAGE_KEYS.tasks);
     },
   };
