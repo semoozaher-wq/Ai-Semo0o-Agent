@@ -20,7 +20,7 @@ interface ChatState {
   setActive(id: string): void;
   deleteConversation(id: string): Promise<void>;
   renameConversation(id: string, title: string): void;
-  send(text: string, opts?: { model?: string }): Promise<void>;
+  send(text: string, opts?: { model?: string; mode?: 'chat' | 'agent' }): Promise<void>;
   stop(): void;
   clear(): Promise<void>;
 }
@@ -74,16 +74,22 @@ export const useChatStore = create<ChatState>((set, get) => {
       const model = opts?.model ?? conversation?.model ?? DEFAULT_MODEL_ID;
       const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete' };
       const assistantId = uid('msg');
-      const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…', createdAt: nowIso(), status: 'streaming', model };
+      const mode = opts?.mode ?? 'chat';
+      const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: mode === 'agent' ? 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…' : 'جارٍ إعداد الرد…', createdAt: nowIso(), status: 'streaming', model };
       set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(content) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: content.slice(0, 80) } : item), streaming: true }; });
       const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
       try {
-        const project = await ensureProject();
-        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
-        await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId!, assistantId, event); }, activeController.signal);
-        const snapshot = await backendApi.getRun(run.runId);
-        const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
-        if (token === streamToken) patchMessage(conversationId, assistantId, { content: finalText, status: snapshot.status === 'completed' ? 'complete' : 'error', error: snapshot.status === 'completed' ? undefined : snapshot.status });
+        if (mode === 'chat') {
+          const result = await backendApi.chat({ message: content, model });
+          if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
+        } else {
+          const project = await ensureProject();
+          const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
+          await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId!, assistantId, event); }, activeController.signal);
+          const snapshot = await backendApi.getRun(run.runId);
+          const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
+          if (token === streamToken) patchMessage(conversationId, assistantId, { content: finalText, status: snapshot.status === 'completed' ? 'complete' : 'error', error: snapshot.status === 'completed' ? undefined : snapshot.status });
+        }
       } catch (error) {
         if (token === streamToken) patchMessage(conversationId, assistantId, { content: 'تعذّر تشغيل الوكيل عبر الـBackend.', status: 'error', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED' });
       } finally { if (token === streamToken) set({ streaming: false }); persist(); }
