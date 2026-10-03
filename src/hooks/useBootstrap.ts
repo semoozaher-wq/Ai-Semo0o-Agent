@@ -6,8 +6,6 @@ import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
-import { aiService } from '../services/ai';
-import type { ProviderConfigMap } from '../types/model';
 
 /** Hydrates persisted stores and exposes a recoverable startup state. */
 export function useBootstrap(): {
@@ -33,11 +31,6 @@ export function useBootstrap(): {
           useWorkspaceStore.getState().hydrate(),
           useAnalyticsStore.getState().hydrate(),
         ]);
-        const apiKeys = useAppStore.getState().settings.apiKeys;
-        const configs = Object.fromEntries(
-          Object.entries(apiKeys).map(([provider, apiKey]) => [provider, { apiKey }]),
-        ) as ProviderConfigMap;
-        aiService.configure(configs);
         if (!cancelled) {
           setError(null);
           setReady(true);
