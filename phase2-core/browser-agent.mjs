@@ -82,8 +82,9 @@ export class BrowserAgent {
   }
 
   async type(selector, text) {
-    const safe = JSON.stringify(String(text));
-    return this.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('selector not found'); el.focus(); el.value = ${safe}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await this.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('selector not found'); el.focus(); el.select?.(); return true; })()`);
+    await this.command('Input.insertText', { text: String(text) });
+    return this.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return { value: el?.value ?? null, active: document.activeElement === el }; })()`);
   }
 
   async scroll(x = 0, y = 600) {

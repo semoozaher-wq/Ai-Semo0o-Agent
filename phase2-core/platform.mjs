@@ -148,12 +148,18 @@ export async function buildProjectIntelligence(root, options = {}) {
       const scriptKind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX;
       const ast = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, scriptKind);
       const visit = (node) => {
-        if (node.name?.text && [ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.InterfaceDeclaration, ts.SyntaxKind.TypeAliasDeclaration, ts.SyntaxKind.EnumDeclaration, ts.SyntaxKind.VariableStatement].includes(node.kind)) {
+        if (node.name?.text && [ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.InterfaceDeclaration, ts.SyntaxKind.TypeAliasDeclaration, ts.SyntaxKind.EnumDeclaration].includes(node.kind)) {
           const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
           symbols.push({ name: node.name.text, file: relative, line, kind: ts.SyntaxKind[node.kind], parser: 'typescript-ast' });
         }
-        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, resolved: resolveImport(root, file, node.moduleSpecifier.text), parser: 'typescript-ast' });
-        if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, resolved: resolveImport(root, file, node.moduleSpecifier.text), parser: 'typescript-ast' });
+        if (ts.isVariableStatement(node)) {
+          const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
+          for (const declaration of node.declarationList.declarations) {
+            if (ts.isIdentifier(declaration.name)) symbols.push({ name: declaration.name.text, file: relative, line, kind: 'VariableDeclaration', parser: 'typescript-ast' });
+          }
+        }
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, parser: 'typescript-ast' });
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, parser: 'typescript-ast' });
         ts.forEachChild(node, visit);
       };
       visit(ast);
@@ -162,20 +168,26 @@ export async function buildProjectIntelligence(root, options = {}) {
     let match;
     while ((match = symbolPattern.exec(source))) symbols.push({ name: match[1], file: relative, line: source.slice(0, match.index).split('\n').length });
     symbolPattern.lastIndex = 0;
-    while ((match = importPattern.exec(source))) imports.push({ from: relative, specifier: match[1], resolved: resolveImport(root, file, match[1]) });
+    while ((match = importPattern.exec(source))) imports.push({ from: relative, specifier: match[1] });
     importPattern.lastIndex = 0;
   }
+  for (const edge of imports) edge.resolved = await resolveImport(root, path.join(root, edge.from), edge.specifier);
   const graph = imports.filter((edge) => edge.resolved).map(({ from, resolved }) => ({ from, to: resolved }));
   const tests = files.filter((file) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(file)).map((file) => path.relative(root, file));
-  return { generatedAt: now(), root, files: files.map((file) => path.relative(root, file)), symbols, imports, importGraph: graph, dependencyGraph: graph, testMapping: tests.map((test) => ({ test, likelySources: files.filter((file) => path.basename(file).split('.')[0] === path.basename(test).split('.')[0]).map((file) => path.relative(root, file)) })), parser: ts ? 'typescript-ast' : 'lexical-fallback' };
+  const testMapping = tests.map((test) => ({ test, importedSources: graph.filter((edge) => edge.from === test).map((edge) => edge.to), likelySources: graph.filter((edge) => edge.from === test).map((edge) => edge.to) }));
+  return { generatedAt: now(), root, files: files.map((file) => path.relative(root, file)), symbols, imports, importGraph: graph, dependencyGraph: graph, testMapping, parser: ts ? 'typescript-ast' : 'lexical-fallback' };
 }
 
-function resolveImport(root, importer, specifier) {
+async function resolveImport(root, importer, specifier) {
   if (!specifier.startsWith('.')) return null;
   const base = path.resolve(path.dirname(importer), specifier);
   for (const suffix of ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js']) {
-    const candidate = path.relative(root, base + suffix);
-    if (!candidate.startsWith('..')) return candidate;
+    const absolute = base + suffix;
+    try {
+      const stat = await fs.stat(absolute);
+      const candidate = path.relative(root, absolute);
+      if (!candidate.startsWith('..') && stat.isFile()) return candidate;
+    } catch { /* continue resolution */ }
   }
   return null;
 }
@@ -183,7 +195,7 @@ function resolveImport(root, importer, specifier) {
 /* ---------------------------------- RAG ----------------------------------- */
 
 function tokens(text) { return String(text).toLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? []; }
-function embedding(text, dimensions = 64) {
+function localEmbedding(text, dimensions = 64) {
   const vector = Array(dimensions).fill(0);
   for (const token of tokens(text)) {
     const hash = parseInt(sha256(token).slice(0, 8), 16);
@@ -203,18 +215,30 @@ export function chunkText(text, options = {}) {
 }
 
 export class PersistentVectorStore {
-  constructor(file) { this.file = file; this.records = []; }
+  constructor(file, options = {}) { this.file = file; this.records = []; this.embed = options.embed ?? ((text) => localEmbedding(text)); }
   async load() { try { this.records = JSON.parse(await fs.readFile(this.file, 'utf8')); } catch { this.records = []; } return this; }
   async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.records, null, 2)); }
   async replaceDocuments(documents) {
-    this.records = documents.flatMap((document) => chunkText(document.text).map((chunk, index) => ({ id: `${document.id}:${index}`, documentId: document.id, metadata: document.metadata ?? {}, ...chunk, vector: embedding(chunk.text) })));
+    this.records = await Promise.all(documents.flatMap((document) => chunkText(document.text).map(async (chunk, index) => ({ id: `${document.id}:${index}`, documentId: document.id, metadata: document.metadata ?? {}, ...chunk, vector: await this.embed(chunk.text) }))));
     await this.save();
     return this.records.length;
   }
-  query(query, limit = 5) {
-    const q = embedding(query);
+  async query(query, limit = 5) {
+    const q = await this.embed(query);
     return this.records.map((record) => ({ ...record, score: cosine(q, record.vector) })).sort((a, b) => b.score - a.score).slice(0, limit);
   }
+}
+
+export function createRemoteEmbeddingProvider({ endpoint, apiKey, model, headers = {} }) {
+  if (!endpoint) throw new Error('EMBEDDING_ENDPOINT_REQUIRED');
+  return async (input) => {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}), ...headers }, body: JSON.stringify({ input, model }) });
+    if (!response.ok) throw new Error(`EMBEDDING_PROVIDER_${response.status}`);
+    const data = await response.json();
+    const vector = data.data?.[0]?.embedding ?? data.embedding;
+    if (!Array.isArray(vector)) throw new Error('EMBEDDING_PROVIDER_INVALID_RESPONSE');
+    return vector;
+  };
 }
 
 export function rerank(query, candidates, limit = 5) {
