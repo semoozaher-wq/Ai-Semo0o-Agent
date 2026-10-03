@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -25,8 +25,19 @@ function BootSplash() {
 
 function RootNavigator() {
   const theme = useTheme();
-  const { ready } = useBootstrap();
+  const { ready, error, retry } = useBootstrap();
 
+  if (error) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: theme.colors.background, gap: 16 }}>
+        <Text style={{ color: theme.colors.text, fontSize: 18, textAlign: 'center' }}>تعذر تحميل التطبيق</Text>
+        <Text style={{ color: theme.colors.textMuted, textAlign: 'center' }}>{error}</Text>
+        <Pressable onPress={retry} style={{ backgroundColor: theme.colors.primary, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>إعادة المحاولة</Text>
+        </Pressable>
+      </View>
+    );
+  }
   if (!ready) return <BootSplash />;
 
   return (
