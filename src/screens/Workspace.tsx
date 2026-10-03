@@ -15,7 +15,7 @@ import { SectionHeader } from '../components/composite/SectionHeader';
 import { StatCard } from '../components/composite/StatCard';
 import { EmptyState } from '../components/composite/EmptyState';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
-import { formatBytes, formatNumber, formatRelativeTime } from '../utils/format';
+import { formatBytes, formatNumber } from '../utils/format';
 import { base64ToBytes } from '../utils/base64';
 import type { WorkspaceFile } from '../types/workspace';
 

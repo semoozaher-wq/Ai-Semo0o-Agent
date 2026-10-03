@@ -73,7 +73,6 @@ function healthTone(score: number): string {
 
 export function Files() {
   const theme = useTheme();
-  const router = useRouter();
   const files = useFilesStore((s) => s.files);
   const report = useFilesStore((s) => s.report);
   const audit = useFilesStore((s) => s.audit);
