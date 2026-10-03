@@ -1,0 +1,11 @@
+Ai-Semo0o-Agent — code.run sandbox implementation
+Generated: 2026-10-03
+
+Files:
+- execution-core/sandbox.mjs
+- test/sandbox-runner.test.mjs
+- docs/CODE_RUN_SANDBOX.md
+
+Notes:
+- Docker/Podman is required on the backend host for live container execution.
+- No node_modules, Expo cache, credentials, or temporary files are included.
