@@ -231,7 +231,8 @@ test('execution failure invokes self-healing and succeeds on a bounded retry', a
       requestPermission: async () => true,
       selfHeal: async ({ failureKind }) => { assert.equal(failureKind, 'EXECUTION_FAILURE'); return { action: 'retry' }; },
     });
-    assert.equal(result.status, 'completed');
+    assert.equal(result.status, 'completed_with_warnings');
+    assert.ok(result.warnings.some((warning) => warning.startsWith('SELF_HEALED:')));
     assert.equal(calls, 2);
   } finally {
     unregisterTool('code.run');
