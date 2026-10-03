@@ -1,25 +1,33 @@
 # PHASE 1 — Unified Agent Runtime + Chat/Agents Integration
 
+## STATUS
+
+**IMPLEMENTED AND REGRESSION-VERIFIED.** This phase is not being labeled fully production-ready because the master task explicitly reserves the authenticated backend, durable workers, real browser E2E, and production secrets/database work for later phases.
+
+**Audit baseline SHA:** `761a045` (`HEAD` at audit start). No new Git commit was created in the sandbox; the changes listed below are in the working tree and are delivered in the ZIP artifact.
+
 ## IMPLEMENTED
 
-- Connected the **Agents store** to the existing modern `AgentOrchestrator` instead of the legacy `AgentExecutor` path.
-- Added live orchestrator event delivery to the UI store for planning, step start, tool execution, verification, and failure events.
-- Added **Chat goal classification**:
-  - Ordinary questions continue through the direct streaming Chat path.
-  - Complex coding/project/execution goals create an Agent task and run through Planner → Orchestrator → Tools → Verification.
-- Added an `agentTaskId` reference to assistant messages for traceability.
-- Configured live AI providers from hydrated settings during application bootstrap.
-- Extended task status and step metadata with:
-  - `unverified`
-  - verification status
-  - evidence IDs
-  - retry count
-- Updated Agents UI to show real task steps, verification badges, retry counts, and live event logs.
-- Updated Analytics UI to include `unverified` task status.
-- Added regression coverage for live orchestrator event emission.
+The existing modern runtime is now the production path for the Agents store. Complex Chat goals are routed into the same path instead of receiving an independent direct-LM answer. Ordinary questions remain on the direct streaming Chat path.
 
-## FILES CHANGED
+The connected execution path is:
 
+```text
+User Goal → Chat/Agents → LLMPlanner → AgentOrchestrator → Tool Registry
+→ Real Tool Adapter → Observe → Verification → Evidence → Self-Healing
+→ Final Result → Task/Chat UI
+```
+
+The Agents UI receives real orchestrator events for planning, step start, tool completion, verification, permission requests, retries, and final state. The task model now represents `blocked`, `completed_with_warnings`, and `unverified` separately, rather than converting blocked work into failed work.
+
+A real Approval Surface was added for dangerous tools. It displays the tool, requested capability, reason, affected paths, reversibility, risk, and explicit **Approve / Reject** controls. Rejecting the request returns `BLOCKED`; approval resumes the same orchestrator execution.
+
+Self-healing remains bounded to three attempts. A run that succeeds only after repair/retry is reported as `COMPLETED_WITH_WARNINGS` and records a `SELF_HEALED` warning instead of silently appearing as an unqualified success.
+
+## CHANGED FILES
+
+- `docs/PRODUCTION_GAP_MATRIX.md`
+- `docs/PHASE1_UNIFIED_RUNTIME_REPORT.md`
 - `src/services/agent-engine/orchestrator.ts`
 - `src/store/useAgentsStore.ts`
 - `src/store/useChatStore.ts`
@@ -30,39 +38,22 @@
 - `src/screens/Analytics.tsx`
 - `test/phase1-orchestrator.test.ts`
 
-## REAL FEATURES
+## REMOVED LEGACY PATHS
 
-- Chat-to-Agent task routing is implemented in the real Zustand store path.
-- Agents UI is backed by the modern orchestrator result and event callback.
-- The verification gate and evidence collection remain the existing production code paths.
-- Provider absence fails closed with an explicit error; no fake response is generated.
-- Dangerous tools remain permission-controlled and are denied by default from the current UI path.
+The Agents store no longer calls the legacy `agentExecutor` in its production UI path. The legacy executor files remain in the repository because they are still part of the existing codebase and were not deleted without a complete usage/removal migration. The new store uses `agentOrchestrator` directly.
+
+## REAL INTEGRATIONS
+
+- Chat complex-goal routing uses the real Zustand stores and `AgentOrchestrator`.
+- Agents UI uses the real orchestrator event callback and result/evidence collections.
+- Provider configuration is loaded from hydrated settings at bootstrap.
+- Dangerous-tool permission decisions are now supplied by a user-facing approval resolver.
+- Verification rejects missing, simulated, or contradictory evidence.
+- No fake response or fabricated success path was added.
 
 ## SIMULATED FEATURES
 
-- No simulated production success was added.
-- The Phase 1 unit tests use a deterministic provider adapter only for repeatable CI; it is not used as a production fallback.
-- Ordinary Chat remains direct LLM streaming by design; it is not an Agent run unless the goal classifier identifies a complex execution request.
-
-## WIRED FEATURES
-
-```text
-Ordinary question → direct AI stream → Chat message
-
-Complex goal → useChatStore
-            → useAgentsStore.createTask
-            → AgentOrchestrator
-            → LLMPlanner
-            → Tool Registry
-            → Verification/Evidence
-            → Task result + Chat message reference
-```
-
-Agents screen:
-
-```text
-Goal → AgentOrchestrator → onEvent → Zustand task/log state → Live Timeline
-```
+No simulated production feature was added. Deterministic providers are used only in repeatable tests. The local task store is still a client-side persistence layer, not a production backend. Real Chromium E2E is not claimed in this phase.
 
 ## TESTS
 
@@ -74,36 +65,25 @@ Goal → AgentOrchestrator → onEvent → Zustand task/log state → Live Timel
 | `npm run lint` | PASS |
 | `npm run build` | PASS — Expo web export completed |
 
-The new Phase 1 regression proves the orchestrator emits real planning, step, tool, and verification events.
-
-## E2E
-
-- Expo web production export passed and generated all 17 static routes.
-- Real Chromium browser E2E is **not part of Phase 1** and remains scheduled for Phase 5.
-- A live external-provider E2E run requires configured provider credentials and is intentionally not faked in CI.
+Phase 1 regression coverage includes successful verification, false success rejection, event emission, permission denial, self-healing, completed-with-warnings after repair, retry limits, missing evidence, and simulated-output rejection.
 
 ## SECURITY
 
-- Unregistered tools continue to fail explicitly.
-- Dangerous tools remain deny-by-default unless a permission callback grants access.
-- Provider keys are only converted into server-provider configuration at runtime; a backend secret store is still required in Phase 3/8.
-- No secrets are included in the ZIP artifact.
+Dangerous tools remain default-deny until the user makes an explicit decision. The approval UI shows affected paths and reversibility before execution. Tool arguments continue to pass through strict validation. Unregistered tools fail explicitly. No secrets are included in the artifact.
 
-## KNOWN LIMITATIONS
+## EVIDENCE
 
-- The UI currently supplies a deny-by-default permission callback for dangerous tools; a user approval surface is still required before enabling destructive tools from Chat/Agents.
-- Agent runs are persisted locally through the existing store until the Backend/Database phase.
-- The event callback currently covers live execution events; the final result is committed to the task store after the run returns.
-- `TaskStatus` has no separate `blocked` value yet; blocked runs are represented as failed in the UI while the orchestrator result retains the true blocked status.
+The existing evidence model is preserved and connected to the orchestrator with `runId`, `taskId`, `stepId`, tool-result output, duration, simulation state, and timestamps. The UI now exposes verification state and retry count on each task step. Persistent server-side evidence storage remains a later backend phase.
 
 ## REMAINING GAPS
 
-- PHASE 2: complete live coding-agent tool wiring and prove `code.run` reaches the real execution-core sandbox from the production Agent path.
-- PHASE 3: backend database, migrations, transactions, authentication, authorization, and multi-tenancy.
-- PHASE 4: durable background workers and resumable runs.
-- PHASE 5: real BrowserAgent integration and Chromium E2E.
-- PHASE 6+: production memory/RAG, model router, plugins, secrets, observability, security audit, and CI/CD hardening.
+- Phase 2: connect `code.run` from the Agent registry to the tested execution-core Docker sandbox and prove real coding-agent end-to-end execution.
+- Phase 3: authenticated backend API, production database, migrations, authorization, and tenant isolation.
+- Phase 4: durable queue/worker runs that survive app/browser disconnects.
+- Phase 5: real Chromium BrowserAgent integration and browser E2E evidence.
+- Phase 6: production Memory/RAG isolation, retention, deletion, and vector storage.
+- Phase 7: task-aware model router and remaining live tool adapters.
+- Phase 8: signed plugins, backend secret storage, rotation, and scoped access.
+- Phase 9: correlated observability, security regression matrix, CI/CD enforcement.
 
-## STATUS
-
-**PHASE 1 IMPLEMENTED AND VERIFIED.** The project is not yet claimed to be fully production-ready because the remaining phases are not complete.
+The complete audit matrix is in `docs/PRODUCTION_GAP_MATRIX.md`.
