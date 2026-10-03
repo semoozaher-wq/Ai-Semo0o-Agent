@@ -44,6 +44,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   running: 'قيد التنفيذ',
   paused: 'متوقّف',
   completed: 'مكتملة',
+  unverified: 'غير موثّقة',
   failed: 'فشلت',
   cancelled: 'ملغاة',
 };
@@ -76,6 +77,8 @@ function statusTone(status: TaskStatus): 'neutral' | 'accent' | 'success' | 'dan
       return 'accent';
     case 'failed':
       return 'danger';
+    case 'unverified':
+      return 'warning';
     case 'cancelled':
       return 'warning';
     default:
@@ -167,6 +170,15 @@ function StepTimeline({ task }: { task: Task }) {
                       tone={inv.status === 'success' ? 'info' : 'danger'}
                     />
                   ))}
+                </View>
+              ) : null}
+              {step.verificationStatus ? (
+                <View style={styles.toolRow}>
+                  <Badge
+                    label={`Verification: ${step.verificationStatus}`}
+                    tone={step.verificationStatus === 'VERIFIED' ? 'success' : step.verificationStatus === 'UNVERIFIED' ? 'warning' : 'danger'}
+                  />
+                  {step.retries ? <Badge label={`Retry ×${step.retries}`} tone="warning" /> : null}
                 </View>
               ) : null}
             </View>

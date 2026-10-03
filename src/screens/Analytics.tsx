@@ -33,6 +33,7 @@ const STATUS_META: Record<TaskStatus, { label: string; tone: 'neutral' | 'primar
   running: { label: 'قيد التنفيذ', tone: 'primary' },
   paused: { label: 'متوقف مؤقتًا', tone: 'warning' },
   completed: { label: 'مكتمل', tone: 'success' },
+  unverified: { label: 'غير موثّق', tone: 'warning' },
   failed: { label: 'فشل', tone: 'danger' },
   cancelled: { label: 'ملغى', tone: 'neutral' },
 };
