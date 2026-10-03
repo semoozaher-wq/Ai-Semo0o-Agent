@@ -44,6 +44,8 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   running: 'قيد التنفيذ',
   paused: 'متوقّف',
   completed: 'مكتملة',
+  completed_with_warnings: 'مكتملة بتحذيرات',
+  blocked: 'محجوبة',
   unverified: 'غير موثّقة',
   failed: 'فشلت',
   cancelled: 'ملغاة',
@@ -72,6 +74,10 @@ function statusTone(status: TaskStatus): 'neutral' | 'accent' | 'success' | 'dan
   switch (status) {
     case 'completed':
       return 'success';
+    case 'completed_with_warnings':
+      return 'warning';
+    case 'blocked':
+      return 'danger';
     case 'running':
     case 'planning':
       return 'accent';
@@ -231,6 +237,9 @@ export function Agents() {
   const createTask = useAgentsStore((s) => s.createTask);
   const runTask = useAgentsStore((s) => s.runTask);
   const cancel = useAgentsStore((s) => s.cancel);
+  const approvalRequest = useAgentsStore((s) => s.approvalRequest);
+  const approve = useAgentsStore((s) => s.approve);
+  const reject = useAgentsStore((s) => s.reject);
   const removeTask = useAgentsStore((s) => s.removeTask);
   const clear = useAgentsStore((s) => s.clear);
 
@@ -415,6 +424,10 @@ export function Agents() {
                           name={
                             task.status === 'completed'
                               ? 'checkmark-done-circle'
+                              : task.status === 'completed_with_warnings'
+                                ? 'warning'
+                                : task.status === 'blocked'
+                                  ? 'lock-closed'
                               : task.status === 'running' || task.status === 'planning'
                                 ? 'sync'
                                 : task.status === 'failed'
@@ -427,6 +440,10 @@ export function Agents() {
                           color={
                             task.status === 'completed'
                               ? theme.colors.success
+                              : task.status === 'completed_with_warnings'
+                                ? theme.colors.warning
+                                : task.status === 'blocked'
+                                  ? theme.colors.danger
                               : task.status === 'running' || task.status === 'planning'
                                 ? theme.colors.accent
                                 : task.status === 'failed'
@@ -509,6 +526,39 @@ export function Agents() {
           </Card>
         </View>
       </ScrollView>
+
+      {/* --------------------------- approval surface ------------------------ */}
+      <Modal visible={Boolean(approvalRequest)} transparent animationType="slide" onRequestClose={reject}>
+        <Pressable style={styles.backdrop} onPress={reject}>
+          <Pressable
+            style={[styles.sheet, { backgroundColor: theme.colors.backgroundElevated, paddingBottom: insets.bottom + 16, borderColor: theme.colors.border }]}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <View style={styles.sheetHandle} />
+            <View style={styles.rowBetween}>
+              <Text variant="subtitle" weight="bold">موافقة مطلوبة</Text>
+              <Badge label={approvalRequest?.risk === 'high' ? 'مخاطر عالية' : 'مخاطر متوسطة'} tone={approvalRequest?.risk === 'high' ? 'danger' : 'warning'} />
+            </View>
+            <Text variant="body" weight="semibold" style={{ marginTop: theme.spacing.lg }}>
+              {approvalRequest?.toolName ?? 'أداة خطرة'}
+            </Text>
+            <Text variant="caption" tone="muted" style={{ marginTop: 6, lineHeight: 20 }}>
+              {approvalRequest?.reason ?? 'طلب تنفيذ عملية تحتاج صلاحية.'}
+            </Text>
+            <Text variant="label" weight="semibold" style={{ marginTop: theme.spacing.lg }}>الملفات أو المسارات المتأثرة</Text>
+            <Text variant="caption" tone="muted" style={{ marginTop: 4 }}>
+              {approvalRequest?.affectedFiles.length ? approvalRequest.affectedFiles.join('، ') : 'لم يحدد الوكيل ملفات بعينها'}
+            </Text>
+            <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.md }}>
+              {approvalRequest?.reversible ? 'العملية قابلة للتراجع.' : 'العملية قد لا تكون قابلة للتراجع.'}
+            </Text>
+            <View style={[styles.taskActions, { marginTop: theme.spacing.lg }]}>
+              <Button label="رفض" variant="outline" onPress={reject} style={{ flex: 1 }} />
+              <Button label="موافقة وتنفيذ" variant="danger" onPress={approve} style={{ flex: 1 }} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* ---------------------------- model picker --------------------------- */}
       <Modal
