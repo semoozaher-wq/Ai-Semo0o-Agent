@@ -8,6 +8,7 @@ import {
   DockerSandboxRunner,
   SandboxError,
   buildDockerInvocation,
+  runJavaScriptInVm,
   validateCodeRunRequest,
 } from '../execution-core/sandbox.mjs';
 
@@ -25,6 +26,24 @@ function fakeSpawn({ exitCode = 0, stdout = 'ok\n', stderr = '' } = {}) {
     return child;
   };
 }
+
+test('VM runner captures console output and awaits promises', async () => {
+  const result = await runJavaScriptInVm({
+    source: "console.log('hello', 2); await new Promise(resolve => setTimeout(() => resolve(), 5)); return 42;",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result, 42);
+  assert.equal(result.logs[0].message, 'hello 2');
+});
+
+test('VM runner returns structured errors and enforces timeout', async () => {
+  const error = await runJavaScriptInVm({ source: "throw new Error('bad input')" });
+  assert.equal(error.ok, false);
+  assert.match(error.error, /bad input/);
+  const timeout = await runJavaScriptInVm({ source: 'await new Promise(() => {})', timeoutMs: 20 });
+  assert.equal(timeout.ok, false);
+  assert.equal(timeout.errorCode, 'VM_TIMEOUT');
+});
 
 test('code-run request rejects unsupported languages and unsafe files', () => {
   assert.throws(() => validateCodeRunRequest({ language: 'ruby', source: 'puts 1' }), (error) => error instanceof SandboxError && error.code === 'UNSUPPORTED_LANGUAGE');
