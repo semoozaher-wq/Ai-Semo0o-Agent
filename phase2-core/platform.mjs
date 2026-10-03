@@ -6,6 +6,30 @@ const id = (prefix) => `${prefix}_${randomUUID()}`;
 const now = () => new Date().toISOString();
 const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
 
+async function readJson(file, fallback) {
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return fallback;
+    if (error instanceof SyntaxError) {
+      throw new Error(`PERSISTENCE_INVALID_JSON:${file}`, { cause: error });
+    }
+    throw error;
+  }
+}
+
+async function writeJsonAtomically(file, value) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporary, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(temporary, file);
+  } catch (error) {
+    await fs.rm(temporary, { force: true });
+    throw error;
+  }
+}
+
 /* ----------------------------- Dynamic Planner ---------------------------- */
 
 export class TaskGraph {
@@ -216,8 +240,8 @@ export function chunkText(text, options = {}) {
 
 export class PersistentVectorStore {
   constructor(file, options = {}) { this.file = file; this.records = []; this.embed = options.embed ?? ((text) => localEmbedding(text)); }
-  async load() { try { this.records = JSON.parse(await fs.readFile(this.file, 'utf8')); } catch { this.records = []; } return this; }
-  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.records, null, 2)); }
+  async load() { this.records = await readJson(this.file, []); return this; }
+  async save() { await writeJsonAtomically(this.file, this.records); }
   async replaceDocuments(documents) {
     this.records = await Promise.all(documents.flatMap((document) => chunkText(document.text).map(async (chunk, index) => ({ id: `${document.id}:${index}`, documentId: document.id, metadata: document.metadata ?? {}, ...chunk, vector: await this.embed(chunk.text) }))));
     await this.save();
@@ -250,8 +274,8 @@ export function rerank(query, candidates, limit = 5) {
 
 export class ProjectMemory {
   constructor(file) { this.file = file; this.data = { project: {}, tasks: [], failures: [], context: [], history: [] }; }
-  async load() { try { this.data = { ...this.data, ...JSON.parse(await fs.readFile(this.file, 'utf8')) }; } catch {} return this; }
-  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async load() { this.data = { ...this.data, ...await readJson(this.file, {}) }; return this; }
+  async save() { await writeJsonAtomically(this.file, this.data); }
   async record(type, payload) { const event = { id: id('memory'), type, at: now(), ...payload }; this.data.history.push(event); if (type === 'failure') this.data.failures.push(event); if (type === 'context') this.data.context.push(event); if (type === 'task') this.data.tasks.push(event); await this.save(); return event; }
   recall(query, limit = 10) { const q = tokens(query); return this.data.history.filter((item) => q.some((token) => JSON.stringify(item).toLowerCase().includes(token))).slice(-limit).reverse(); }
 }
@@ -260,8 +284,8 @@ export class ProjectMemory {
 
 export class PlatformStore {
   constructor(file) { this.file = file; this.data = { users: [], projects: [], workspaces: [], runs: [], logs: [], usage: [], apiKeys: [], packages: [], checkpoints: [] }; }
-  async load() { try { this.data = { ...this.data, ...JSON.parse(await fs.readFile(this.file, 'utf8')) }; } catch {} return this; }
-  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async load() { this.data = { ...this.data, ...await readJson(this.file, {}) }; return this; }
+  async save() { await writeJsonAtomically(this.file, this.data); }
   async create(type, payload) { if (!(type in this.data)) throw new Error(`UNKNOWN_PLATFORM_ENTITY:${type}`); const item = { id: id(type.slice(0, -1)), createdAt: now(), ...payload }; this.data[type].push(item); await this.save(); return item; }
   async appendLog(runId, level, message, meta = {}) { return this.create('logs', { runId, level, message, meta, at: now() }); }
   async recordUsage(runId, inputTokens, outputTokens) { return this.create('usage', { runId, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }); }
@@ -273,8 +297,8 @@ export class PlatformStore {
 
 export class AgentPackageStore {
   constructor(file) { this.file = file; this.data = { installed: {}, history: [] }; }
-  async load() { try { this.data = JSON.parse(await fs.readFile(this.file, 'utf8')); } catch {} return this; }
-  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async load() { this.data = await readJson(this.file, { installed: {}, history: [] }); return this; }
+  async save() { await writeJsonAtomically(this.file, this.data); }
   async install(pkg, options = {}) {
     const permissions = new Set(options.permissions ?? []);
     for (const permission of pkg.permissions ?? []) if (!permissions.has(permission)) throw new Error(`PACKAGE_PERMISSION_REQUIRED:${permission}`);

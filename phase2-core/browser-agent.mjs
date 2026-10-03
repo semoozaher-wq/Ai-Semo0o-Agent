@@ -18,6 +18,7 @@ export class BrowserAgent {
     this.nextId = 0;
     this.pending = new Map();
     this.events = [];
+    this.loadSequence = 0;
   }
 
   async connect() {
@@ -43,7 +44,10 @@ export class BrowserAgent {
       else pending.resolve(message.result ?? {});
       return;
     }
-    if (message.method) this.events.push({ type: message.method, params: message.params ?? {}, at: new Date().toISOString() });
+    if (message.method) {
+      if (message.method === 'Page.loadEventFired') this.loadSequence += 1;
+      this.events.push({ type: message.method, params: message.params ?? {}, at: new Date().toISOString() });
+    }
   }
 
   command(method, params = {}) {
@@ -57,15 +61,16 @@ export class BrowserAgent {
   }
 
   async navigate(url) {
+    const loadSequence = this.loadSequence;
     const result = await this.command('Page.navigate', { url });
-    await this.waitForLoad();
+    await this.waitForLoad(this.timeoutMs, loadSequence);
     return { url, result };
   }
 
-  async waitForLoad(timeoutMs = this.timeoutMs) {
+  async waitForLoad(timeoutMs = this.timeoutMs, previousLoadSequence = this.loadSequence) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (this.events.some((event) => event.type === 'Page.loadEventFired')) return true;
+      if (this.loadSequence > previousLoadSequence) return true;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error('BROWSER_LOAD_TIMEOUT');
@@ -115,5 +120,11 @@ export class BrowserAgent {
 
   evidence() { return { runId: id('browser'), capturedAt: new Date().toISOString(), events: this.events }; }
 
-  async close() { if (this.socket) this.socket.close(); this.socket = null; }
+  async close() {
+    const error = new Error('BROWSER_CLOSED');
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    if (this.socket) this.socket.close();
+    this.socket = null;
+  }
 }
