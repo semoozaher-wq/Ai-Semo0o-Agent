@@ -17,6 +17,23 @@ The current sandbox runner is intentionally fail-closed:
 - The temporary workspace is deleted after every run.
 - The result contains exit code, signal, output, timeout/truncation state, duration and isolation metadata.
 
+## Controlled Node VM runner
+
+`runJavaScriptInVm()` is also available for low-risk server-side snippets and
+deterministic tests. It provides:
+
+- A fresh `vm.createContext()` for every call.
+- A 3-second default timeout with a 5-second hard maximum.
+- Captured `console.log/info/warn/error` records.
+- Promise/async result handling.
+- Bounded console output.
+- Structured error results instead of uncaught runtime failures.
+- Bounded `setTimeout`/`clearTimeout` handles that are cleaned up after the run.
+
+Node's `vm` module is **not a hostile-code security boundary**. Do not use this
+runner for user-supplied or agent-generated code that must be treated as
+untrusted. Use the Docker/microVM runner for that workload.
+
 ## Usage
 
 ```js
