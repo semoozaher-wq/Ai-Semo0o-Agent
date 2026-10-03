@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -15,13 +14,10 @@ import { SectionHeader } from '../components/composite/SectionHeader';
 import { ListRow } from '../components/composite/ListRow';
 import { Card } from '../components/ui/Card';
 import { Text } from '../components/ui/Text';
-import { Button } from '../components/ui/Button';
 import { Chip } from '../components/ui/Chip';
 import { Badge } from '../components/ui/Badge';
-import { Input } from '../components/ui/Input';
 import { Divider } from '../components/ui/Divider';
 import { Icon } from '../components/ui/Icon';
-import { Avatar } from '../components/ui/Avatar';
 import { useAppStore } from '../store/useAppStore';
 import { PROVIDERS, getModel, modelsByProvider } from '../data/models';
 import { ProviderId } from '../types/model';
@@ -39,20 +35,12 @@ export function Settings() {
   const controller = useThemeController();
   const settings = useAppStore((s) => s.settings);
   const update = useAppStore((s) => s.update);
-  const setApiKey = useAppStore((s) => s.setApiKey);
   const reset = useAppStore((s) => s.reset);
 
   const [modelPicker, setModelPicker] = React.useState(false);
-  const [keyDrafts, setKeyDrafts] = React.useState<Partial<Record<ProviderId, string>>>({});
 
   const activeModel = getModel(settings.activeModel);
   const activeProvider = activeModel ? PROVIDERS[activeModel.provider] : undefined;
-
-  const commitKey = (provider: ProviderId) => {
-    const value = keyDrafts[provider] ?? '';
-    setApiKey(provider, value);
-    setKeyDrafts((prev) => ({ ...prev, [provider]: '' }));
-  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -146,67 +134,22 @@ export function Settings() {
           </View>
         </Card>
 
-        {/* API keys */}
+        {/* Server-managed providers */}
         <SectionHeader
-          title="مفاتيح API"
-          subtitle="تُحفظ محليًا على جهازك فقط"
+          title="مزودو الذكاء الاصطناعي"
+          subtitle="المفاتيح تُدار في Backend ولا تُرسل أو تُحفظ في التطبيق"
           icon="key-outline"
           style={{ marginTop: theme.spacing.xl }}
         />
-        {PROVIDER_IDS.map((id) => {
-          const provider = PROVIDERS[id];
-          const saved = settings.apiKeys[id];
-          return (
-            <Card key={id} style={{ marginBottom: theme.spacing.sm }}>
-              <View style={styles.providerHead}>
-                <Avatar name={provider.name} emoji="🔑" size={38} color={provider.accent} />
-                <View style={{ flex: 1, marginStart: theme.spacing.md }}>
-                  <Text variant="label" weight="semibold">
-                    {provider.nameAr}
-                  </Text>
-                  <Text variant="caption" tone="muted">
-                    {provider.descriptionAr}
-                  </Text>
-                </View>
-                {saved ? <Badge label="مُفعّل" tone="success" /> : <Badge label="غير متصل" tone="neutral" />}
-              </View>
-              {provider.requiresApiKey ? (
-                <View style={{ marginTop: theme.spacing.md }}>
-                  <Input
-                    placeholder={saved ? '••••••••••••' : 'الصق مفتاح API هنا'}
-                    icon="lock-closed-outline"
-                    secureTextEntry
-                    autoCapitalize="none"
-                    value={keyDrafts[id] ?? ''}
-                    onChangeText={(t) => setKeyDrafts((prev) => ({ ...prev, [id]: t }))}
-                  />
-                  <View style={styles.keyActions}>
-                    <Button
-                      label="حفظ"
-                      size="sm"
-                      icon="checkmark-outline"
-                      onPress={() => commitKey(id)}
-                      disabled={!(keyDrafts[id] ?? '').trim()}
-                    />
-                    <Button
-                      label="التوثيق"
-                      size="sm"
-                      variant="ghost"
-                      icon="open-outline"
-                      onPress={() => {
-                        if (provider.docsUrl) void Linking.openURL(provider.docsUrl);
-                      }}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.sm }}>
-                  لا يتطلب هذا المزوّد مفتاحًا — يعمل محليًا.
-                </Text>
-              )}
-            </Card>
-          );
-        })}
+        <Card>
+          <Text variant="body" weight="semibold">اتصال آمن من الخادم</Text>
+          <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.sm }}>
+            يختار الـBackend OpenAI أو Gemini أو Anthropic حسب النموذج المتاح. اضبط المفاتيح كأسرار بيئية على الخادم، ثم أعد تشغيل العامل. لا يُسمح للعميل برؤية قيمة أي مفتاح.
+          </Text>
+          <View style={[styles.chipRow, { marginTop: theme.spacing.md }]}>
+            {PROVIDER_IDS.map((id) => <Badge key={id} label={PROVIDERS[id].nameAr} tone="neutral" />)}
+          </View>
+        </Card>
 
         {/* Privacy */}
         <SectionHeader title="الخصوصية والبيانات" icon="shield-checkmark-outline" style={{ marginTop: theme.spacing.xl }} />
