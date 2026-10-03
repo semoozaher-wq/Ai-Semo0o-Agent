@@ -6,6 +6,7 @@ export type TaskStatus =
   | 'running'
   | 'paused'
   | 'completed'
+  | 'unverified'
   | 'failed'
   | 'cancelled';
 
@@ -47,6 +48,9 @@ export interface TaskStep extends PlanStep {
   toolInvocations?: ToolInvocation[];
   error?: string;
   logs?: string[];
+  verificationStatus?: 'VERIFIED' | 'FAILED' | 'BLOCKED' | 'UNVERIFIED';
+  evidenceIds?: string[];
+  retries?: number;
 }
 
 export interface Plan {

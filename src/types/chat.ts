@@ -24,6 +24,7 @@ export interface Message {
   model?: string;
   attachments?: Attachment[];
   toolInvocations?: ToolInvocation[];
+  agentTaskId?: string;
   usage?: TokenUsage;
   error?: string;
 }
