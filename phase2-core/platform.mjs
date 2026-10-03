@@ -1,0 +1,266 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+
+const id = (prefix) => `${prefix}_${randomUUID()}`;
+const now = () => new Date().toISOString();
+const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
+
+/* ----------------------------- Dynamic Planner ---------------------------- */
+
+export class TaskGraph {
+  constructor(goal, nodes = []) {
+    this.id = id('graph');
+    this.goal = goal;
+    this.nodes = nodes.map((node, index) => ({
+      id: node.id ?? id('node'),
+      title: node.title,
+      kind: node.kind ?? 'task',
+      dependsOn: [...new Set(node.dependsOn ?? [])],
+      reads: [...new Set(node.reads ?? [])],
+      writes: [...new Set(node.writes ?? [])],
+      run: node.run,
+      status: 'pending',
+      index,
+      attempts: 0,
+    }));
+    this.validate();
+  }
+
+  validate() {
+    const ids = new Set(this.nodes.map((node) => node.id));
+    for (const node of this.nodes) {
+      for (const dependency of node.dependsOn) {
+        if (!ids.has(dependency)) throw new Error(`GRAPH_MISSING_DEPENDENCY:${node.id}:${dependency}`);
+      }
+    }
+    const visiting = new Set();
+    const visited = new Set();
+    const visit = (nodeId) => {
+      if (visiting.has(nodeId)) throw new Error(`GRAPH_CYCLE:${nodeId}`);
+      if (visited.has(nodeId)) return;
+      visiting.add(nodeId);
+      const node = this.nodes.find((item) => item.id === nodeId);
+      node.dependsOn.forEach(visit);
+      visiting.delete(nodeId);
+      visited.add(nodeId);
+    };
+    this.nodes.forEach((node) => visit(node.id));
+    return this;
+  }
+
+  ready() {
+    const complete = new Set(this.nodes.filter((node) => node.status === 'completed').map((node) => node.id));
+    return this.nodes.filter((node) => node.status === 'pending' && node.dependsOn.every((dependency) => complete.has(dependency)));
+  }
+
+  static fromGoal(goal, context = {}) {
+    const text = String(goal).toLowerCase();
+    const nodes = [];
+    const add = (title, kind, options = {}) => {
+      const node = { id: options.id ?? id('node'), title, kind, ...options };
+      delete node.run;
+      nodes.push(node);
+      return node.id;
+    };
+    const inspect = add('فحص المشروع وبناء خريطة الرموز', 'intelligence', { reads: ['workspace'], writes: ['index'] });
+    const plan = add('تحويل الهدف إلى خطة تنفيذ قابلة للتحقق', 'planning', { dependsOn: [inspect], reads: ['index'], writes: ['task-graph'] });
+    const implement = add('تنفيذ التغييرات الآمنة', 'implementation', { dependsOn: [plan], reads: ['workspace', 'task-graph'], writes: ['workspace'] });
+    const verify = add('تشغيل الاختبارات والتحقق من الأدلة', 'verification', { dependsOn: [implement], reads: ['workspace'], writes: ['evidence'] });
+    if (/browser|متصفح|موقع|واجهة/.test(text)) add('التحقق من المتصفح والصفحة', 'browser', { dependsOn: [verify], reads: ['browser'], writes: ['evidence'] });
+    if (/search|بحث|rag|ذاكرة|memory|وثائق/.test(text)) add('استرجاع السياق من ذاكرة المشروع', 'retrieval', { dependsOn: [inspect], reads: ['rag'], writes: ['context'] });
+    const finalDeps = nodes.filter((node) => ['browser', 'retrieval', 'verification'].includes(node.kind)).map((node) => node.id);
+    add('تجميع التقرير النهائي', 'report', { dependsOn: finalDeps.length ? finalDeps : [verify], reads: ['evidence', 'context'], writes: ['report'] });
+    return new TaskGraph(goal, nodes);
+  }
+}
+
+function conflict(a, b) {
+  const writesA = new Set(a.writes);
+  const writesB = new Set(b.writes);
+  return a.writes.some((resource) => writesB.has(resource)) || a.writes.some((resource) => b.reads.includes(resource)) || b.writes.some((resource) => a.reads.includes(resource));
+}
+
+export async function executeTaskGraph(graph, runner, options = {}) {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 2);
+  const events = [];
+  while (graph.nodes.some((node) => node.status === 'pending' || node.status === 'running')) {
+    const candidates = graph.ready();
+    if (!candidates.length) {
+      const blocked = graph.nodes.filter((node) => node.status === 'pending');
+      if (blocked.length) throw new Error(`GRAPH_BLOCKED:${blocked.map((node) => node.id).join(',')}`);
+      break;
+    }
+    const batch = [];
+    for (const candidate of candidates) {
+      if (batch.every((running) => !conflict(candidate, running))) batch.push(candidate);
+    }
+    await Promise.all(batch.map(async (node) => {
+      node.status = 'running';
+      node.attempts += 1;
+      events.push({ at: now(), type: 'started', nodeId: node.id, attempt: node.attempts });
+      try {
+        node.result = await runner(node, graph);
+        node.status = 'completed';
+        events.push({ at: now(), type: 'completed', nodeId: node.id });
+      } catch (error) {
+        node.error = error instanceof Error ? error.message : String(error);
+        if (node.attempts < maxAttempts && options.replan) {
+          node.status = 'pending';
+          await options.replan(node, error, graph);
+          events.push({ at: now(), type: 'replanned', nodeId: node.id, error: node.error });
+        } else {
+          node.status = 'failed';
+          events.push({ at: now(), type: 'failed', nodeId: node.id, error: node.error });
+        }
+      }
+    }));
+    if (graph.nodes.some((node) => node.status === 'failed')) break;
+  }
+  return { graph, events, ok: graph.nodes.every((node) => node.status === 'completed') };
+}
+
+/* --------------------------- Project Intelligence ------------------------- */
+
+const codeExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+const importPattern = /(?:import\s+(?:[^'";]+?\s+from\s+)?|export\s+[^'";]+?\s+from\s+|require\s*\(\s*)['"]([^'"]+)['"]/g;
+const symbolPattern = /\b(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+
+export async function buildProjectIntelligence(root, options = {}) {
+  const files = [];
+  const walk = async (directory) => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (['node_modules', '.git', 'dist', '.expo'].includes(entry.name)) continue;
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (codeExtensions.has(path.extname(entry.name))) files.push(full);
+    }
+  };
+  await walk(root);
+  const symbols = [];
+  const imports = [];
+  let ts = null;
+  try { ts = await import('typescript'); } catch { /* optional runtime dependency */ }
+  for (const file of files) {
+    const source = await fs.readFile(file, 'utf8');
+    const relative = path.relative(root, file);
+    if (ts) {
+      const scriptKind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX;
+      const ast = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, scriptKind);
+      const visit = (node) => {
+        if (node.name?.text && [ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.InterfaceDeclaration, ts.SyntaxKind.TypeAliasDeclaration, ts.SyntaxKind.EnumDeclaration, ts.SyntaxKind.VariableStatement].includes(node.kind)) {
+          const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
+          symbols.push({ name: node.name.text, file: relative, line, kind: ts.SyntaxKind[node.kind], parser: 'typescript-ast' });
+        }
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, resolved: resolveImport(root, file, node.moduleSpecifier.text), parser: 'typescript-ast' });
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) imports.push({ from: relative, specifier: node.moduleSpecifier.text, resolved: resolveImport(root, file, node.moduleSpecifier.text), parser: 'typescript-ast' });
+        ts.forEachChild(node, visit);
+      };
+      visit(ast);
+      continue;
+    }
+    let match;
+    while ((match = symbolPattern.exec(source))) symbols.push({ name: match[1], file: relative, line: source.slice(0, match.index).split('\n').length });
+    symbolPattern.lastIndex = 0;
+    while ((match = importPattern.exec(source))) imports.push({ from: relative, specifier: match[1], resolved: resolveImport(root, file, match[1]) });
+    importPattern.lastIndex = 0;
+  }
+  const graph = imports.filter((edge) => edge.resolved).map(({ from, resolved }) => ({ from, to: resolved }));
+  const tests = files.filter((file) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(file)).map((file) => path.relative(root, file));
+  return { generatedAt: now(), root, files: files.map((file) => path.relative(root, file)), symbols, imports, importGraph: graph, dependencyGraph: graph, testMapping: tests.map((test) => ({ test, likelySources: files.filter((file) => path.basename(file).split('.')[0] === path.basename(test).split('.')[0]).map((file) => path.relative(root, file)) })), parser: ts ? 'typescript-ast' : 'lexical-fallback' };
+}
+
+function resolveImport(root, importer, specifier) {
+  if (!specifier.startsWith('.')) return null;
+  const base = path.resolve(path.dirname(importer), specifier);
+  for (const suffix of ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js']) {
+    const candidate = path.relative(root, base + suffix);
+    if (!candidate.startsWith('..')) return candidate;
+  }
+  return null;
+}
+
+/* ---------------------------------- RAG ----------------------------------- */
+
+function tokens(text) { return String(text).toLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? []; }
+function embedding(text, dimensions = 64) {
+  const vector = Array(dimensions).fill(0);
+  for (const token of tokens(text)) {
+    const hash = parseInt(sha256(token).slice(0, 8), 16);
+    vector[hash % dimensions] += 1;
+  }
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+  return vector.map((value) => value / magnitude);
+}
+function cosine(a, b) { return a.reduce((sum, value, index) => sum + value * (b[index] ?? 0), 0); }
+
+export function chunkText(text, options = {}) {
+  const size = options.size ?? 800;
+  const overlap = Math.min(options.overlap ?? 120, size - 1);
+  const chunks = [];
+  for (let start = 0; start < text.length; start += size - overlap) chunks.push({ text: text.slice(start, start + size), start, end: Math.min(text.length, start + size) });
+  return chunks;
+}
+
+export class PersistentVectorStore {
+  constructor(file) { this.file = file; this.records = []; }
+  async load() { try { this.records = JSON.parse(await fs.readFile(this.file, 'utf8')); } catch { this.records = []; } return this; }
+  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.records, null, 2)); }
+  async replaceDocuments(documents) {
+    this.records = documents.flatMap((document) => chunkText(document.text).map((chunk, index) => ({ id: `${document.id}:${index}`, documentId: document.id, metadata: document.metadata ?? {}, ...chunk, vector: embedding(chunk.text) })));
+    await this.save();
+    return this.records.length;
+  }
+  query(query, limit = 5) {
+    const q = embedding(query);
+    return this.records.map((record) => ({ ...record, score: cosine(q, record.vector) })).sort((a, b) => b.score - a.score).slice(0, limit);
+  }
+}
+
+export function rerank(query, candidates, limit = 5) {
+  const queryTokens = new Set(tokens(query));
+  return candidates.map((candidate) => ({ ...candidate, rerankScore: candidate.score + tokens(candidate.text).filter((token) => queryTokens.has(token)).length * 0.05 })).sort((a, b) => b.rerankScore - a.rerankScore).slice(0, limit);
+}
+
+/* ---------------------------- Persistent Memory --------------------------- */
+
+export class ProjectMemory {
+  constructor(file) { this.file = file; this.data = { project: {}, tasks: [], failures: [], context: [], history: [] }; }
+  async load() { try { this.data = { ...this.data, ...JSON.parse(await fs.readFile(this.file, 'utf8')) }; } catch {} return this; }
+  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async record(type, payload) { const event = { id: id('memory'), type, at: now(), ...payload }; this.data.history.push(event); if (type === 'failure') this.data.failures.push(event); if (type === 'context') this.data.context.push(event); if (type === 'task') this.data.tasks.push(event); await this.save(); return event; }
+  recall(query, limit = 10) { const q = tokens(query); return this.data.history.filter((item) => q.some((token) => JSON.stringify(item).toLowerCase().includes(token))).slice(-limit).reverse(); }
+}
+
+/* ------------------------------ Platform Store ---------------------------- */
+
+export class PlatformStore {
+  constructor(file) { this.file = file; this.data = { users: [], projects: [], workspaces: [], runs: [], logs: [], usage: [], apiKeys: [], packages: [], checkpoints: [] }; }
+  async load() { try { this.data = { ...this.data, ...JSON.parse(await fs.readFile(this.file, 'utf8')) }; } catch {} return this; }
+  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async create(type, payload) { if (!(type in this.data)) throw new Error(`UNKNOWN_PLATFORM_ENTITY:${type}`); const item = { id: id(type.slice(0, -1)), createdAt: now(), ...payload }; this.data[type].push(item); await this.save(); return item; }
+  async appendLog(runId, level, message, meta = {}) { return this.create('logs', { runId, level, message, meta, at: now() }); }
+  async recordUsage(runId, inputTokens, outputTokens) { return this.create('usage', { runId, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }); }
+  async storeApiKey(userId, provider, secret) { return this.create('apiKeys', { userId, provider, secretHash: sha256(secret), last4: String(secret).slice(-4) }); }
+  async getRun(runId) { return this.data.runs.find((run) => run.id === runId) ?? null; }
+}
+
+/* ------------------------------ Agent Store -------------------------------- */
+
+export class AgentPackageStore {
+  constructor(file) { this.file = file; this.data = { installed: {}, history: [] }; }
+  async load() { try { this.data = JSON.parse(await fs.readFile(this.file, 'utf8')); } catch {} return this; }
+  async save() { await fs.mkdir(path.dirname(this.file), { recursive: true }); await fs.writeFile(this.file, JSON.stringify(this.data, null, 2)); }
+  async install(pkg, options = {}) {
+    const permissions = new Set(options.permissions ?? []);
+    for (const permission of pkg.permissions ?? []) if (!permissions.has(permission)) throw new Error(`PACKAGE_PERMISSION_REQUIRED:${permission}`);
+    for (const dependency of pkg.dependencies ?? []) if (!this.data.installed[dependency]) throw new Error(`PACKAGE_DEPENDENCY_MISSING:${dependency}`);
+    const previous = this.data.installed[pkg.name];
+    this.data.installed[pkg.name] = { ...pkg, installedAt: now() };
+    this.data.history.push({ action: previous ? 'update' : 'install', name: pkg.name, previous, next: this.data.installed[pkg.name], at: now() });
+    await this.save();
+    return this.data.installed[pkg.name];
+  }
+  async uninstall(name) { const previous = this.data.installed[name]; if (!previous) return false; delete this.data.installed[name]; this.data.history.push({ action: 'uninstall', name, previous, at: now() }); await this.save(); return true; }
+  async rollback(name) { const history = [...this.data.history].reverse().find((item) => item.name === name && item.previous); if (!history) throw new Error(`PACKAGE_NO_ROLLBACK:${name}`); this.data.installed[name] = history.previous; this.data.history.push({ action: 'rollback', name, next: history.previous, at: now() }); await this.save(); return this.data.installed[name]; }
+}
