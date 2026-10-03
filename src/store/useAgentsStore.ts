@@ -1,12 +1,12 @@
 import { create } from 'zustand';
-import { Task, TaskStep } from '../../types/task';
-import { LogLevel } from '../agent-engine/executor';
-import { agentOrchestrator, OrchestratorEvent } from '../agent-engine/orchestrator';
+import { Task, TaskStep } from '../types/task';
+import { LogLevel } from '../services/agent-engine/executor';
+import { agentOrchestrator, OrchestratorEvent } from '../services/agent-engine/orchestrator';
 import { TOOLS } from '../../data/tools';
-import { providerRegistry } from '../ai';
-import { storage, STORAGE_KEYS } from '../storage';
-import { uid } from '../../utils/id';
-import { DEFAULT_MODEL_ID } from '../../data/models';
+import { providerRegistry } from '../services/ai';
+import { storage, STORAGE_KEYS } from '../services/storage';
+import { uid } from '../utils/id';
+import { DEFAULT_MODEL_ID } from '../data/models';
 
 export interface ApprovalRequest {
   id: string;
@@ -158,6 +158,20 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
           const args = step.toolArgs ?? {};
           const affectedFiles = [args.path, ...(Array.isArray(args.paths) ? args.paths : [])]
             .filter((value): value is string => typeof value === 'string');
+          let settled = false;
+          let watch: ReturnType<typeof setInterval>;
+          let timeout: ReturnType<typeof setTimeout>;
+          const finish = (approved: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearInterval(watch);
+            clearTimeout(timeout);
+            resolve(approved);
+          };
+          watch = setInterval(() => {
+            if (cancelSignal.cancelled) finish(false);
+          }, 100);
+          timeout = setTimeout(() => finish(false), 5 * 60 * 1000);
           set({ approvalRequest: {
             id: uid('approval'),
             toolId: tool.id,
@@ -166,7 +180,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
             affectedFiles,
             reversible: !['workspace.delete', 'email.send'].includes(tool.id),
             risk: ['workspace.delete', 'email.send', 'code.run'].includes(tool.id) ? 'high' : 'medium',
-            resolve,
+            resolve: finish,
           } });
         }),
         onEvent: (next) => {

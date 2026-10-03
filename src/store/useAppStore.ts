@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { ProviderId } from '../types/model';
 import { ThemeMode } from '../theme';
 import { storage, STORAGE_KEYS } from '../services/storage';
@@ -47,8 +49,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async hydrate() {
     const saved = await storage.get<Partial<AppSettings>>(STORAGE_KEYS.settings);
+    const apiKeys = { ...(saved?.apiKeys ?? {}) };
+    if (Platform.OS !== 'web') {
+      for (const provider of Object.keys(apiKeys) as ProviderId[]) {
+        const value = await SecureStore.getItemAsync(`semo0o.api-key.${provider}`);
+        if (value) apiKeys[provider] = value;
+      }
+    }
     set({
-      settings: { ...DEFAULT_SETTINGS, ...(saved ?? {}) },
+      settings: { ...DEFAULT_SETTINGS, ...(saved ?? {}), apiKeys },
       hydrated: true,
     });
   },
@@ -56,7 +65,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   update(patch) {
     const settings = { ...get().settings, ...patch };
     set({ settings });
-    void storage.set(STORAGE_KEYS.settings, settings);
+    if (patch.apiKeys && Platform.OS !== 'web') {
+      for (const [provider, key] of Object.entries(patch.apiKeys)) {
+        if (key) void SecureStore.setItemAsync(`semo0o.api-key.${provider}`, key);
+        else void SecureStore.deleteItemAsync(`semo0o.api-key.${provider}`);
+      }
+    }
+    const persisted = Platform.OS === 'web' ? settings : { ...settings, apiKeys: {} };
+    void storage.set(STORAGE_KEYS.settings, persisted);
   },
 
   setThemeMode(mode) {
