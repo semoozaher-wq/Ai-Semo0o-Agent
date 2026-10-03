@@ -6,6 +6,8 @@ export type TaskStatus =
   | 'running'
   | 'paused'
   | 'completed'
+  | 'completed_with_warnings'
+  | 'blocked'
   | 'unverified'
   | 'failed'
   | 'cancelled';
