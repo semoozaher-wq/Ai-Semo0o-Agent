@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, chmodSync, lstatSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -8,9 +8,20 @@ const id = (prefix) => `${prefix}_${randomUUID()}`;
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex');
 
 export class Database {
-  constructor(filename = process.env.DATABASE_FILE ?? path.resolve('data/agent.sqlite')) {
-    mkdirSync(path.dirname(filename), { recursive: true });
-    this.db = new DatabaseSync(filename);
+  constructor(filename = process.env.DATABASE_FILE ?? path.resolve('.data/agent.sqlite')) {
+    const databasePath = path.resolve(filename);
+    const databaseDirectory = path.dirname(databasePath);
+    mkdirSync(databaseDirectory, { recursive: true, mode: 0o700 });
+    if ((statSync(databaseDirectory).mode & 0o077) !== 0) throw new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
+    try {
+      const existing = lstatSync(databasePath);
+      if (existing.isSymbolicLink() || !existing.isFile()) throw new Error('DATABASE_FILE_MUST_BE_REGULAR_FILE');
+      chmodSync(databasePath, 0o600);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    this.db = new DatabaseSync(databasePath);
+    chmodSync(databasePath, 0o600);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.migrate();
   }
