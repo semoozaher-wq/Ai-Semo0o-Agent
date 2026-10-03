@@ -1,10 +1,17 @@
 import { Database } from './db/client.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
+import { createLiveToolRegistry } from './tools/registry.mjs';
+import { createLLMRouter } from './llm/providers.mjs';
+import { createAgentRunHandler } from './agent/runtime.mjs';
+import { modelCost } from './runtime-shared.mjs';
 
 const db = new Database();
 const queue = new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250) });
 queue.register('code.run', createCodeRunHandler(db));
+const llm = createLLMRouter();
+const tools = createLiveToolRegistry({ db, llm });
+queue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost }));
 queue.start();
 console.log(`agent worker ${queue.workerId} started`);
 const shutdown = () => { queue.stop(); db.close(); process.exit(0); };

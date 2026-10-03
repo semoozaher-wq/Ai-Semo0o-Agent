@@ -5,6 +5,8 @@ import { RunQueue } from './queue/queue.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { RateLimiter, applySecurityHeaders } from './security/http.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
+import { createLLMRouter } from './llm/providers.mjs';
+import { createAgentRunHandler } from './agent/runtime.mjs';
 
 const json = (value) => JSON.stringify(value);
 function body(request) {
@@ -49,9 +51,35 @@ function assertRunAccess(db, run, user) {
   return task;
 }
 
-export function createApp({ db = new Database(), queue, codeRunner, liveTools, rateLimiter = new RateLimiter() } = {}) {
+function modelCost(model, usage = {}) {
+  const prices = { 'gpt-5-nano': [0.05, 0.40], 'gpt-5-mini': [0.25, 2.00], 'gpt-5': [1.25, 10.00], 'gpt-5.5': [5.00, 30.00], 'gemini-3-flash-preview': [0.50, 3.00], 'gemini-3.1-pro-preview': [2.00, 12.00], 'claude-haiku-4-5': [1.00, 5.00], 'claude-sonnet-4-6': [3.00, 15.00], 'claude-opus-4-7': [5.00, 25.00] };
+  const [input, output] = prices[model] ?? [0, 0];
+  return ((Number(usage.promptTokens) || 0) / 1_000_000) * input + ((Number(usage.completionTokens) || 0) / 1_000_000) * output;
+}
+
+async function streamRunEvents(response, db, runId, tenantId, request) {
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+  let cursor = 0;
+  let closed = false;
+  request.on('close', () => { closed = true; });
+  while (!closed) {
+    const events = db.all('SELECT rowid AS sequence, payload_json FROM run_events WHERE run_id=? AND tenant_id=? AND rowid>? ORDER BY rowid ASC', runId, tenantId, cursor);
+    for (const item of events) { cursor = item.sequence; response.write(`id: ${item.sequence}\ndata: ${item.payload_json}\n\n`); }
+    const run = db.get('SELECT status FROM runs WHERE id=? AND tenant_id=?', runId, tenantId);
+    if (!run || ['completed','completed_with_warnings','failed','blocked','cancelled','unverified'].includes(run.status)) {
+      response.write(`event: close\ndata: ${JSON.stringify({ status: run?.status ?? 'not_found' })}\n\n`);
+      response.end();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter = new RateLimiter() } = {}) {
   const runQueue = queue ?? new RunQueue(db);
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
+  const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm });
+  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost }));
   const server = createServer(async (request, response) => {
     try {
       const origin = process.env.ALLOWED_ORIGIN ?? '';
@@ -73,7 +101,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, r
         return send(response, 200, authenticate(db, input.email, input.password));
       }
       const user = requireUser(db, request);
-      if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, liveTools?.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
+      if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
+      if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'POST' && parts[0] === 'projects' && parts.length === 1) {
         const input = await body(request);
@@ -82,7 +111,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, r
         const projectId = id('project'); const workspaceId = id('workspace'); const timestamp = now();
         db.transaction(() => {
           db.run('INSERT INTO projects(id,tenant_id,owner_id,name,created_at) VALUES(?,?,?,?,?)', projectId, user.tenantId, user.id, name, timestamp);
-          db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, projectId, '', timestamp);
+          db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, projectId, input.rootPath || process.env.WORKSPACE_ROOT || process.cwd(), timestamp);
         });
         return send(response, 201, { projectId, workspaceId });
       }
@@ -113,17 +142,29 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, r
         const run = runQueue.get(parts[1], user.tenantId);
         if (!run) throw new Error('NOT_FOUND');
         const task = assertRunAccess(db, run, user);
-        if (method === 'GET' && parts.length === 2) return send(response, 200, { ...run, payload: JSON.parse(run.payload_json), result: run.result_json ? JSON.parse(run.result_json) : null, evidence: db.all('SELECT id,kind,payload_json,sha256,created_at FROM evidence WHERE run_id=? ORDER BY created_at', run.id) });
+        if (method === 'GET' && parts.length === 2) return send(response, 200, { ...run, payload: JSON.parse(run.payload_json), result: run.result_json ? JSON.parse(run.result_json) : null, evidence: db.all('SELECT id,kind,payload_json,sha256,created_at FROM evidence WHERE run_id=? ORDER BY created_at', run.id), events: db.all('SELECT id,type,payload_json,created_at FROM run_events WHERE run_id=? ORDER BY created_at', run.id), usage: db.all('SELECT provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd FROM run_usage WHERE run_id=?', run.id) });
+        if (method === 'GET' && parts[2] === 'events') return streamRunEvents(response, db, run.id, user.tenantId, request);
         if (method === 'POST' && parts[2] === 'cancel') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.cancel(run.id, user.tenantId)); }
+        if (method === 'POST' && parts[2] === 'retry') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.retry(run.id, user.tenantId)); }
         if (method === 'POST' && parts[2] === 'pause') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.pause(run.id, user.tenantId)); }
         if (method === 'POST' && parts[2] === 'resume') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.resume(run.id, user.tenantId)); }
         if (method === 'POST' && parts[2] === 'approval') {
           requireRole(user, ['owner','admin']); const input = await body(request); const decision = input.decision;
           const taskOwner = db.get('SELECT created_by FROM tasks WHERE id=?', run.task_id)?.created_by;
-          if (taskOwner === user.id) throw new Error('SELF_APPROVAL_FORBIDDEN');
+          const approvalPayload = JSON.parse(run.payload_json);
+          if (taskOwner === user.id && approvalPayload.kind !== 'agent.run') throw new Error('SELF_APPROVAL_FORBIDDEN');
           if (!['allow','deny','cancel'].includes(decision)) throw new Error('INVALID_APPROVAL');
           const next = decision === 'allow' ? 'queued' : 'blocked';
-          db.transaction(() => { db.run('UPDATE approvals SET decision=?,decided_by=?,decided_at=? WHERE run_id=? AND decision=?', decision, user.id, now(), run.id, 'pending'); db.run('UPDATE runs SET status=?,updated_at=? WHERE id=? AND status=?', next, now(), run.id, 'waiting_approval'); db.run('UPDATE tasks SET status=?,updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)', next, now(), run.id); });
+          db.transaction(() => {
+            const approval = db.get('SELECT capability FROM approvals WHERE run_id=? AND decision=? ORDER BY created_at DESC LIMIT 1', run.id, 'pending');
+            const payload = JSON.parse(run.payload_json);
+            const checkpoint = run.checkpoint_json ? JSON.parse(run.checkpoint_json) : {};
+            const approvedTools = new Set(payload.approvedTools || []);
+            if (decision === 'allow' && approval?.capability) approvedTools.add(approval.capability);
+            db.run('UPDATE approvals SET decision=?,decided_by=?,decided_at=? WHERE run_id=? AND decision=?', decision, user.id, now(), run.id, 'pending');
+            db.run('UPDATE runs SET status=?,payload_json=?,updated_at=? WHERE id=? AND status=?', next, JSON.stringify({ ...payload, approvedTools: [...approvedTools], resumeFrom: checkpoint.stepIndex ?? 0 }), now(), run.id, 'waiting_approval');
+            db.run('UPDATE tasks SET status=?,updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)', next, now(), run.id);
+          });
           return send(response, 200, runQueue.get(run.id, user.tenantId));
         }
       }
