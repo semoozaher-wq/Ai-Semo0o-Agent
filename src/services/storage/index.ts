@@ -1,10 +1,4 @@
-/**
- * Persistence abstraction.
- *
- * Uses `localStorage` when running on web (the primary preview target) and
- * falls back to an in-memory map everywhere else. Swapping in AsyncStorage /
- * SQLite for native builds only requires implementing the `KVStore` interface.
- */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface KVStore {
   get<T>(key: string): Promise<T | null>;
@@ -14,99 +8,57 @@ export interface KVStore {
   clear(): Promise<void>;
 }
 
-class MemoryKVStore implements KVStore {
-  private map = new Map<string, string>();
-
-  async get<T>(key: string): Promise<T | null> {
-    const raw = this.map.get(key);
-    if (raw == null) return null;
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      return null;
-    }
-  }
-
-  async set<T>(key: string, value: T): Promise<void> {
-    this.map.set(key, JSON.stringify(value));
-  }
-
-  async remove(key: string): Promise<void> {
-    this.map.delete(key);
-  }
-
-  async keys(): Promise<string[]> {
-    return Array.from(this.map.keys());
-  }
-
-  async clear(): Promise<void> {
-    this.map.clear();
-  }
-}
-
 class WebKVStore implements KVStore {
   constructor(private prefix = 'semo0o:') {}
-
-  private key(key: string): string {
-    return `${this.prefix}${key}`;
-  }
-
+  private key(key: string): string { return `${this.prefix}${key}`; }
   async get<T>(key: string): Promise<T | null> {
     try {
       const raw = globalThis.localStorage?.getItem(this.key(key));
-      if (raw == null) return null;
-      return JSON.parse(raw) as T;
-    } catch {
-      return null;
-    }
+      return raw == null ? null : JSON.parse(raw) as T;
+    } catch { return null; }
   }
-
   async set<T>(key: string, value: T): Promise<void> {
-    try {
-      globalThis.localStorage?.setItem(this.key(key), JSON.stringify(value));
-    } catch {
-      /* storage may be unavailable (private mode) — degrade gracefully */
-    }
+    try { globalThis.localStorage?.setItem(this.key(key), JSON.stringify(value)); } catch { /* private mode */ }
   }
-
-  async remove(key: string): Promise<void> {
-    try {
-      globalThis.localStorage?.removeItem(this.key(key));
-    } catch {
-      /* noop */
-    }
-  }
-
+  async remove(key: string): Promise<void> { try { globalThis.localStorage?.removeItem(this.key(key)); } catch { /* noop */ } }
   async keys(): Promise<string[]> {
     try {
       const ls = globalThis.localStorage;
       if (!ls) return [];
-      const out: string[] = [];
-      for (let i = 0; i < ls.length; i += 1) {
-        const k = ls.key(i);
-        if (k && k.startsWith(this.prefix)) out.push(k.slice(this.prefix.length));
-      }
-      return out;
-    } catch {
-      return [];
-    }
+      return Array.from({ length: ls.length }, (_, i) => ls.key(i))
+        .filter((key): key is string => Boolean(key?.startsWith(this.prefix)))
+        .map((key) => key.slice(this.prefix.length));
+    } catch { return []; }
   }
+  async clear(): Promise<void> { await Promise.all((await this.keys()).map((key) => this.remove(key))); }
+}
 
+class NativeKVStore implements KVStore {
+  private prefix = 'semo0o:';
+  private key(key: string): string { return `${this.prefix}${key}`; }
+  async get<T>(key: string): Promise<T | null> {
+    try {
+      const raw = await AsyncStorage.getItem(this.key(key));
+      return raw == null ? null : JSON.parse(raw) as T;
+    } catch { return null; }
+  }
+  async set<T>(key: string, value: T): Promise<void> {
+    await AsyncStorage.setItem(this.key(key), JSON.stringify(value));
+  }
+  async remove(key: string): Promise<void> { await AsyncStorage.removeItem(this.key(key)); }
+  async keys(): Promise<string[]> {
+    return (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(this.prefix)).map((key) => key.slice(this.prefix.length));
+  }
   async clear(): Promise<void> {
-    const all = await this.keys();
-    await Promise.all(all.map((k) => this.remove(k)));
+    for (const key of await this.keys()) await AsyncStorage.removeItem(this.key(key));
   }
 }
 
 function detectStore(): KVStore {
   try {
-    if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
-      return new WebKVStore();
-    }
-  } catch {
-    /* fall through */
-  }
-  return new MemoryKVStore();
+    if (typeof globalThis !== 'undefined' && globalThis.localStorage) return new WebKVStore();
+  } catch { /* use native storage */ }
+  return new NativeKVStore();
 }
 
 export const storage: KVStore = detectStore();
