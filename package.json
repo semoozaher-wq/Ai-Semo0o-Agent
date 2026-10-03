@@ -4,7 +4,7 @@
   "main": "expo-router/entry",
   "description": "Semo0o AI — Integrated autonomous AI platform (agents, store, chat, data engine)",
   "scripts": {
-    "test": "npm run test:legacy-harness && npm run test:execution && npm run test:phase1",
+    "test": "npm run test:legacy-harness && npm run test:execution && npm run test:phase1 && npm run test:backend && npm run validate:pain-map",
     "test:legacy-harness": "tsx test/harness.ts",
     "test:execution": "node --test test/*.test.mjs",
     "test:phase2": "node --test test/phase2-core.test.mjs",
@@ -28,11 +28,13 @@
   "dependencies": {
     "@expo/metro-runtime": "~57.0.16",
     "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "expo": "~57.0.26",
     "expo-constants": "~57.0.20",
     "expo-font": "~57.0.4",
     "expo-linking": "~57.0.11",
     "expo-router": "~57.0.24",
+    "expo-secure-store": "^57.0.4",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "jszip": "^3.10.1",
