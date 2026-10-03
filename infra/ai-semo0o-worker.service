@@ -6,8 +6,12 @@ After=network.target
 Type=simple
 User=semo0o
 WorkingDirectory=/opt/ai-semo0o-agent
+StateDirectory=semo0o
+StateDirectoryMode=0700
+UMask=0077
 Environment=NODE_ENV=production
 Environment=DATABASE_FILE=/var/lib/semo0o/agent.sqlite
+Environment=WORKSPACE_ROOT=/var/lib/semo0o/workspaces
 EnvironmentFile=/etc/semo0o/agent.env
 ExecStart=/usr/bin/node backend/worker.mjs
 Restart=always
