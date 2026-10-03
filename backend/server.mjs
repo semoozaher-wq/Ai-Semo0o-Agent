@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole } from './auth/security.mjs';
 import { RunQueue } from './queue/queue.mjs';
@@ -49,6 +51,14 @@ function assertRunAccess(db, run, user) {
   const project = task ? db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', task.project_id, user.tenantId) : null;
   assertProjectAccess(project, user);
   return task;
+}
+
+function resolveWorkspaceRoot(requested, projectId) {
+  const configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
+  const candidate = requested ? path.resolve(requested) : configured ? path.join(configured, projectId) : null;
+  if (!candidate) throw new Error('WORKSPACE_ROOT_REQUIRED');
+  if (configured && candidate !== configured && !candidate.startsWith(`${configured}${path.sep}`)) throw new Error('WORKSPACE_PATH_OUTSIDE_ROOT');
+  return candidate;
 }
 
 function modelCost(model, usage = {}) {
@@ -124,9 +134,9 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request);
         const name = validateText(input.name || 'Project', 'PROJECT_NAME');
         if (input.rootPath !== undefined && typeof input.rootPath !== 'string') throw new Error('INVALID_ROOT_PATH');
-        const rootPath = input.rootPath || process.env.WORKSPACE_ROOT;
-        if (!rootPath) throw new Error('WORKSPACE_ROOT_REQUIRED');
         const projectId = id('project'); const workspaceId = id('workspace'); const timestamp = now();
+        const rootPath = resolveWorkspaceRoot(input.rootPath, projectId);
+        await mkdir(rootPath, { recursive: true });
         db.transaction(() => {
           db.run('INSERT INTO projects(id,tenant_id,owner_id,name,created_at) VALUES(?,?,?,?,?)', projectId, user.tenantId, user.id, name, timestamp);
           db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, projectId, rootPath, timestamp);
@@ -142,18 +152,24 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request);
         const kind = typeof input.kind === 'string' ? input.kind : 'code.run';
         const goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
+        const requestedIdempotencyKey = input.idempotencyKey ?? request.headers['idempotency-key'];
+        const idempotencyKey = requestedIdempotencyKey ? validateText(requestedIdempotencyKey, 'IDEMPOTENCY_KEY', 128) : null;
         const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', input.projectId, user.tenantId);
         assertProjectAccess(project, user);
         const workspace = db.get('SELECT * FROM workspaces WHERE id=? AND project_id=?', input.workspaceId, input.projectId);
         if (!project || !workspace) throw new Error('NOT_FOUND');
+        if (idempotencyKey) {
+          const existing = db.get('SELECT * FROM runs WHERE tenant_id=? AND idempotency_key=?', user.tenantId, idempotencyKey);
+          if (existing) return send(response, 202, { runId: existing.id, taskId: existing.task_id, status: existing.status, idempotent: true });
+        }
         const taskId = id('task'); const timestamp = now(); const requiresApproval = requiresApprovalFor(kind, input);
         db.run('INSERT INTO tasks(id,tenant_id,project_id,workspace_id,created_by,goal,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', taskId, user.tenantId, project.id, workspace.id, user.id, goal, requiresApproval ? 'waiting_approval' : 'queued', timestamp, timestamp);
         const run = requiresApproval ? db.transaction(() => {
           const runId = id('run');
-          db.run('INSERT INTO runs(id,task_id,tenant_id,status,payload_json,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)', runId, taskId, user.tenantId, 'waiting_approval', JSON.stringify({ kind, ...input }), 0, timestamp, timestamp);
+          db.run('INSERT INTO runs(id,task_id,tenant_id,status,payload_json,attempts,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', runId, taskId, user.tenantId, 'waiting_approval', JSON.stringify({ kind, ...input }), 0, idempotencyKey, timestamp, timestamp);
           db.run('INSERT INTO approvals(id,run_id,requested_by,capability,decision,reason,created_at) VALUES(?,?,?,?,?,?,?)', id('approval'), runId, user.id, 'code.execute', 'pending', String(input.approvalReason || 'Code execution'), timestamp);
           return db.get('SELECT * FROM runs WHERE id=?', runId);
-        }) : runQueue.enqueue({ taskId, tenantId: user.tenantId, payload: input, kind });
+        }) : runQueue.enqueue({ taskId, tenantId: user.tenantId, payload: input, kind, idempotencyKey });
         return send(response, 202, { runId: run.id, taskId, status: run.status });
       }
       if (parts[0] === 'runs' && parts[1]) {
@@ -189,7 +205,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
     }
   });
