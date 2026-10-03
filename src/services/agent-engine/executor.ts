@@ -2,6 +2,7 @@ import { Plan, Task, TaskStep } from '../../types/task';
 import { ToolInvocation } from '../../types/tool';
 import { uid } from '../../utils/id';
 import { sleep } from '../../utils/async';
+import { estimateTokens } from '../../utils/text';
 import { AgentMemory } from './memory';
 import { createPlan, planProgress, replan } from './planner';
 import { runTool } from './tools';
@@ -18,7 +19,7 @@ export interface RunOptions extends AgentRunEvents {
   maxIterations?: number;
   /** Cooperative cancellation flag. */
   signal?: { cancelled: boolean };
-  /** Simulated per-step latency (ms) for a live-feeling timeline. */
+  /** Optional UI pacing delay; it never changes execution truth. */
   stepDelayMs?: number;
 }
 
@@ -159,6 +160,21 @@ export class AgentExecutor {
         }
       }
 
+      if (!resultOk(toolInvocations)) {
+        const failedStep: TaskStep = {
+          ...runningStep,
+          status: 'failed',
+          finishedAt: new Date().toISOString(),
+          output,
+          toolInvocations,
+          logs: [...(runningStep.logs ?? []), '✗ فشل التنفيذ'],
+        };
+        current = this.replaceStep(current, i, failedStep);
+        current = { ...current, status: 'failed', updatedAt: new Date().toISOString() };
+        options.onTaskUpdate?.(current);
+        options.onLog?.(`✗ فشل تنفيذ ${step.title}`, 'error');
+        return current;
+      }
       const completedStep: TaskStep = {
         ...runningStep,
         status: 'completed',
@@ -185,7 +201,7 @@ export class AgentExecutor {
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       result,
-      tokensUsed: 1200 + Math.floor(Math.random() * 3000),
+      tokensUsed: current.steps.reduce((sum, step) => sum + estimateTokens(step.output ?? ''), 0),
     };
     options.onTaskUpdate?.(current);
     options.onLog?.('اكتملت المهمة بنجاح. ✅', 'success');
@@ -231,6 +247,10 @@ export class AgentExecutor {
         .join('\n'),
     ].join('\n');
   }
+}
+
+function resultOk(invocations: ToolInvocation[] | undefined): boolean {
+  return !invocations || invocations.every((invocation) => invocation.status === 'success');
 }
 
 export const agentExecutor = new AgentExecutor();

@@ -3,7 +3,7 @@ import { aiService } from '../ai/runtime';
 import { getTool } from '../../data/tools';
 import type { Plan, PlanStep } from '../../types/task';
 import type { ToolDefinition } from '../../types/tool';
-import { isToolLive, runTool } from './tools';
+import { runTool } from './tools';
 import { LLMPlanner, type LLMPlanResult } from './llm-planner';
 
 export type OrchestratorStatus =
@@ -141,7 +141,6 @@ export class AgentOrchestrator {
     let usage = planned.usage;
     let hasExecutableStep = false;
     let hasVerification = false;
-    let allVerificationLive = true;
 
     for (const step of plan.steps) {
       if (input.signal?.cancelled) {
@@ -179,14 +178,14 @@ export class AgentOrchestrator {
         stepId: step.id,
         toolId: step.toolId,
         ok: result.ok,
-        simulated: !result.ok ? false : !isToolLive(step.toolId),
+        simulated: false,
         output: result.output,
         error: result.error,
         durationMs: result.durationMs,
       });
       events.push(event('tool_completed', {
         ok: result.ok,
-        simulated: !result.ok ? false : !isToolLive(step.toolId),
+        simulated: false,
         durationMs: result.durationMs,
         error: result.error,
       }, step.id, step.toolId));
@@ -195,23 +194,13 @@ export class AgentOrchestrator {
         errors.push(result.error ?? `TOOL_FAILED:${step.toolId}`);
         return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model);
       }
-      const simulated = !isToolLive(step.toolId);
-      if (simulated) {
-        const message = `SIMULATED_TOOL_RESULT:${step.toolId}`;
-        warnings.push(message);
-        if (step.kind === 'verify') allVerificationLive = false;
-      }
-      if (step.kind === 'verify' && !simulated) allVerificationLive = true;
-      events.push(event('step_completed', { verified: !simulated }, step.id, step.toolId));
+      events.push(event('step_completed', { verified: true }, step.id, step.toolId));
     }
 
     if (!hasExecutableStep || !hasVerification) {
       events.push(event('verification_required', { hasExecutableStep, hasVerification }));
       warnings.push('NO_REAL_VERIFICATION_STEP');
       return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model);
-    }
-    if (!allVerificationLive || warnings.length > 0) {
-      return this.finish('completed_with_warnings', plan, planned, events, outputs, warnings, errors, usage, input.model);
     }
     return this.finish('completed', plan, planned, events, outputs, warnings, errors, usage, input.model);
   }
