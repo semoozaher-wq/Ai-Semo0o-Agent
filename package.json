@@ -7,6 +7,7 @@
     "test": "npm run test:legacy-harness && npm run test:execution",
     "test:legacy-harness": "tsx test/harness.ts",
     "test:execution": "node --test test/*.test.mjs",
+    "test:phase2": "node --test test/phase2-core.test.mjs",
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
