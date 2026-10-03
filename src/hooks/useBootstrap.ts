@@ -6,6 +6,8 @@ import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
+import { aiService } from '../services/ai';
+import type { ProviderConfigMap } from '../types/model';
 
 /**
  * Hydrates every persisted store exactly once when the app mounts.
@@ -29,6 +31,11 @@ export function useBootstrap(): { ready: boolean } {
         useWorkspaceStore.getState().hydrate(),
         useAnalyticsStore.getState().hydrate(),
       ]);
+      const apiKeys = useAppStore.getState().settings.apiKeys;
+      const configs = Object.fromEntries(
+        Object.entries(apiKeys).map(([provider, apiKey]) => [provider, { apiKey }]),
+      ) as ProviderConfigMap;
+      aiService.configure(configs);
       if (!cancelled) setReady(true);
     }
 
