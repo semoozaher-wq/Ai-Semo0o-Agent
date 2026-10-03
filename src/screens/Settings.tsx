@@ -98,7 +98,10 @@ export function Settings() {
             </View>
             <Switch
               value={controller.isRTL}
-              onValueChange={(v) => controller.setPreference(v ? 'dark' : 'light')}
+              onValueChange={(v) => {
+                controller.setRTL(v);
+                update({ rtl: v });
+              }}
               trackColor={{ true: theme.colors.primary, false: theme.colors.surfaceMuted }}
               thumbColor="#FFFFFF"
             />
