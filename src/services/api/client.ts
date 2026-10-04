@@ -18,6 +18,30 @@ export interface ApiUsageSummary {
   totals: { tokens: number; costUsd: number; runs: number; messages: number };
   generatedAt: string;
 }
+export interface ApiToolStatusSummary { live: number; unwired: number; catalogOnly: number; simulated: number; dangerous: number }
+export interface ApiToolsStatus {
+  live: string[];
+  catalogOnly: string[];
+  simulated: string[];
+  unwired: string[];
+  dangerous: string[];
+  summary?: ApiToolStatusSummary;
+}
+export interface ApiModelProvider { id?: string; name?: string; configured: boolean; healthy?: boolean; [key: string]: unknown }
+export interface ApiModelsStatus { providers: ApiModelProvider[] }
+export interface ApiBillingStatus { plan?: string; provider?: string; configured?: boolean; [key: string]: unknown }
+export interface ApiReadinessCheck { ok: boolean; configured?: boolean; [key: string]: unknown }
+export interface ApiReadyReport {
+  ok: boolean;
+  version?: string;
+  checks?: {
+    database?: ApiReadinessCheck;
+    workspace?: ApiReadinessCheck;
+    providers?: ApiReadinessCheck & { configured?: number; total?: number };
+  };
+  providers?: ApiModelProvider[];
+}
+export interface ApiHealth { ok: boolean; service: string; version?: string; uptimeSeconds?: number; time: string }
 
 type StoredBootstrap = { email: string; password: string };
 
@@ -60,6 +84,14 @@ class BackendApiClient {
     if (!response.ok) throw new Error(String(payload.error ?? `BACKEND_${response.status}`));
     return payload as T;
   }
+  private async requestTolerant<T>(path: string): Promise<{ status: number; body: T }> {
+    if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
+      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+    });
+    const body = await response.json().catch(() => ({}));
+    return { status: response.status, body: body as T };
+  }
   async ensureSession(): Promise<ApiUser> {
     if (this.token && this.user) return this.user;
     const configured: StoredBootstrap | null = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_AGENT_EMAIL && process.env.EXPO_PUBLIC_AGENT_PASSWORD
@@ -94,6 +126,11 @@ class BackendApiClient {
   async createRun(input: Record<string, unknown>): Promise<ApiRun> { return this.request<ApiRun>('/runs', { method: 'POST', body: JSON.stringify(input) }); }
   async getRun(runId: string): Promise<ApiRunSnapshot> { return this.request<ApiRunSnapshot>(`/runs/${encodeURIComponent(runId)}`); }
   async getUsage(days = 30): Promise<ApiUsageSummary> { return this.request<ApiUsageSummary>(`/usage?days=${encodeURIComponent(String(days))}`); }
+  async getToolsStatus(): Promise<ApiToolsStatus> { return this.request<ApiToolsStatus>('/tools/status'); }
+  async getModelsStatus(): Promise<ApiModelsStatus> { return this.request<ApiModelsStatus>('/models/status'); }
+  async getBillingStatus(): Promise<ApiBillingStatus> { return this.request<ApiBillingStatus>('/billing/status'); }
+  async getHealth(): Promise<ApiHealth> { return this.request<ApiHealth>('/health'); }
+  async getReady(): Promise<{ status: number; report: ApiReadyReport }> { const { status, body } = await this.requestTolerant<ApiReadyReport>('/ready'); return { status, report: body }; }
   async approve(runId: string, decision: 'allow' | 'deny' | 'cancel'): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/approval`, { method: 'POST', body: JSON.stringify({ decision }) }); }
   async cancel(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }); }
   async retry(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }); }
