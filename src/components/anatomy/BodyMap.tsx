@@ -124,7 +124,13 @@ export function BodyMap({
 
   return (
     <View style={styles.wrap}>
-      <Svg width={width} height={height} viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}>
+      <Svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+        accessibilityRole="image"
+        accessibilityLabel="خريطة تشريحية تفاعلية؛ المعلومات تعليمية وليست تشخيصًا طبيًا"
+      >
         {/* neutral scaffolding */}
         {NEUTRAL.map((s, i) =>
           s.kind === 'rect' ? (
@@ -163,6 +169,7 @@ export function BodyMap({
                 rx={s.rx}
                 ry={s.ry}
                 {...common}
+                accessibilityLabel={isNeutral ? undefined : `اختيار مجموعة ${s.group}`}
               />
             );
           }
@@ -175,6 +182,7 @@ export function BodyMap({
               height={s.h}
               rx={s.r}
               {...common}
+              accessibilityLabel={isNeutral ? undefined : `اختيار مجموعة ${s.group}`}
             />
           );
         })}
