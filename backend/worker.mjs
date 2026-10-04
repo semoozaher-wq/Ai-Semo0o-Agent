@@ -8,7 +8,7 @@ import { modelCost } from './runtime-shared.mjs';
 
 if (process.env.NODE_ENV === 'production') process.umask(0o077);
 const db = new Database();
-const queue = new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250) });
+const queue = new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), leaseMs: Number(process.env.WORKER_LEASE_MS || 900000), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1) });
 queue.register('code.run', createCodeRunHandler(db));
 const llm = createLLMRouter();
 const tools = createLiveToolRegistry({ db, llm });

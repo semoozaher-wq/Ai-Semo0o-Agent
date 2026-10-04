@@ -54,6 +54,14 @@ The tool validates `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and req
 - `POST /runs/:id/cancel`
 - `GET /health`
 - `GET /tools/status`
+- `GET /models/status`
+- `POST /projects/:id/memory` with `{source,content}`
+- `GET /projects/:id/memory?q=...`
+- `GET /projects/:id/memory/export`
+- `POST /projects/:id/memory/reindex`
+- `DELETE /projects/:id/memory` (owner/admin)
+- `GET /me/export`
+- `DELETE /me` with `{confirmEmail}`
 
 ## Security rules
 
@@ -64,6 +72,9 @@ The tool validates `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and req
 - Queue transitions are explicit and bounded; no infinite retry loop is present.
 - Evidence is stored with a content hash and linked to the run.
 - Code execution still requires a backend host with Docker/Podman/gVisor/Kata/microVM. If no runtime is available, the run fails with evidence rather than succeeding falsely.
+- Agent runs enforce bounded steps, tool calls, retries, tokens, wall-clock time, cost, and duplicate-call loop detection. Configure with `AGENT_MAX_STEPS`, `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_RETRIES`, `AGENT_MAX_TOKENS`, `AGENT_MAX_COST_USD`, and `AGENT_TIMEOUT_MS`.
+- API rate limiting defaults to a SQLite-backed fixed window shared by API processes using the same database. Set `RATE_LIMIT_MAX` per deployment.
+- The server model contract is defined in `backend/models/catalog.mjs`; UI aliases are normalized and unknown model IDs are rejected.
 
 ## Current limits
 

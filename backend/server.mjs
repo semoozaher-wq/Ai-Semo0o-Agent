@@ -6,10 +6,12 @@ import { authenticate, authenticateToken, createSession, createUser, revokeSessi
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
-import { RateLimiter, applySecurityHeaders } from './security/http.mjs';
+import { DistributedRateLimiter, applySecurityHeaders } from './security/http.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
+import { modelCost, normalizeModelId } from './models/catalog.mjs';
+import { MemoryStore } from './memory/store.mjs';
 
 const json = (value) => JSON.stringify(value);
 function body(request) {
@@ -62,12 +64,6 @@ function resolveWorkspaceRoot(requested, projectId) {
   return candidate;
 }
 
-function modelCost(model, usage = {}) {
-  const prices = { 'gpt-5-nano': [0.05, 0.40], 'gpt-5-mini': [0.25, 2.00], 'gpt-5': [1.25, 10.00], 'gpt-5.5': [5.00, 30.00], 'gemini-3-flash-preview': [0.50, 3.00], 'gemini-3.1-pro-preview': [2.00, 12.00], 'claude-haiku-4-5': [1.00, 5.00], 'claude-sonnet-4-6': [3.00, 15.00], 'claude-opus-4-7': [5.00, 25.00] };
-  const [input, output] = prices[model] ?? [0, 0];
-  return ((Number(usage.promptTokens) || 0) / 1_000_000) * input + ((Number(usage.completionTokens) || 0) / 1_000_000) * output;
-}
-
 async function streamRunEvents(response, db, runId, tenantId, request) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
   let cursor = 0;
@@ -86,12 +82,16 @@ async function streamRunEvents(response, db, runId, tenantId, request) {
   }
 }
 
-export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter = new RateLimiter() } = {}) {
-  const runQueue = queue ?? new RunQueue(db);
+export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter } = {}) {
+  rateLimiter ??= new DistributedRateLimiter(db, { max: Number(process.env.RATE_LIMIT_MAX || 120) });
+  const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1) });
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm });
+  const memory = new MemoryStore(db);
   runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost }));
   const server = createServer(async (request, response) => {
+    const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
+    response.setHeader('x-request-id', requestId);
     try {
       const origin = process.env.ALLOWED_ORIGIN ?? '';
       applySecurityHeaders(response, origin && request.headers.origin === origin ? origin : '');
@@ -132,6 +132,15 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
+      if (method === 'GET' && parts.join('/') === 'me/export') {
+        return send(response, 200, { user: { id: user.id, tenantId: user.tenantId, email: user.email, role: user.role }, projects: db.all('SELECT id,name,created_at FROM projects WHERE tenant_id=? ORDER BY created_at', user.tenantId), messages: db.all('SELECT id,project_id,role,content,created_at FROM messages WHERE tenant_id=? ORDER BY created_at', user.tenantId), memory: db.all('SELECT id,project_id,source,content,created_at FROM documents WHERE tenant_id=? ORDER BY created_at', user.tenantId), exportedAt: now() });
+      }
+      if (method === 'DELETE' && parts.join('/') === 'me') {
+        const input = await body(request);
+        if (input.confirmEmail?.toLowerCase() !== user.email.toLowerCase()) throw new Error('DELETE_CONFIRMATION_REQUIRED');
+        db.transaction(() => { db.run('DELETE FROM projects WHERE tenant_id=?', user.tenantId); db.run('DELETE FROM tenants WHERE id=?', user.tenantId); });
+        return send(response, 200, { deleted: true });
+      }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/setup') { return send(response, 200, enableMfa(db, user.id)); }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/confirm') { const input = await body(request); return send(response, 200, confirmMfa(db, user.id, validateText(input.code, 'MFA_CODE', 6))); }
       if (method === 'POST' && parts.join('/') === 'org/invitations') {
@@ -141,7 +150,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (method === 'POST' && parts.join('/') === 'chat') {
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
-        const model = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined;
+        const model = normalizeModelId(input.model);
         const result = await llm.complete({ model, messages: [
           { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
           { role: 'user', content: message },
@@ -162,15 +171,25 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         });
         return send(response, 201, { projectId, workspaceId });
       }
-      if (method === 'GET' && parts[0] === 'projects' && parts[1]) {
+      if (method === 'GET' && parts[0] === 'projects' && parts[1] && parts.length === 2) {
         const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', parts[1], user.tenantId);
         assertProjectAccess(project, user);
         return send(response, 200, project);
+      }
+      if (parts[0] === 'projects' && parts[1] && parts[2] === 'memory') {
+        const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', parts[1], user.tenantId); assertProjectAccess(project, user);
+        if (method === 'POST' && parts.length === 3) { const input = await body(request); validateText(input.source || 'api', 'SOURCE', 200); validateText(input.content, 'CONTENT', 200000); return send(response, 201, memory.addDocument({ tenantId: user.tenantId, projectId: project.id, source: input.source || 'api', content: input.content })); }
+        if (method === 'GET' && parts.length === 3) return send(response, 200, memory.search({ tenantId: user.tenantId, projectId: project.id, query: validateText(new URL(request.url, 'http://localhost').searchParams.get('q'), 'QUERY', 500), limit: 10 }));
+        if (method === 'GET' && parts[3] === 'export') return send(response, 200, memory.exportProject(user.tenantId, project.id));
+        if (method === 'POST' && parts[3] === 'reindex') return send(response, 200, memory.reindexProject(user.tenantId, project.id));
+        if (method === 'DELETE' && parts.length === 3) { requireRole(user, ['owner', 'admin']); return send(response, 200, { deleted: memory.deleteProject(user.tenantId, project.id).changes }); }
       }
       if (method === 'POST' && parts[0] === 'runs' && parts.length === 1) {
         const input = await body(request);
         consumeQuota(db, user.tenantId, { runs: 1 });
         const kind = typeof input.kind === 'string' ? input.kind : 'code.run';
+        if (!['code.run', 'agent.run'].includes(kind)) throw new Error('UNSUPPORTED_RUN_KIND');
+        if (kind === 'agent.run' && input.model !== undefined && input.model !== 'test') input.model = normalizeModelId(input.model);
         const goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
         const requestedIdempotencyKey = input.idempotencyKey ?? request.headers['idempotency-key'];
         const idempotencyKey = requestedIdempotencyKey ? validateText(requestedIdempotencyKey, 'IDEMPOTENCY_KEY', 128) : null;
@@ -225,7 +244,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
     }
   });
