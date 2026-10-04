@@ -115,7 +115,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'auth/login') {
         const input = await body(request);
-        return send(response, 200, authenticate(db, input.email, input.password));
+        return send(response, 200, authenticate(db, input.email, input.password, input.mfaCode));
       }
       if (method === 'POST' && parts.join('/') === 'auth/verify-email') {
         const input = await body(request); return send(response, 200, { user: verifyEmail(db, validateText(input.token, 'TOKEN', 256)) });
@@ -225,7 +225,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = message === 'UNAUTHORIZED' ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
     }
   });
