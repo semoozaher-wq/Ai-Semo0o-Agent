@@ -79,6 +79,17 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   tools.set('files.write', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); await mkdir(path.dirname(resolved), { recursive: true }); await writeFile(resolved, bounded(args.content, 200000, 'CONTENT'), 'utf8'); return { output: { path: safe, bytes: Buffer.byteLength(args.content) } }; });
   tools.set('files.scan', async (args, context) => ({ output: { files: await listFiles(context.workspaceRoot, args.scope, Number(args.maxFiles ?? 500)) } }));
   tools.set('data.profile', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, profile: profile(content.slice(0, 2_000_000), safe) } }; });
+  tools.set('data.chart', async (args) => {
+    const allowed = new Set(['bar', 'line', 'donut', 'scatter']);
+    if (!allowed.has(args.type)) throw new Error('CHART_TYPE_NOT_SUPPORTED');
+    if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('CHART_DATA_INVALID');
+    const series = Object.entries(args.data).map(([name, values]) => {
+      if (!Array.isArray(values) || values.length > 10000 || values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) throw new Error('CHART_SERIES_INVALID');
+      return { name: String(name).slice(0, 120), values };
+    });
+    if (!series.length) throw new Error('CHART_DATA_EMPTY');
+    return { output: { type: args.type, title: typeof args.title === 'string' ? args.title.slice(0, 200) : undefined, series, points: Math.max(...series.map((item) => item.values.length)) } };
+  });
   tools.set('pdf.extract', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); return { output: { path: safe, text: await runPdfText(resolved, Number(args.maxChars ?? 200000)) } }; });
   tools.set('code.analyze', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); const issues = []; for (const [pattern, rule] of [[/TODO|FIXME|XXX/g, 'todo-comment'], [/\beval\s*\(/g, 'eval-usage'], [/console\.(log|debug)\s*\(/g, 'no-console'], [/api[_-]?key\s*[:=]\s*['"]/ig, 'hardcoded-secret']]) { const matches = content.match(pattern); if (matches?.length) issues.push({ rule, count: matches.length }); } return { output: { path: safe, issues, healthy: issues.length === 0 } }; });
   tools.set('doc.summarize', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
