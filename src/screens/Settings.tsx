@@ -21,6 +21,7 @@ import { Icon } from '../components/ui/Icon';
 import { useAppStore } from '../store/useAppStore';
 import { PROVIDERS, getModel, modelsByProvider } from '../data/models';
 import { ProviderId } from '../types/model';
+import { useRouter } from 'expo-router';
 
 const THEME_OPTIONS: { label: string; value: ThemePreference; icon: 'moon-outline' | 'sunny-outline' | 'contrast-outline' }[] = [
   { label: 'داكن', value: 'dark', icon: 'moon-outline' },
@@ -32,6 +33,7 @@ const PROVIDER_IDS = Object.keys(PROVIDERS) as ProviderId[];
 
 export function Settings() {
   const theme = useTheme();
+  const router = useRouter();
   const controller = useThemeController();
   const settings = useAppStore((s) => s.settings);
   const update = useAppStore((s) => s.update);
@@ -210,6 +212,13 @@ export function Settings() {
             onPress={() => void reset()}
             showChevron
           />
+        </Card>
+
+        <SectionHeader title="المستندات القانونية" icon="document-text-outline" style={{ marginTop: theme.spacing.xl }} />
+        <Card padded={false}>
+          <ListRow title="سياسة الخصوصية" subtitle="مسودة تتطلب مراجعة قانونية" icon="shield-checkmark-outline" showChevron onPress={() => router.push('/privacy')} />
+          <Divider spacing={0} style={{ marginHorizontal: theme.spacing.lg }} />
+          <ListRow title="شروط الاستخدام" subtitle="مسودة تتطلب مراجعة قانونية" icon="document-text-outline" showChevron onPress={() => router.push('/terms')} />
         </Card>
 
         <Text variant="caption" tone="subtle" align="center" style={{ marginTop: theme.spacing.xl }}>
