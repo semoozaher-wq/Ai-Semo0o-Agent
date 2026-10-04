@@ -8,6 +8,27 @@ const expiry = (days) => new Date(Date.now() + days * 86400000).toISOString();
 
 function rawToken() { return randomBytes(32).toString('base64url'); }
 
+function recoveryCode() { return randomBytes(8).toString('hex').toUpperCase(); }
+
+export function generateRecoveryCodes(db, userId, count = 10) {
+  if (!Number.isInteger(count) || count < 5 || count > 20) throw new Error('INVALID_RECOVERY_CODE_COUNT');
+  const created = now();
+  const codes = Array.from({ length: count }, recoveryCode);
+  db.transaction(() => {
+    db.run('DELETE FROM recovery_codes WHERE user_id=?', userId);
+    for (const code of codes) db.run('INSERT INTO recovery_codes(id,user_id,code_hash,created_at) VALUES(?,?,?,?)', id('recovery'), userId, hash(code), created);
+  });
+  return codes;
+}
+
+export function consumeRecoveryCode(db, userId, code) {
+  const normalized = String(code ?? '').trim().toUpperCase();
+  if (!/^[A-F0-9]{16}$/.test(normalized)) return false;
+  const row = db.get('SELECT id FROM recovery_codes WHERE user_id=? AND code_hash=? AND used_at IS NULL', userId, hash(normalized));
+  if (!row) return false;
+  return db.run('UPDATE recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL', now(), row.id).changes === 1;
+}
+
 export function issueAccountToken(db, userId, kind) {
   if (!['email_verification', 'password_reset'].includes(kind)) throw new Error('INVALID_ACCOUNT_TOKEN_KIND');
   const token = rawToken();
@@ -94,7 +115,7 @@ export function enableMfa(db, userId) {
   const base32 = base32Encode(randomBytes(20));
   if (!process.env.SECRETS_MASTER_KEY) throw new Error('SECRETS_MASTER_KEY_REQUIRED');
   db.run('UPDATE users SET mfa_secret=?,mfa_enabled=0 WHERE id=?', encryptSecret(base32), userId);
-  return { secret: base32, enabled: false };
+  return { secret: base32, recoveryCodes: generateRecoveryCodes(db, userId), enabled: false };
 }
 
 export function confirmMfa(db, userId, code) {
@@ -106,7 +127,9 @@ export function confirmMfa(db, userId, code) {
 
 export function verifyMfa(db, userId, code) {
   const user = db.get('SELECT mfa_secret,mfa_enabled FROM users WHERE id=?', userId);
-  return Boolean(user?.mfa_enabled && user.mfa_secret && verifyTotpSecret(decryptSecret(user.mfa_secret), code));
+  if (!user?.mfa_enabled) return false;
+  if (user.mfa_secret && verifyTotpSecret(decryptSecret(user.mfa_secret), code)) return true;
+  return consumeRecoveryCode(db, userId, code);
 }
 
 function verifyTotpSecret(secret, code) {
