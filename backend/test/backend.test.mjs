@@ -109,3 +109,65 @@ test('runs are idempotent per tenant and key', async () => {
     assert.equal(fx.db.get('SELECT COUNT(*) AS count FROM runs').count, 1);
   } finally { await fx.close(); }
 });
+
+test('usage endpoint reports tenant-scoped series, totals, and quota', async () => {
+  const fx = await fixture();
+  try {
+    const registered = await request(fx.base, '/auth/register', { method: 'POST', body: { email: 'usage@example.test', password: 'correct horse battery staple', tenantName: 'Usage' } });
+    const token = registered.body.session.token;
+    const tenantId = registered.body.user.tenantId;
+    const other = await request(fx.base, '/auth/register', { method: 'POST', body: { email: 'other-usage@example.test', password: 'correct horse battery staple', tenantName: 'Other' } });
+
+    const today = new Date().toISOString();
+    const project = await request(fx.base, '/projects', { method: 'POST', token, body: { name: 'Usage Project', rootPath: '/tmp/usage-project' } });
+    fx.db.run('INSERT INTO tasks(id,tenant_id,project_id,workspace_id,created_by,goal,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', 'task_usage_1', tenantId, project.body.projectId, project.body.workspaceId, registered.body.user.id, 'usage', 'completed', today, today);
+    fx.db.run('INSERT INTO runs(id,tenant_id,task_id,status,payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)', 'run_usage_1', tenantId, 'task_usage_1', 'completed', '{}', today, today);
+    fx.db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', 'usage_1', 'run_usage_1', tenantId, 'openai', 'gpt-5', 100, 50, 150, 0.012, today);
+    fx.db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', 'usage_other', 'run_usage_1', other.body.user.tenantId, 'openai', 'gpt-5', 999, 999, 1998, 9.99, today);
+
+    const usage = await request(fx.base, '/usage?days=30', { token });
+    assert.equal(usage.status, 200);
+    assert.equal(usage.body.totals.tokens, 150);
+    assert.equal(usage.body.totals.runs, 1);
+    assert.ok(Math.abs(usage.body.totals.costUsd - 0.012) < 1e-9);
+    assert.equal(usage.body.daily.length, 1);
+    assert.equal(usage.body.daily[0].tokens, 150);
+    assert.equal(usage.body.quota.monthly_tokens, 100000);
+    assert.equal(usage.body.period, new Date().toISOString().slice(0, 7));
+
+    const clamped = await request(fx.base, '/usage?days=9999', { token });
+    assert.equal(clamped.body.days, 90);
+    const unauthenticated = await fetch(`${fx.base}/usage`);
+    assert.equal(unauthenticated.status, 401);
+  } finally { await fx.close(); }
+});
+
+test('auth lifecycle revokes sessions on logout and cascades account deletion', async () => {
+  const fx = await fixture();
+  try {
+    const registered = await request(fx.base, '/auth/register', { method: 'POST', body: { email: 'lifecycle@example.test', password: 'correct horse battery staple', tenantName: 'Lifecycle' } });
+    const token = registered.body.session.token;
+    const tenantId = registered.body.user.tenantId;
+    await request(fx.base, '/projects', { method: 'POST', token, body: { name: 'Keep', rootPath: '/tmp/lifecycle-project' } });
+
+    const exported = await request(fx.base, '/me/export', { token });
+    assert.equal(exported.status, 200);
+    assert.equal(exported.body.user.tenantId, tenantId);
+    assert.equal(exported.body.projects.length, 1);
+
+    const loggedOut = await request(fx.base, '/auth/logout', { method: 'POST', token });
+    assert.equal(loggedOut.status, 200);
+    const afterLogout = await request(fx.base, '/me/export', { token });
+    assert.equal(afterLogout.status, 401);
+
+    const login = await request(fx.base, '/auth/login', { method: 'POST', body: { email: 'lifecycle@example.test', password: 'correct horse battery staple' } });
+    const freshToken = login.body.session.token;
+    const wrongConfirm = await request(fx.base, '/me', { method: 'DELETE', token: freshToken, body: { confirmEmail: 'wrong@example.test' } });
+    assert.equal(wrongConfirm.status, 400);
+    const deleted = await request(fx.base, '/me', { method: 'DELETE', token: freshToken, body: { confirmEmail: 'lifecycle@example.test' } });
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.deleted, true);
+    assert.equal(fx.db.get('SELECT COUNT(*) AS count FROM tenants WHERE id=?', tenantId).count, 0);
+    assert.equal(fx.db.get('SELECT COUNT(*) AS count FROM projects WHERE tenant_id=?', tenantId).count, 0);
+  } finally { await fx.close(); }
+});

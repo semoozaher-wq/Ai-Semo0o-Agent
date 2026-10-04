@@ -67,3 +67,22 @@ test('MFA recovery codes are hashed and single-use', async () => {
     assert.throws(() => authenticate(db, user.email, 'correct horse battery staple', setup.recoveryCodes[0]), /MFA_CODE_INVALID/);
   } finally { db.close(); await rm(dir, { recursive: true, force: true }); if (previousKey === undefined) delete process.env.SECRETS_MASTER_KEY; else process.env.SECRETS_MASTER_KEY = previousKey; }
 });
+
+test('quota consumption is atomic and leaves counters unchanged when rejected', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-quota-'));
+  const db = new Database(path.join(dir, 'agent.sqlite'));
+  try {
+    const owner = createUser(db, { email: 'quota@saas.test', password: 'correct horse battery staple', tenantName: 'Quota' });
+    db.run('UPDATE usage_quotas SET monthly_tokens=100, monthly_runs=1 WHERE tenant_id=?', owner.tenant_id);
+    consumeQuota(db, owner.tenant_id, { tokens: 60, runs: 1 });
+    assert.equal(db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=?', owner.tenant_id).tokens, 60);
+    // Token overrun must be rejected and must NOT partially write the counter.
+    assert.throws(() => consumeQuota(db, owner.tenant_id, { tokens: 60 }), /MONTHLY_TOKEN_QUOTA_EXCEEDED/);
+    assert.equal(db.get('SELECT tokens FROM usage_counters WHERE tenant_id=?', owner.tenant_id).tokens, 60);
+    // Negative deltas are rejected outright.
+    assert.throws(() => consumeQuota(db, owner.tenant_id, { tokens: -10 }), /INVALID_QUOTA_DELTA/);
+    // Run overrun is rejected and leaves the run counter untouched.
+    assert.throws(() => consumeQuota(db, owner.tenant_id, { runs: 1 }), /MONTHLY_RUN_QUOTA_EXCEEDED/);
+    assert.equal(db.get('SELECT runs FROM usage_counters WHERE tenant_id=?', owner.tenant_id).runs, 1);
+  } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
+});
