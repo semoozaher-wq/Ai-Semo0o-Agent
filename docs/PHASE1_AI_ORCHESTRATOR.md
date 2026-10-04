@@ -31,8 +31,8 @@ User goal
   - يطلب موافقة صريحة للأدوات الخطرة.
   - يسجل events وusage وcost وlatency ومخرجات كل خطوة.
   - لا يحوّل نتيجة أداة افتراضية إلى نجاح موثّق.
-- `src/services/ai/providers/openai.ts`
-  - يمرر `responseFormat` إلى OpenAI-compatible API بصيغة `json_schema`.
+- `backend/llm/providers.mjs`
+  - يمرر structured output إلى OpenAI-compatible API من جهة الخادم.
 - `src/types/model.ts`
   - يضيف عقدًا اختياريًا متوافقًا للخروج المنظم.
 - `src/types/task.ts`
@@ -65,20 +65,16 @@ npm run doctor
 ## الاستخدام البرمجي
 
 ```ts
-import { AgentOrchestrator } from '@/services/agent-engine';
-import { aiService } from '@/services/ai';
-import { listAgentTools } from '@/services/agent-engine';
+import { backendApi } from '@/services/api/client';
 
-const provider = aiService.resolveProvider('gpt-5');
-const result = await new AgentOrchestrator().run({
+await backendApi.ensureSession();
+const project = await backendApi.createProject({ name: 'Semo0o Workspace' });
+const run = await backendApi.createRun({
+  projectId: project.projectId,
+  workspaceId: project.workspaceId,
   goal: 'افحص المشروع ثم شغّل التحقق النهائي',
   model: 'gpt-5',
-  providers: [provider],
-  tools: listAgentTools(),
-  requestPermission: async ({ tool }) => {
-    // اربط هذا بواجهة موافقة المستخدم أو سياسة Backend.
-    return !tool.dangerous;
-  },
+  kind: 'agent.run',
 });
 ```
 

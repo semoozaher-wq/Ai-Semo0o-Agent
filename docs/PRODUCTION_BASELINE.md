@@ -16,7 +16,7 @@
 | Components | `src/components/` | UI primitives, composites, charts, BodyMap |
 | Domain types | `src/types/` | Task, tool, model, chat, file, workspace, anatomy types |
 | State | `src/store/` | Zustand stores and local persistence |
-| AI runtime | `src/services/ai/` | Provider abstraction, HTTP providers, tool loop, schema validation |
+| AI runtime | `backend/llm/providers.mjs` | Server-side provider adapters; client does not own LLM credentials |
 | Agent services | `src/services/agent-engine/` | Rule template executor, LLM planner, orchestrator, memory, tool registry |
 | Workspace services | `src/services/workspace/` | Virtual workspace, GitHub, ZIP, file operations, tool adapters |
 | Code/data services | `src/services/code-analysis/`, `src/services/data-engine/` | Static analysis and in-memory dataset/file analysis |
@@ -38,8 +38,7 @@
 
 ### Runtime entry points
 
-- `src/services/ai/runtime.ts`: provider registry and `AIService`.
-- `src/services/ai/providers/*.ts`: live HTTP adapters for OpenAI, Anthropic and Google Gemini.
+- `backend/llm/providers.mjs`: server-side provider registry and live HTTP adapters.
 - `src/services/agent-engine/llm-planner.ts`: strict JSON plan generation and validation.
 - `src/services/agent-engine/orchestrator.ts`: plan execution, permission checks, tool calls and status decisions.
 - `src/services/agent-engine/tools.ts`: schema validation and explicit tool registration.
@@ -50,7 +49,7 @@
 
 ### Chat path — current baseline
 
-`ChatScreen` → `useChatStore` → AI service/provider path.
+`ChatScreen` → `useChatStore` → Backend API → server-side provider path.
 
 The screen-level chat flow is separate from the Phase 1 `AgentOrchestrator` flow. The LLM planner/orchestrator is not currently the universal path for every Chat request. This is a production gap to be handled by a later dedicated wiring task.
 
