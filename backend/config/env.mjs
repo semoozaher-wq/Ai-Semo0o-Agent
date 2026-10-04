@@ -34,6 +34,15 @@ export function validateEnv(env = process.env) {
     if (env.BILLING_WEBHOOK_SECRET && !isStrongSecret(env.BILLING_WEBHOOK_SECRET, 16)) errors.push('BILLING_WEBHOOK_SECRET_TOO_SHORT');
     if (env.BILLING_PROVIDER && !env.BILLING_WEBHOOK_SECRET) errors.push('BILLING_WEBHOOK_SECRET_REQUIRED');
     if (env.BROWSER_CDP_URL && !/^wss?:\/\//i.test(env.BROWSER_CDP_URL)) errors.push('BROWSER_CDP_URL_INVALID');
+    // Browser production hardening: an in-process Chromium runs with --no-sandbox
+    // (required inside containers) and shares the server's network namespace, so an
+    // externally managed CDP fleet is preferred. A plaintext ws:// endpoint to a
+    // remote host is also flagged because CDP is unauthenticated.
+    if (env.BROWSER_LAUNCH_LOCAL === 'true') warnings.push('BROWSER_LAUNCH_LOCAL_IN_PROCESS');
+    if (env.BROWSER_CDP_URL && /^ws:\/\//i.test(env.BROWSER_CDP_URL) && !/^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(env.BROWSER_CDP_URL)) warnings.push('BROWSER_CDP_URL_NOT_TLS');
+    // Observability: without structured logs an operator cannot trace a production
+    // incident back to a request. This is a warning, not a fatal misconfiguration.
+    if (!['json', 'pretty'].includes(String(env.LOG_FORMAT ?? '').toLowerCase()) && !env.LOG_LEVEL) warnings.push('LOG_FORMAT_NOT_SET');
   }
 
   if (!LLM_KEY_VARS.some((key) => env[key])) warnings.push('NO_LLM_PROVIDER_CONFIGURED');
