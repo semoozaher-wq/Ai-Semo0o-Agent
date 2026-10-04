@@ -108,7 +108,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
-    apiModel: 'gpt-4o',
+    apiModel: 'gpt-5',
   },
   {
     id: 'gpt-5-mini',
@@ -122,7 +122,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 2,
     speed: 5,
     quality: 4,
-    apiModel: 'gpt-4o-mini',
+    apiModel: 'gpt-5-mini',
   },
   {
     id: 'claude-4.5-sonnet',
@@ -137,7 +137,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
-    apiModel: 'claude-3-5-sonnet-latest',
+    apiModel: 'claude-sonnet-4-6',
   },
   {
     id: 'claude-4.5-haiku',
@@ -151,7 +151,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 4,
     speed: 5,
     quality: 4,
-    apiModel: 'claude-3-5-haiku-latest',
+    apiModel: 'claude-haiku-4-5',
   },
   {
     id: 'gemini-3-pro',
@@ -166,7 +166,7 @@ export const MODELS: ModelSpec[] = [
     speed: 4,
     quality: 5,
     recommended: true,
-    apiModel: 'gemini-2.5-pro',
+    apiModel: 'gemini-3.1-pro-preview',
   },
   {
     id: 'gemini-3-flash',
@@ -180,7 +180,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 0.4,
     speed: 5,
     quality: 4,
-    apiModel: 'gemini-2.5-flash',
+    apiModel: 'gemini-3-flash-preview',
   },
   {
     id: 'mistral-large',
