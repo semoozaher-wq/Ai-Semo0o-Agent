@@ -12,8 +12,48 @@ import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
 import { MemoryStore } from './memory/store.mjs';
-import { applyWebhookEvent, verifyWebhookSignature } from './billing/service.mjs';
+import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
 import { assertEnv } from './config/env.mjs';
+import { createTelemetry } from './observability/telemetry.mjs';
+
+const SERVICE_VERSION = '2.0.0';
+const SERVICE_STARTED_AT = Date.now();
+
+// Structured request logging is opt-in so that development and the test suite stay
+// quiet. Operators enable it with LOG_FORMAT=json (or any LOG_LEVEL) in production.
+function loggingEnabled(env = process.env) {
+  return ['json', 'pretty'].includes(String(env.LOG_FORMAT ?? '').toLowerCase()) || Boolean(env.LOG_LEVEL);
+}
+
+// A readiness probe must reflect the real ability to serve traffic: the database
+// must answer a query, a configured workspace must be writable, and at least one
+// LLM provider must be configured and healthy. `/health` stays a liveness check.
+async function readinessReport({ db, llm }) {
+  const checks = {};
+  try {
+    const row = db.get('SELECT 1 AS ok');
+    checks.database = { ok: row?.ok === 1 };
+  } catch (error) {
+    checks.database = { ok: false, error: error instanceof Error ? error.message : 'DATABASE_UNAVAILABLE' };
+  }
+  const workspaceRoot = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
+  if (!workspaceRoot) {
+    // Development/test may run without a pinned workspace root; report it as
+    // unconfigured rather than failing readiness (production requires it via env).
+    checks.workspace = { ok: true, configured: false };
+  } else {
+    try {
+      await access(workspaceRoot, fsConstants.W_OK);
+      checks.workspace = { ok: true, configured: true, root: workspaceRoot };
+    } catch {
+      checks.workspace = { ok: false, configured: true, root: workspaceRoot, error: 'WORKSPACE_NOT_WRITABLE' };
+    }
+  }
+  const providers = llm.status?.() ?? [];
+  const providerOk = providers.some((provider) => provider.configured && provider.healthy !== false);
+  checks.providers = { ok: providerOk, configured: providers.filter((provider) => provider.configured).length, total: providers.length };
+  return { ok: checks.database.ok && checks.workspace.ok && checks.providers.ok, checks, providers };
+}
 
 const json = (value) => JSON.stringify(value);
 function body(request) {
@@ -157,11 +197,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (request.method === 'OPTIONS') { response.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS'); response.setHeader('access-control-allow-headers', 'authorization,content-type'); return send(response, 204, {}); }
       const parts = routeParts(request.url);
       const method = request.method;
-      if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', time: now() });
+      if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, uptimeSeconds: Math.round((Date.now() - SERVICE_STARTED_AT) / 1000), time: now() });
       if (method === 'GET' && parts[0] === 'ready') {
-        const providers = llm.status?.() ?? [];
-        const ready = providers.some((provider) => provider.configured && provider.healthy !== false);
-        return send(response, ready ? 200 : 503, { ok: ready, service: 'ai-semo0o-agent-backend', providers, time: now() });
+        const report = await readinessReport({ db, llm });
+        return send(response, report.ok ? 200 : 503, { ok: report.ok, service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, checks: report.checks, providers: report.providers, time: now() });
       }
       if (method === 'POST' && parts.join('/') === 'auth/register') {
         const input = await body(request);
@@ -198,11 +237,61 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         return send(response, 200, { received: true, ...result });
       }
       const user = requireUser(db, request);
-      if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
+      if (method === 'GET' && parts.join('/') === 'tools/status') {
+        const status = tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [], dangerous: [] };
+        const summary = { live: status.live?.length ?? 0, unwired: status.unwired?.length ?? 0, catalogOnly: status.catalogOnly?.length ?? 0, simulated: status.simulated?.length ?? 0, dangerous: status.dangerous?.length ?? 0 };
+        return send(response, 200, { ...status, summary });
+      }
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
       if (method === 'GET' && parts.join('/') === 'usage') {
         const days = Number(new URL(request.url, 'http://localhost').searchParams.get('days')) || 30;
         return send(response, 200, usageSummary(db, user.tenantId, days));
+      }
+      if (method === 'GET' && parts.join('/') === 'billing/status') {
+        return send(response, 200, billingStatus(db, user.tenantId));
+      }
+      if (method === 'POST' && parts.join('/') === 'billing/checkout') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request);
+        const plan = planById(validateText(input.planId, 'PLAN_ID', 32));
+        if (plan.id === 'free') throw new Error('BILLING_PLAN_NOT_PURCHASABLE');
+        const priceId = input.priceId || process.env[`STRIPE_PRICE_${plan.id.toUpperCase()}`];
+        if (!priceId) throw new Error('BILLING_PRICE_NOT_CONFIGURED');
+        const adapter = requireBillingProvider(process.env);
+        const existing = db.get('SELECT provider_customer_id FROM subscriptions WHERE tenant_id=? AND provider=? AND provider_customer_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1', user.tenantId, adapter.id);
+        let customerId = existing?.provider_customer_id ?? null;
+        if (!customerId) {
+          const created = await adapter.createCustomer({ email: user.email, tenantId: user.tenantId, name: user.tenantId });
+          customerId = created.customerId;
+          const timestamp = now();
+          db.run('INSERT INTO subscriptions(id,tenant_id,provider,provider_customer_id,plan_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)', id('subscription'), user.tenantId, adapter.id, customerId, plan.id, 'incomplete', timestamp, timestamp);
+        }
+        const origin = process.env.PUBLIC_APP_URL || 'http://localhost:8081';
+        const session = await adapter.createCheckoutSession({
+          customerId, priceId, tenantId: user.tenantId, planId: plan.id,
+          successUrl: input.successUrl || `${origin}/billing/success`,
+          cancelUrl: input.cancelUrl || `${origin}/billing/cancel`,
+        });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'billing.checkout.created', 'billing', user.id, JSON.stringify({ provider: adapter.id, plan: plan.id, sessionId: session.sessionId }), now());
+        return send(response, 200, { url: session.url, sessionId: session.sessionId, provider: adapter.id });
+      }
+      if (method === 'POST' && parts.join('/') === 'billing/portal') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request);
+        const adapter = requireBillingProvider(process.env);
+        const sub = db.get('SELECT provider_customer_id FROM subscriptions WHERE tenant_id=? AND provider=? AND provider_customer_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1', user.tenantId, adapter.id);
+        if (!sub?.provider_customer_id) throw new Error('BILLING_CUSTOMER_NOT_FOUND');
+        const session = await adapter.createPortalSession({ customerId: sub.provider_customer_id, returnUrl: input.returnUrl || process.env.PUBLIC_APP_URL || 'http://localhost:8081' });
+        return send(response, 200, { url: session.url, provider: adapter.id });
+      }
+      if (method === 'POST' && parts.join('/') === 'billing/subscription/cancel') {
+        requireRole(user, ['owner', 'admin']);
+        const adapter = requireBillingProvider(process.env);
+        const sub = db.get('SELECT provider_subscription_id FROM subscriptions WHERE tenant_id=? AND provider=? AND provider_subscription_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1', user.tenantId, adapter.id);
+        if (!sub?.provider_subscription_id) throw new Error('BILLING_SUBSCRIPTION_NOT_FOUND');
+        const result = await adapter.cancelSubscription({ subscriptionId: sub.provider_subscription_id });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'billing.subscription.canceled', 'billing', user.id, JSON.stringify({ provider: adapter.id, subscriptionId: sub.provider_subscription_id }), now());
+        return send(response, 200, result);
       }
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'GET' && parts.join('/') === 'me/export') {
@@ -220,6 +309,38 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         requireRole(user, ['owner', 'admin']); const input = await body(request); const invite = createInvitation(db, { tenantId: user.tenantId, invitedBy: user.id, email: input.email, role: input.role || 'member' }); return send(response, 201, { invitationId: invite.invitationId, expiresAt: invite.expiresAt, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
       }
       if (method === 'POST' && parts.join('/') === 'org/invitations/accept') { const input = await body(request); return send(response, 200, { membership: acceptInvitation(db, { token: validateText(input.token, 'TOKEN', 256), userId: user.id }) }); }
+      if (method === 'POST' && parts.join('/') === 'chat/stream') {
+        const input = await body(request);
+        const message = validateText(input.message, 'MESSAGE', 12000);
+        const model = normalizeModelId(input.model);
+        if (typeof llm.stream !== 'function') throw new Error('STREAMING_NOT_SUPPORTED');
+        // Quota is checked BEFORE any bytes are written so an over-quota tenant still
+        // receives a clean JSON 402 from the outer error handler.
+        consumeQuota(db, user.tenantId, {});
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+        const writeFrame = (event, data) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        let usage = null;
+        let provider = null;
+        let text = '';
+        try {
+          for await (const frame of llm.stream({ model, messages: [
+            { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
+            { role: 'user', content: message },
+          ] })) {
+            if (frame.type === 'token') { text += frame.text; writeFrame('token', { text: frame.text }); }
+            else if (frame.type === 'done') { usage = frame.usage; provider = frame.provider; }
+          }
+          const streamTokens = Number(usage?.totalTokens) || 0;
+          if (streamTokens > 0) consumeQuota(db, user.tenantId, { tokens: streamTokens });
+          db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.stream.completed', 'chat', user.id, JSON.stringify({ provider, model, usage, chars: text.length }), now());
+          writeFrame('done', { provider, usage, chars: text.length });
+        } catch (error) {
+          writeFrame('error', { error: error instanceof Error ? error.message : String(error) });
+        } finally {
+          response.end();
+        }
+        return;
+      }
       if (method === 'POST' && parts.join('/') === 'chat') {
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
@@ -320,8 +441,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
-      send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      send(response, status, { error: status >= 500 ? "INTERNAL_ERROR" : message });
     }
   });
   server.headersTimeout = 15_000;
