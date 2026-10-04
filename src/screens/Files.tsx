@@ -79,6 +79,7 @@ export function Files() {
   const auditScore = useFilesStore((s) => s.auditScore);
   const analysis = useFilesStore((s) => s.analysis);
   const scanning = useFilesStore((s) => s.scanning);
+  const sample = useFilesStore((s) => s.sample);
   const scan = useFilesStore((s) => s.scan);
   const runAudit = useFilesStore((s) => s.runAudit);
   const analyzeCode = useFilesStore((s) => s.analyzeCode);
@@ -149,6 +150,15 @@ export function Files() {
           <Chip label="التدقيق الشامل" selected={tab === 'audit'} onPress={() => setTab('audit')} />
           <Chip label="تحليل الكود" selected={tab === 'code'} onPress={() => setTab('code')} />
         </View>
+
+        {sample ? (
+          <View style={styles.sampleNotice}>
+            <Badge label="بيانات تجريبية" tone="warning" />
+            <Text variant="caption" tone="muted" style={{ flex: 1, marginHorizontal: 8 }}>
+              لا يوجد موصل نظام ملفات حقيقي مُهيّأ. القائمة أدناه توضيحية وليست ملفاتك الفعلية.
+            </Text>
+          </View>
+        ) : null}
 
         {tab === 'files' ? (
           <View>
@@ -493,6 +503,7 @@ export function Files() {
 
 const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
+  sampleNotice: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   statRow: { flexDirection: 'row', gap: 12 },
   donutRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   legend: { flex: 1, gap: 8 },

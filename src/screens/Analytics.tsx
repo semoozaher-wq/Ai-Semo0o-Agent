@@ -48,6 +48,7 @@ function shortDate(iso: string): string {
 export function Analytics() {
   const theme = useTheme();
   const usage = useAnalyticsStore((s) => s.usage);
+  const source = useAnalyticsStore((s) => s.source);
   const reset = useAnalyticsStore((s) => s.reset);
   const tasks = useAgentsStore((s) => s.tasks);
   const stats = useStoreStore((s) => s.stats);
@@ -122,6 +123,17 @@ export function Analytics() {
             />
           ))}
         </View>
+
+        {source === 'sample' ? (
+          <Card style={{ marginBottom: theme.spacing.lg, borderColor: theme.colors.warning }}>
+            <View style={styles.noticeRow}>
+              <Badge label="بيانات تجريبية" tone="warning" />
+              <Text variant="caption" tone="muted" style={{ flex: 1, marginHorizontal: 8 }}>
+                لا يوجد اتصال بخادم الاستخدام. الأرقام أدناه توضيحية فقط وليست استخدامًا حقيقيًا.
+              </Text>
+            </View>
+          </Card>
+        ) : null}
 
         <View style={styles.statRow}>
           <StatCard
@@ -293,6 +305,7 @@ export function Analytics() {
 
 const styles = StyleSheet.create({
   rangeRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  noticeRow: { flexDirection: 'row', alignItems: 'center' },
   statRow: { flexDirection: 'row', gap: 12 },
   donutRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   legend: { flex: 1, gap: 8 },
