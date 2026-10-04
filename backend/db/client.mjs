@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -9,8 +9,15 @@ const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
 
 export class Database {
   constructor(filename = process.env.DATABASE_FILE ?? path.resolve('data/agent.sqlite')) {
-    mkdirSync(path.dirname(filename), { recursive: true });
+    const directory = path.dirname(filename);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if ((statSync(directory).mode & 0o077) !== 0) {
+      const error = new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
+      error.code = 'DATABASE_DIRECTORY_NOT_PRIVATE';
+      throw error;
+    }
     this.db = new DatabaseSync(filename);
+    chmodSync(filename, 0o600);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.migrate();
   }
