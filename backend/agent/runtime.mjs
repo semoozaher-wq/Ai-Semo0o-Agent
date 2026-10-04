@@ -1,5 +1,6 @@
 import { id, now, hash } from '../db/client.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, fromProviderToolName, openAITools } from './catalog.mjs';
+import { normalizeModelId } from '../models/catalog.mjs';
 
 const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
 function addUsage(a = {}, b = {}) { return { promptTokens: (a.promptTokens || 0) + (b.promptTokens || 0), completionTokens: (a.completionTokens || 0) + (b.completionTokens || 0), totalTokens: (a.totalTokens || 0) + (b.totalTokens || 0) }; }
@@ -35,29 +36,51 @@ function verify(result) { return result && result.ok !== false && result.output 
 export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}) {
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   return async ({ run, payload, signal }) => {
+    const limits = {
+      maxSteps: Math.min(Number(payload.maxSteps || process.env.AGENT_MAX_STEPS || 12), 12),
+      maxToolCalls: Math.min(Number(payload.maxToolCalls || process.env.AGENT_MAX_TOOL_CALLS || 24), 48),
+      maxRetries: Math.min(Number(payload.maxRetries || process.env.AGENT_MAX_RETRIES || 2), 3),
+      maxTokens: Math.min(Number(payload.maxTokens || process.env.AGENT_MAX_TOKENS || 120000), 250000),
+      maxCostUsd: Math.min(Number(payload.maxCostUsd || process.env.AGENT_MAX_COST_USD || 2), 100),
+      timeoutMs: Math.min(Number(payload.timeoutMs || process.env.AGENT_TIMEOUT_MS || 10 * 60_000), 30 * 60_000),
+    };
+    if (Object.values(limits).some((value) => !Number.isFinite(value) || value <= 0)) throw new Error('AGENT_LIMITS_INVALID');
+    const deadline = Date.now() + limits.timeoutMs;
+    // Test doubles may use the sentinel model "test"; production routers never do.
+    const model = payload.model === 'test' ? 'gpt-5-mini' : normalizeModelId(payload.model);
     const task = db.get('SELECT * FROM tasks WHERE id=?', run.task_id);
     const workspace = db.get('SELECT * FROM workspaces WHERE id=?', task?.workspace_id);
     const workspaceRoot = workspace?.root_path || process.env.WORKSPACE_ROOT;
     if (!workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
     let usage = {};
     const outputs = [];
+    const seenCalls = new Set();
+    let toolCalls = 0;
+    const guard = () => {
+      if (signal.aborted) throw new Error('AGENT_CANCELLED');
+      if (Date.now() > deadline) throw new Error('AGENT_TIME_LIMIT_EXCEEDED');
+      if ((usage.totalTokens || 0) > limits.maxTokens) throw new Error('AGENT_TOKEN_LIMIT_EXCEEDED');
+      if (costFor(model, usage) > limits.maxCostUsd) throw new Error('AGENT_COST_LIMIT_EXCEEDED');
+    };
     const approvedTools = new Set(payload.approvedTools || []);
     const resumeFrom = Number(payload.resumeFrom ?? 0);
     const emit = (type, details = {}) => event(db, run.id, run.tenant_id, type, details);
     emit('planning_started', { goal: task?.goal });
     let planner;
     let plan;
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      planner = await llm.complete({ model: payload.model, messages: [{ role: 'system', content: planPrompt(task?.goal || payload.goal || '') }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
+    for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
+      guard();
+      planner = await llm.complete({ model, messages: [{ role: 'system', content: planPrompt(task?.goal || payload.goal || '') }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
       usage = addUsage(usage, planner.usage);
       try { plan = normalizePlan(parseJson(planner.text), task?.goal || payload.goal || ''); break; }
-      catch (error) { emit('planning_failed', { attempt, error: error.message }); if (attempt === 2) throw error; emit('self_healing', { action: 'replan', attempt }); }
+      catch (error) { emit('planning_failed', { attempt, error: error.message }); if (attempt === limits.maxRetries) throw error; emit('self_healing', { action: 'replan', attempt }); }
     }
+    if (plan.steps.length > limits.maxSteps) throw new Error('AGENT_STEP_LIMIT_EXCEEDED');
     db.run('UPDATE runs SET checkpoint_json=?, updated_at=? WHERE id=?', JSON.stringify({ plan, stepIndex: resumeFrom }), now(), run.id);
     emit('planning_completed', { provider: planner.provider, steps: plan.steps.length, usage: planner.usage });
     const toolSchemas = openAITools();
     for (let index = resumeFrom; index < plan.steps.length; index += 1) {
-      if (signal.aborted) return { status: 'cancelled', outputs, usage };
+      guard();
       const step = plan.steps[index];
       const tool = TOOL_BY_ID.get(step.toolId);
       emit('step_started', { stepId: step.id, title: step.title, toolId: step.toolId });
@@ -69,24 +92,30 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
         return { status: 'waiting_approval', checkpoint: { plan, stepIndex: index }, usage, outputs };
       }
       let args = step.args;
-      let modelTurn = await llm.complete({ model: payload.model, messages: [
+      let modelTurn = await llm.complete({ model, messages: [
         { role: 'system', content: 'Execute one planned step. Use exactly one tool call when a tool is needed. Never claim a tool result you did not receive.' },
         { role: 'user', content: JSON.stringify({ goal: plan.goal, step, available: tool?.id }) },
       ], tools: toolSchemas, signal });
       usage = addUsage(usage, modelTurn.usage);
       const requested = modelTurn.toolCalls?.[0];
       if (requested && fromProviderToolName(requested.name) === step.toolId) args = requested.arguments;
+      toolCalls += 1;
+      if (toolCalls > limits.maxToolCalls) throw new Error('AGENT_TOOL_CALL_LIMIT_EXCEEDED');
+      const fingerprint = `${step.toolId}:${JSON.stringify(args)}`;
+      if (seenCalls.has(fingerprint)) throw new Error('AGENT_LOOP_DETECTED');
+      seenCalls.add(fingerprint);
       let toolResult;
       let evidenceId;
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
+      for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
+        guard();
         try { toolResult = await tools.run(step.toolId, args, { run, task, workspaceRoot, model: payload.model, signal, llm }); }
         catch (error) { toolResult = { ok: false, output: null, error: error instanceof Error ? error.message : String(error) }; }
         evidenceId = writeEvidence(db, run, step.toolId, args, toolResult);
         outputs.push({ stepId: step.id, toolId: step.toolId, attempt, result: toolResult, evidenceId });
         emit('tool_completed', { stepId: step.id, toolId: step.toolId, ok: toolResult.ok !== false, output: toolResult.output, error: toolResult.error, evidenceId, attempt });
         if (toolResult.ok !== false) break;
-        if (attempt === 2) throw new Error(toolResult.error || `TOOL_FAILED:${step.toolId}`);
-        const diagnosis = await llm.complete({ model: payload.model, messages: [
+        if (attempt === limits.maxRetries) throw new Error(toolResult.error || `TOOL_FAILED:${step.toolId}`);
+        const diagnosis = await llm.complete({ model, messages: [
           { role: 'system', content: 'Diagnose the failed tool call. Return ONLY JSON: {"action":"retry","args":object}. Never change security, authentication, policy, or permissions.' },
           { role: 'user', content: JSON.stringify({ tool: step.toolId, args, error: toolResult.error }) },
         ], signal });
@@ -103,13 +132,14 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
       emit('step_completed', { stepId: step.id, toolId: step.toolId, verification: verification.status, evidenceId });
       if (verification.status !== 'VERIFIED') return { status: 'unverified', outputs, usage };
     }
-    const final = await llm.complete({ model: payload.model, messages: [
+    guard();
+    const final = await llm.complete({ model, messages: [
       { role: 'system', content: 'Return a concise final answer in Arabic when appropriate. Mention evidence and any limitations. Do not invent.' },
       { role: 'user', content: JSON.stringify({ goal: plan.goal, outputs }) },
     ], signal });
     usage = addUsage(usage, final.usage);
-    const costUsd = costFor(payload.model, usage);
-    db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id('usage'), run.id, run.tenant_id, final.provider || planner.provider, payload.model || '', usage.promptTokens || 0, usage.completionTokens || 0, usage.totalTokens || 0, costUsd, now());
+    const costUsd = costFor(model, usage);
+    db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id('usage'), run.id, run.tenant_id, final.provider || planner.provider, model, usage.promptTokens || 0, usage.completionTokens || 0, usage.totalTokens || 0, costUsd, now());
     emit('run_finished', { status: 'completed', usage, costUsd, final: final.text });
     return { status: 'completed', final: final.text, plan, outputs, usage, costUsd };
   };
