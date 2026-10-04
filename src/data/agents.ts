@@ -118,7 +118,7 @@ export const AGENTS: AgentManifest[] = [
     tags: ['code', 'debug', 'refactor', 'tests'],
     updatedAt: '2026-02-02T09:30:00.000Z',
     minPlatformVersion: '2.0.0',
-    defaultModel: 'claude-4.5-sonnet',
+    defaultModel: 'claude-sonnet-4-6',
     systemPrompt:
       'You are a senior software engineer. Prefer readable, tested, production-grade code. Always verify your work.',
     tools: ['code.run', 'code.analyze', 'files.read', 'files.write'],
@@ -159,7 +159,7 @@ export const AGENTS: AgentManifest[] = [
     tags: ['data', 'csv', 'charts', 'analytics'],
     updatedAt: '2026-01-27T12:00:00.000Z',
     minPlatformVersion: '2.0.0',
-    defaultModel: 'gemini-3-pro',
+    defaultModel: 'gemini-3.1-pro-preview',
     tools: ['data.profile', 'data.chart', 'files.read', 'code.run'],
     builtIn: true,
   },
@@ -233,7 +233,7 @@ export const AGENTS: AgentManifest[] = [
     tags: ['content', 'marketing', 'seo', 'copywriting'],
     updatedAt: '2026-01-30T14:20:00.000Z',
     minPlatformVersion: '2.0.0',
-    defaultModel: 'claude-4.5-sonnet',
+    defaultModel: 'claude-sonnet-4-6',
     tools: ['web.search', 'files.write'],
   },
   {
@@ -307,7 +307,7 @@ export const AGENTS: AgentManifest[] = [
     tags: ['translation', 'languages', 'subtitles'],
     updatedAt: '2026-01-25T16:00:00.000Z',
     minPlatformVersion: '2.0.0',
-    defaultModel: 'gemini-3-flash',
+    defaultModel: 'gemini-3-flash-preview',
     tools: ['translate', 'files.read'],
   },
   {
@@ -633,7 +633,7 @@ export const AGENTS: AgentManifest[] = [
     tags: ['security', 'audit', 'cve', 'devops'],
     updatedAt: '2026-01-29T11:20:00.000Z',
     minPlatformVersion: '2.0.0',
-    defaultModel: 'claude-4.5-sonnet',
+    defaultModel: 'claude-sonnet-4-6',
     tools: ['code.analyze', 'web.search', 'files.read'],
   },
   {

@@ -125,7 +125,7 @@ export const MODELS: ModelSpec[] = [
     apiModel: 'gpt-5-mini',
   },
   {
-    id: 'claude-4.5-sonnet',
+    id: 'claude-sonnet-4-6',
     provider: 'anthropic',
     name: 'Claude 4.5 Sonnet',
     description: 'Best-in-class coding and long-horizon autonomy.',
@@ -140,7 +140,7 @@ export const MODELS: ModelSpec[] = [
     apiModel: 'claude-sonnet-4-6',
   },
   {
-    id: 'claude-4.5-haiku',
+    id: 'claude-haiku-4-5',
     provider: 'anthropic',
     name: 'Claude 4.5 Haiku',
     description: 'Low-latency model for high-volume automation.',
@@ -154,7 +154,7 @@ export const MODELS: ModelSpec[] = [
     apiModel: 'claude-haiku-4-5',
   },
   {
-    id: 'gemini-3-pro',
+    id: 'gemini-3.1-pro-preview',
     provider: 'google',
     name: 'Gemini 3 Pro',
     description: 'Multimodal reasoning with a 1M-token context.',
@@ -169,7 +169,7 @@ export const MODELS: ModelSpec[] = [
     apiModel: 'gemini-3.1-pro-preview',
   },
   {
-    id: 'gemini-3-flash',
+    id: 'gemini-3-flash-preview',
     provider: 'google',
     name: 'Gemini 3 Flash',
     description: 'Fast multimodal model for real-time apps.',
@@ -180,7 +180,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 0.4,
     speed: 5,
     quality: 4,
-    apiModel: 'gemini-3-flash-preview',
+    apiModel: 'gemini-3-flash-preview-preview',
   },
   {
     id: 'mistral-large',
