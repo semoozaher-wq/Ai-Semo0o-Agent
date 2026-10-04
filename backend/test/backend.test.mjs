@@ -91,3 +91,21 @@ test('project creation fails closed when no workspace root is provided', async (
     assert.equal(response.body.error, 'WORKSPACE_ROOT_REQUIRED');
   } finally { await fx.close(); }
 });
+
+test('runs are idempotent per tenant and key', async () => {
+  const fx = await fixture();
+  try {
+    const registered = await request(fx.base, '/auth/register', { method: 'POST', body: { email: 'idempotent@example.test', password: 'correct horse battery staple', tenantName: 'Idempotent' } });
+    const token = registered.body.session.token;
+    const project = await request(fx.base, '/projects', { method: 'POST', token, body: { name: 'Idempotent Project', rootPath: '/tmp/idempotent-project' } });
+    const body = { projectId: project.body.projectId, workspaceId: project.body.workspaceId, kind: 'agent.run', goal: 'read one file' };
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'idempotency-key': 'request-001' };
+    const first = await request(fx.base, '/runs', { method: 'POST', headers, body });
+    const second = await request(fx.base, '/runs', { method: 'POST', headers, body });
+    assert.equal(first.status, 202);
+    assert.equal(second.status, 202);
+    assert.equal(second.body.idempotent, true);
+    assert.equal(second.body.runId, first.body.runId);
+    assert.equal(fx.db.get('SELECT COUNT(*) AS count FROM runs').count, 1);
+  } finally { await fx.close(); }
+});
