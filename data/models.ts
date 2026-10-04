@@ -114,7 +114,7 @@ export const MODELS: ModelSpec[] = [
     quality: 4,
   },
   {
-    id: 'claude-4.5-sonnet',
+    id: 'claude-sonnet-4-6',
     provider: 'anthropic',
     name: 'Claude 4.5 Sonnet',
     description: 'Best-in-class coding and long-horizon autonomy.',
@@ -128,7 +128,7 @@ export const MODELS: ModelSpec[] = [
     recommended: true,
   },
   {
-    id: 'claude-4.5-haiku',
+    id: 'claude-haiku-4-5',
     provider: 'anthropic',
     name: 'Claude 4.5 Haiku',
     description: 'Low-latency model for high-volume automation.',
@@ -141,7 +141,7 @@ export const MODELS: ModelSpec[] = [
     quality: 4,
   },
   {
-    id: 'gemini-3-pro',
+    id: 'gemini-3.1-pro-preview',
     provider: 'google',
     name: 'Gemini 3 Pro',
     description: 'Multimodal reasoning with a 1M-token context.',
@@ -155,7 +155,7 @@ export const MODELS: ModelSpec[] = [
     recommended: true,
   },
   {
-    id: 'gemini-3-flash',
+    id: 'gemini-3-flash-preview',
     provider: 'google',
     name: 'Gemini 3 Flash',
     description: 'Fast multimodal model for real-time apps.',
