@@ -212,7 +212,7 @@ Ai-Semo0o-Agent/
 
 ### المتطلّبات
 
-- Node.js 20+
+- Node.js 22.5+ (مطلوب لتشغيل `node:sqlite` في الـBackend)
 - npm 10+
 
 ### التثبيت
@@ -262,7 +262,7 @@ npm run validate:pain-map          # التحقق من صحة البيانات
 | --- | --- |
 | `tsc --noEmit` | ✅ **0 أخطاء** |
 | ESLint | ✅ **0 أخطاء / 0 تحذيرات** |
-| `expo-doctor` | ✅ **21/21 فحصًا ناجحًا** |
+| `npm run doctor`     | ✅ **21/21 بعد إضافة `.gitignore` الصحيح** |
 | Web export | ✅ **16 مسارًا ثابتًا** |
 | حجم الشيفرة | ~**12,450** سطرًا من TypeScript/TSX |
 
