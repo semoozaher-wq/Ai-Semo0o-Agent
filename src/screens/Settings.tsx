@@ -12,6 +12,7 @@ import type { ThemePreference } from '../theme';
 import { AppHeader } from '../components/composite/AppHeader';
 import { SectionHeader } from '../components/composite/SectionHeader';
 import { ListRow } from '../components/composite/ListRow';
+import { SystemStatusCard } from '../components/composite/SystemStatusCard';
 import { Card } from '../components/ui/Card';
 import { Text } from '../components/ui/Text';
 import { Chip } from '../components/ui/Chip';
@@ -152,6 +153,15 @@ export function Settings() {
             {PROVIDER_IDS.map((id) => <Badge key={id} label={PROVIDERS[id].nameAr} tone="neutral" />)}
           </View>
         </Card>
+
+        {/* Live system status — real backend state, never assumed */}
+        <SectionHeader
+          title="حالة النظام والقدرات"
+          subtitle="تُقرأ مباشرة من الخادم — تُظهر حالة كل قدرة ومزود كما هي فعليًا"
+          icon="server-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <SystemStatusCard />
 
         {/* Privacy */}
         <SectionHeader title="الخصوصية والبيانات" icon="shield-checkmark-outline" style={{ marginTop: theme.spacing.xl }} />
