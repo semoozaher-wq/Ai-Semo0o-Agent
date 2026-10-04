@@ -1,6 +1,6 @@
 import type { LLMProvider } from '../ai/provider';
-import { aiService } from '../ai/runtime';
 import { getTool } from '../../data/tools';
+import { getModel } from '../../data/models';
 import type { Plan, PlanStep } from '../../types/task';
 import type { ToolDefinition } from '../../types/tool';
 import { runTool } from './tools';
@@ -92,6 +92,13 @@ export interface OrchestratorResult {
 
 const emptyUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+function estimateCostUsd(modelId: string, usage: LLMPlanResult['usage']): number {
+  const model = getModel(modelId);
+  if (!model) return 0;
+  return (usage.promptTokens / 1_000_000) * model.inputPricePerMTokens
+    + (usage.completionTokens / 1_000_000) * model.outputPricePerMTokens;
+}
+
 function event(type: OrchestratorEvent['type'], details?: Record<string, unknown>, stepId?: string, toolId?: string): OrchestratorEvent {
   return { at: new Date().toISOString(), type, details, stepId, toolId };
 }
@@ -167,7 +174,7 @@ export class AgentOrchestrator {
         warnings,
         errors,
         usage: planned.usage,
-        costUsd: aiService.estimateCostUsd(input.model, planned.usage),
+        costUsd: estimateCostUsd(input.model, planned.usage),
         evidence,
         verifications,
       };
@@ -317,7 +324,7 @@ export class AgentOrchestrator {
       warnings,
       errors,
       usage: mergeUsage(emptyUsage, usage),
-      costUsd: aiService.estimateCostUsd(model, usage),
+      costUsd: estimateCostUsd(model, usage),
       evidence,
       verifications,
     };
