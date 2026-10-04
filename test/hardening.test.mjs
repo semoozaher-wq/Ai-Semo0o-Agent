@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { Database } from '../db/client.mjs';
-import { DistributedRateLimiter } from '../security/http.mjs';
-import { normalizeModelId, modelProvider } from '../models/catalog.mjs';
+import { Database } from '../backend/db/client.mjs';
+import { DistributedRateLimiter } from '../backend/security/http.mjs';
+import { normalizeModelId, modelProvider } from '../backend/models/catalog.mjs';
 
 test('model contract normalizes UI aliases and rejects unsupported IDs', () => {
   assert.equal(normalizeModelId('gemini-3-flash'), 'gemini-3-flash-preview');

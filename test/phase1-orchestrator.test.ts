@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { TOOLS } from '../data/tools';
+import { TOOLS } from '../src/data/tools';
 import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
