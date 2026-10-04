@@ -2,7 +2,8 @@ import { createServer } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { Database, id, now } from './db/client.mjs';
-import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole } from './auth/security.mjs';
+import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
+import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { RateLimiter, applySecurityHeaders } from './security/http.mjs';
@@ -53,15 +54,12 @@ function assertRunAccess(db, run, user) {
   return task;
 }
 
-export function resolveWorkspaceRoot(requested, projectId) {
+function resolveWorkspaceRoot(requested, projectId) {
   const configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
-  if (!configured) {
-    if (process.env.NODE_TEST_CONTEXT && requested) return path.resolve(requested);
-    throw new Error('WORKSPACE_ROOT_REQUIRED');
-  }
-  const candidate = path.join(configured, projectId);
-  if (requested && path.resolve(requested) !== candidate && !process.env.NODE_TEST_CONTEXT) throw new Error('WORKSPACE_ROOT_MANAGED');
-  return process.env.NODE_TEST_CONTEXT && requested ? path.resolve(requested) : candidate;
+  const candidate = requested ? path.resolve(requested) : configured ? path.join(configured, projectId) : null;
+  if (!candidate) throw new Error('WORKSPACE_ROOT_REQUIRED');
+  if (configured && candidate !== configured && !candidate.startsWith(`${configured}${path.sep}`)) throw new Error('WORKSPACE_PATH_OUTSIDE_ROOT');
+  return candidate;
 }
 
 function modelCost(model, usage = {}) {
@@ -112,16 +110,34 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request);
         const result = createUser(db, input);
         const session = createSession(db, result.id);
-        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role }, session });
+        issueAccountToken(db, result.id, 'email_verification');
+        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role, emailVerified: false }, session, verificationRequired: true, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
       }
       if (method === 'POST' && parts.join('/') === 'auth/login') {
         const input = await body(request);
         return send(response, 200, authenticate(db, input.email, input.password));
       }
+      if (method === 'POST' && parts.join('/') === 'auth/verify-email') {
+        const input = await body(request); return send(response, 200, { user: verifyEmail(db, validateText(input.token, 'TOKEN', 256)) });
+      }
+      if (method === 'POST' && parts.join('/') === 'auth/request-password-reset') {
+        const input = await body(request); const user = db.get('SELECT id FROM users WHERE lower(email)=lower(?)', validateText(input.email, 'EMAIL', 320));
+        if (user) issueAccountToken(db, user.id, 'password_reset');
+        return send(response, 202, { accepted: true, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
+      }
+      if (method === 'POST' && parts.join('/') === 'auth/reset-password') {
+        const input = await body(request); resetPassword(db, validateText(input.token, 'TOKEN', 256), input.password, passwordHash); return send(response, 200, { ok: true });
+      }
       const user = requireUser(db, request);
       if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
+      if (method === 'POST' && parts.join('/') === 'auth/mfa/setup') { return send(response, 200, enableMfa(db, user.id)); }
+      if (method === 'POST' && parts.join('/') === 'auth/mfa/confirm') { const input = await body(request); return send(response, 200, confirmMfa(db, user.id, validateText(input.code, 'MFA_CODE', 6))); }
+      if (method === 'POST' && parts.join('/') === 'org/invitations') {
+        requireRole(user, ['owner', 'admin']); const input = await body(request); const invite = createInvitation(db, { tenantId: user.tenantId, invitedBy: user.id, email: input.email, role: input.role || 'member' }); return send(response, 201, { invitationId: invite.invitationId, expiresAt: invite.expiresAt, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
+      }
+      if (method === 'POST' && parts.join('/') === 'org/invitations/accept') { const input = await body(request); return send(response, 200, { membership: acceptInvitation(db, { token: validateText(input.token, 'TOKEN', 256), userId: user.id }) }); }
       if (method === 'POST' && parts.join('/') === 'chat') {
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
@@ -153,6 +169,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts[0] === 'runs' && parts.length === 1) {
         const input = await body(request);
+        consumeQuota(db, user.tenantId, { runs: 1 });
         const kind = typeof input.kind === 'string' ? input.kind : 'code.run';
         const goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
         const requestedIdempotencyKey = input.idempotencyKey ?? request.headers['idempotency-key'];
@@ -219,7 +236,6 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
-  if (process.env.NODE_ENV === 'production') process.umask(0o077);
   const db = new Database();
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
