@@ -3,10 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { Database } from '../db/client.mjs';
-import { createSession, createUser } from '../auth/security.mjs';
-import { createApp } from '../server.mjs';
-import { RunQueue } from '../queue/queue.mjs';
+import { Database } from '../backend/db/client.mjs';
+import { createSession, createUser } from '../backend/auth/security.mjs';
+import { createApp } from '../backend/server.mjs';
+import { RunQueue } from '../backend/queue/queue.mjs';
 
 async function fixture() {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-backend-'));
