@@ -35,4 +35,4 @@ jobs:
       - name: Web export
         run: npm run build
       - name: Browser integration smoke test
-        run: npm run test:browser-smoke
+        run: npm run test:browser-smoke 
