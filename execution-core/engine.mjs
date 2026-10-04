@@ -31,6 +31,35 @@ export const DEFAULT_LIMITS = Object.freeze({
 
 const DEFAULT_COMMANDS = new Set(['git', 'node', 'npm', 'npx']);
 
+// Environment variables that are safe to forward to sandboxed child processes.
+const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM'];
+// Names that must never reach a child process: they either let an attacker inject
+// code (NODE_OPTIONS, LD_PRELOAD, GIT_SSH_COMMAND, ...) or leak server secrets.
+const ENV_DENYLIST = /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z0-9_]+|BASH_ENV|ENV|SHELLOPTS|GIT_SSH|GIT_SSH_COMMAND|GIT_CONFIG|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_EXTERNAL_DIFF|GIT_ASKPASS|SSH_ASKPASS|SSH_AUTH_SOCK|SECRETS_MASTER_KEY|DATABASE_FILE|DATABASE_URL|[A-Z0-9_]*_API_KEY|[A-Z0-9_]*_SECRET|[A-Z0-9_]*_TOKEN|[A-Z0-9_]*_PASSWORD|[A-Z0-9_]*_CREDENTIALS)$/i;
+
+/**
+ * Build a minimal, secret-free environment for a sandboxed child process. The
+ * server's full environment (which holds SECRETS_MASTER_KEY, provider API keys,
+ * database paths, ...) is deliberately NOT inherited.
+ */
+function buildSandboxEnv(root, requested = {}) {
+  const env = {};
+  for (const key of ENV_ALLOWLIST) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.HOME = root;
+  env.TMPDIR = path.join(root, '.tmp');
+  env.NODE_ENV = 'production';
+  if (requested && typeof requested === 'object') {
+    for (const [key, value] of Object.entries(requested)) {
+      if (typeof key !== 'string' || typeof value !== 'string') continue;
+      if (ENV_DENYLIST.test(key)) continue;
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export class ExecutionError extends Error {
   constructor(message, code = 'EXECUTION_ERROR', details = undefined) {
     super(message);
@@ -391,6 +420,8 @@ export class TerminalSandbox {
     const cpuLimitSeconds = ensurePositiveInteger(request?.cpuLimitSeconds, this.limits.cpuLimitSeconds, 'cpuLimitSeconds');
     const startedAt = now();
     const started = Date.now();
+    // Keep child temp files inside the workspace sandbox.
+    await fs.mkdir(path.join(this.root, '.tmp'), { recursive: true }).catch(() => {});
 
     let executable = command;
     let spawnArgs = [...args];
