@@ -5,7 +5,9 @@ import { createLiveToolRegistry } from './tools/registry.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost } from './runtime-shared.mjs';
+import { assertEnv } from './config/env.mjs';
 
+assertEnv();
 if (process.env.NODE_ENV === 'production') process.umask(0o077);
 const db = new Database();
 const queue = new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), leaseMs: Number(process.env.WORKER_LEASE_MS || 900000), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1) });

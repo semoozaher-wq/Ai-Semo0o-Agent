@@ -12,6 +12,8 @@ import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
 import { MemoryStore } from './memory/store.mjs';
+import { applyWebhookEvent, verifyWebhookSignature } from './billing/service.mjs';
+import { assertEnv } from './config/env.mjs';
 
 const json = (value) => JSON.stringify(value);
 function body(request) {
@@ -28,6 +30,19 @@ function body(request) {
       }
     });
     request.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('INVALID_JSON')); } });
+    request.on('error', reject);
+  });
+}
+function rawBody(request, limit = 2_000_000) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    let rejected = false;
+    request.on('data', (chunk) => {
+      if (rejected) return;
+      raw += chunk;
+      if (raw.length > limit) { rejected = true; request.destroy(); reject(new Error('BODY_TOO_LARGE')); }
+    });
+    request.on('end', () => resolve(raw));
     request.on('error', reject);
   });
 }
@@ -56,8 +71,50 @@ function assertRunAccess(db, run, user) {
   return task;
 }
 
+function usageSummary(db, tenantId, days = 30) {
+  const safeDays = Math.max(1, Math.min(90, Number.isFinite(days) ? Math.floor(days) : 30));
+  const period = new Date().toISOString().slice(0, 7);
+  const quota = db.get('SELECT monthly_tokens,monthly_runs FROM usage_quotas WHERE tenant_id=?', tenantId)
+    ?? { monthly_tokens: 100000, monthly_runs: 1000 };
+  const counter = db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period)
+    ?? { tokens: 0, runs: 0 };
+  const since = new Date(Date.now() - safeDays * 86_400_000).toISOString();
+  const daily = db.all(
+    `SELECT substr(created_at,1,10) AS date,
+            SUM(total_tokens) AS tokens,
+            SUM(cost_usd) AS cost_usd,
+            COUNT(*) AS runs
+       FROM run_usage
+      WHERE tenant_id=? AND created_at>=?
+      GROUP BY date ORDER BY date ASC`,
+    tenantId, since,
+  ).map((row) => ({ date: row.date, tokens: row.tokens ?? 0, costUsd: row.cost_usd ?? 0, runs: row.runs ?? 0 }));
+  const messageRows = db.all(
+    `SELECT substr(created_at,1,10) AS date, COUNT(*) AS messages
+       FROM messages WHERE tenant_id=? AND role='user' AND created_at>=?
+      GROUP BY date`,
+    tenantId, since,
+  );
+  const messagesByDate = new Map(messageRows.map((row) => [row.date, row.messages ?? 0]));
+  const merged = daily.map((point) => ({ ...point, messages: messagesByDate.get(point.date) ?? 0 }));
+  for (const [date, messages] of messagesByDate) {
+    if (!daily.some((point) => point.date === date)) merged.push({ date, tokens: 0, costUsd: 0, runs: 0, messages });
+  }
+  merged.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const totals = merged.reduce((acc, point) => ({
+    tokens: acc.tokens + point.tokens,
+    costUsd: Number((acc.costUsd + point.costUsd).toFixed(6)),
+    runs: acc.runs + point.runs,
+    messages: acc.messages + point.messages,
+  }), { tokens: 0, costUsd: 0, runs: 0, messages: 0 });
+  return { period, days: safeDays, quota, counter, daily: merged, totals, generatedAt: now() };
+}
 function resolveWorkspaceRoot(requested, projectId) {
   const configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
+  // Fail closed in production: without a configured WORKSPACE_ROOT an operator could
+  // let a client point a workspace at an arbitrary absolute path (e.g. /etc) and then
+  // read/write outside the intended sandbox. Dev/test keep the permissive fallback.
+  if (!configured && process.env.NODE_ENV === 'production') throw new Error('WORKSPACE_ROOT_REQUIRED');
   const candidate = requested ? path.resolve(requested) : configured ? path.join(configured, projectId) : null;
   if (!candidate) throw new Error('WORKSPACE_ROOT_REQUIRED');
   if (configured && candidate !== configured && !candidate.startsWith(`${configured}${path.sep}`)) throw new Error('WORKSPACE_PATH_OUTSIDE_ROOT');
@@ -128,9 +185,25 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (method === 'POST' && parts.join('/') === 'auth/reset-password') {
         const input = await body(request); resetPassword(db, validateText(input.token, 'TOKEN', 256), input.password, passwordHash); return send(response, 200, { ok: true });
       }
+      if (method === 'POST' && parts.join('/') === 'billing/webhook') {
+        // Provider webhooks are unauthenticated but authenticated by HMAC signature
+        // over the RAW body. Never parse before verifying, or the signature is meaningless.
+        const raw = await rawBody(request);
+        const signature = request.headers['stripe-signature'] ?? request.headers['x-billing-signature'] ?? '';
+        verifyWebhookSignature(raw, String(signature), process.env.BILLING_WEBHOOK_SECRET);
+        let event;
+        try { event = JSON.parse(raw); } catch { throw new Error('INVALID_JSON'); }
+        const provider = process.env.BILLING_PROVIDER || 'stripe';
+        const result = applyWebhookEvent(db, { provider, eventId: event.id, eventType: event.type, payload: event });
+        return send(response, 200, { received: true, ...result });
+      }
       const user = requireUser(db, request);
       if (method === 'GET' && parts.join('/') === 'tools/status') return send(response, 200, tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [] });
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
+      if (method === 'GET' && parts.join('/') === 'usage') {
+        const days = Number(new URL(request.url, 'http://localhost').searchParams.get('days')) || 30;
+        return send(response, 200, usageSummary(db, user.tenantId, days));
+      }
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'GET' && parts.join('/') === 'me/export') {
         return send(response, 200, { user: { id: user.id, tenantId: user.tenantId, email: user.email, role: user.role }, projects: db.all('SELECT id,name,created_at FROM projects WHERE tenant_id=? ORDER BY created_at', user.tenantId), messages: db.all('SELECT id,project_id,role,content,created_at FROM messages WHERE tenant_id=? ORDER BY created_at', user.tenantId), memory: db.all('SELECT id,project_id,source,content,created_at FROM documents WHERE tenant_id=? ORDER BY created_at', user.tenantId), exportedAt: now() });
@@ -151,10 +224,13 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
         const model = normalizeModelId(input.model);
+        consumeQuota(db, user.tenantId, {});
         const result = await llm.complete({ model, messages: [
           { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
           { role: 'user', content: message },
         ] });
+        const chatTokens = Number(result.usage?.totalTokens ?? result.usage?.total_tokens) || 0;
+        if (chatTokens > 0) consumeQuota(db, user.tenantId, { tokens: chatTokens });
         db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.completed', 'chat', user.id, JSON.stringify({ provider: result.provider, model: model || null, usage: result.usage }), now());
         return send(response, 200, { text: result.text, provider: result.provider, usage: result.usage });
       }
@@ -186,7 +262,6 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts[0] === 'runs' && parts.length === 1) {
         const input = await body(request);
-        consumeQuota(db, user.tenantId, { runs: 1 });
         const kind = typeof input.kind === 'string' ? input.kind : 'code.run';
         if (!['code.run', 'agent.run'].includes(kind)) throw new Error('UNSUPPORTED_RUN_KIND');
         if (kind === 'agent.run' && input.model !== undefined && input.model !== 'test') input.model = normalizeModelId(input.model);
@@ -201,6 +276,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           const existing = db.get('SELECT * FROM runs WHERE tenant_id=? AND idempotency_key=?', user.tenantId, idempotencyKey);
           if (existing) return send(response, 202, { runId: existing.id, taskId: existing.task_id, status: existing.status, idempotent: true });
         }
+        consumeQuota(db, user.tenantId, { runs: 1 });
         const taskId = id('task'); const timestamp = now(); const requiresApproval = requiresApprovalFor(kind, input);
         db.run('INSERT INTO tasks(id,tenant_id,project_id,workspace_id,created_by,goal,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', taskId, user.tenantId, project.id, workspace.id, user.id, goal, requiresApproval ? 'waiting_approval' : 'queued', timestamp, timestamp);
         const run = requiresApproval ? db.transaction(() => {
@@ -244,7 +320,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? 'INTERNAL_ERROR' : message });
     }
   });
@@ -255,6 +331,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
+  assertEnv();
   const db = new Database();
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
