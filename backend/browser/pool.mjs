@@ -32,15 +32,19 @@ export class BrowserPool {
 
   async #execute({ webSocketUrl, task, resolve, reject }) {
     let browser;
+    let result;
+    let failure;
     try {
       browser = this.createAgent(webSocketUrl, { timeoutMs: this.timeoutMs });
       await browser.connect();
-      resolve(await task(browser));
-    } catch (error) { reject(error); }
+      result = await task(browser);
+    } catch (error) { failure = error; }
     finally {
       if (browser) {
         try { await browser.close(); } catch { /* cleanup must not mask task result */ }
       }
     }
+    if (failure) reject(failure);
+    else resolve(result);
   }
 }
