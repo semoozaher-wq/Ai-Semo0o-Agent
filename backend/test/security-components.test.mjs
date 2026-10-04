@@ -41,6 +41,12 @@ test('memory store isolates project retrieval', async () => {
     memory.addDocument({ tenantId: 't1', projectId: 'p1', source: 'a', content: 'alpha workspace security' }); memory.addDocument({ tenantId: 't1', projectId: 'p2', source: 'b', content: 'beta workspace' });
     assert.equal(memory.search({ tenantId: 't1', projectId: 'p1', query: 'alpha' })[0].source, 'a');
     assert.equal(memory.search({ tenantId: 't1', projectId: 'p2', query: 'alpha' })[0].source, 'b');
+    assert.throws(() => memory.search({ tenantId: 'other', projectId: 'p1', query: 'alpha' }), /MEMORY_PROJECT_NOT_FOUND/);
+    assert.equal(memory.exportProject('t1', 'p1').length, 1);
+    assert.equal(memory.reindexProject('t1', 'p1').indexed, 1);
+    assert.equal(memory.deleteExpired({ tenantId: 't1', projectId: 'p1', before: new Date(0) }).changes, 0);
+    assert.equal(memory.deleteProject('t1', 'p1').changes, 1);
+    assert.equal(memory.exportProject('t1', 'p1').length, 0);
   } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
 });
 test('telemetry emits correlated structured spans and metrics', async () => {

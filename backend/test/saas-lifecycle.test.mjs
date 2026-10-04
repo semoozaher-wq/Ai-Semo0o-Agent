@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { Database } from '../db/client.mjs';
-import { createUser, passwordHash } from '../auth/security.mjs';
-import { acceptInvitation, consumeQuota, createInvitation, issueAccountToken, resetPassword, verifyEmail } from '../auth/lifecycle.mjs';
+import { authenticate, createUser, passwordHash } from '../auth/security.mjs';
+import { acceptInvitation, consumeQuota, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from '../auth/lifecycle.mjs';
 
 test('SaaS lifecycle creates owner membership and quota, verifies email, and resets password', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-saas-'));
@@ -38,4 +38,32 @@ test('SaaS invitations are role-scoped, email-bound, one-time, and quota enforce
     db.run('UPDATE usage_quotas SET monthly_runs=1 WHERE tenant_id=?', owner.tenant_id);
     assert.throws(() => consumeQuota(db, owner.tenant_id, { runs: 1 }), /MONTHLY_RUN_QUOTA_EXCEEDED/);
   } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('MFA-enabled accounts require a second factor before session creation', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-mfa-'));
+  const db = new Database(path.join(dir, 'agent.sqlite'));
+  try {
+    const user = createUser(db, { email: 'mfa@saas.test', password: 'correct horse battery staple', tenantName: 'MFA' });
+    db.run('UPDATE users SET mfa_enabled=1 WHERE id=?', user.id);
+    assert.throws(() => authenticate(db, user.email, 'correct horse battery staple'), /MFA_REQUIRED/);
+    assert.equal(db.get('SELECT COUNT(*) AS count FROM sessions WHERE user_id=?', user.id).count, 0);
+  } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('MFA recovery codes are hashed and single-use', async () => {
+  const previousKey = process.env.SECRETS_MASTER_KEY;
+  process.env.SECRETS_MASTER_KEY = '11'.repeat(32);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-recovery-'));
+  const db = new Database(path.join(dir, 'agent.sqlite'));
+  try {
+    const user = createUser(db, { email: 'recovery@saas.test', password: 'correct horse battery staple', tenantName: 'Recovery' });
+    const setup = enableMfa(db, user.id);
+    assert.equal(setup.recoveryCodes.length, 10);
+    assert.equal(db.get('SELECT COUNT(*) AS count FROM recovery_codes WHERE user_id=? AND used_at IS NULL', user.id).count, 10);
+    db.run('UPDATE users SET mfa_enabled=1 WHERE id=?', user.id);
+    const session = authenticate(db, user.email, 'correct horse battery staple', setup.recoveryCodes[0]);
+    assert.ok(session.session.token);
+    assert.throws(() => authenticate(db, user.email, 'correct horse battery staple', setup.recoveryCodes[0]), /MFA_CODE_INVALID/);
+  } finally { db.close(); await rm(dir, { recursive: true, force: true }); if (previousKey === undefined) delete process.env.SECRETS_MASTER_KEY; else process.env.SECRETS_MASTER_KEY = previousKey; }
 });
