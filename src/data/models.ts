@@ -180,7 +180,7 @@ export const MODELS: ModelSpec[] = [
     outputPricePerMTokens: 0.4,
     speed: 5,
     quality: 4,
-    apiModel: 'gemini-3-flash-preview-preview',
+    apiModel: 'gemini-3-flash-preview',
   },
   {
     id: 'mistral-large',
