@@ -56,6 +56,8 @@ function RootNavigator() {
         <Stack.Screen name="anatomy" />
         <Stack.Screen name="analytics" />
         <Stack.Screen name="settings" />
+        <Stack.Screen name="privacy" />
+        <Stack.Screen name="terms" />
       </Stack>
     </>
   );
