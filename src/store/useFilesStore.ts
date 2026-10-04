@@ -34,7 +34,7 @@ interface FilesState {
 
 const SAMPLE_SOURCES: { name: string; source: string }[] = [
   {
-    name: 'src/services/ai/runtime.ts',
+    name: 'src/services/api/client.ts',
     source: [
       'export function complete(req) {',
       '  var result = fetch("/v1/chat", req);',
