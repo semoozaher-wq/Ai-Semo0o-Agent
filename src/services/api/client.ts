@@ -8,6 +8,16 @@ export interface ApiRun { runId: string; taskId: string; status: string }
 export interface ApiRunSnapshot { status: string; result?: { final?: string; outputs?: unknown[]; error?: string } | null; events?: { type: string; payload_json: string }[]; usage?: unknown[] }
 export interface ApiChatResponse { text: string; provider: string; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }
 export interface ApiEvent { type: string; at?: string; stepId?: string; toolId?: string; approvalId?: string; title?: string; reason?: string; final?: string; steps?: number; details?: Record<string, unknown>; [key: string]: unknown }
+export interface ApiUsagePoint { date: string; tokens: number; costUsd: number; runs: number; messages: number }
+export interface ApiUsageSummary {
+  period: string;
+  days: number;
+  quota: { monthly_tokens: number; monthly_runs: number };
+  counter: { tokens: number; runs: number };
+  daily: ApiUsagePoint[];
+  totals: { tokens: number; costUsd: number; runs: number; messages: number };
+  generatedAt: string;
+}
 
 type StoredBootstrap = { email: string; password: string };
 
@@ -83,6 +93,7 @@ class BackendApiClient {
   async chat(input: { message: string; model?: string }): Promise<ApiChatResponse> { return this.request<ApiChatResponse>('/chat', { method: 'POST', body: JSON.stringify(input) }); }
   async createRun(input: Record<string, unknown>): Promise<ApiRun> { return this.request<ApiRun>('/runs', { method: 'POST', body: JSON.stringify(input) }); }
   async getRun(runId: string): Promise<ApiRunSnapshot> { return this.request<ApiRunSnapshot>(`/runs/${encodeURIComponent(runId)}`); }
+  async getUsage(days = 30): Promise<ApiUsageSummary> { return this.request<ApiUsageSummary>(`/usage?days=${encodeURIComponent(String(days))}`); }
   async approve(runId: string, decision: 'allow' | 'deny' | 'cancel'): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/approval`, { method: 'POST', body: JSON.stringify({ decision }) }); }
   async cancel(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }); }
   async retry(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }); }
