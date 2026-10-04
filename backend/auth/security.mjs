@@ -3,7 +3,7 @@ import { id, now, hash } from '../db/client.mjs';
 
 const TOKEN_BYTES = 32;
 const SESSION_DAYS = 7;
-function passwordHash(password) {
+export function passwordHash(password) {
   if (typeof password !== 'string' || password.length < 12) throw new Error('PASSWORD_POLICY_FAILED');
   const salt = randomBytes(16).toString('hex');
   const derived = scryptSync(password, salt, 64).toString('hex');
@@ -22,6 +22,8 @@ export function createUser(db, { email, password, tenantName }) {
   return db.transaction(() => {
     db.run('INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)', tenantId, tenantName || `${email} tenant`, createdAt);
     db.run('INSERT INTO users(id,tenant_id,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?)', userId, tenantId, email.toLowerCase(), passwordHash(password), 'owner', createdAt);
+    db.run('INSERT INTO tenant_members(tenant_id,user_id,role,status,created_at) VALUES(?,?,?,?,?)', tenantId, userId, 'owner', 'active', createdAt);
+    db.run('INSERT INTO usage_quotas(tenant_id,updated_at) VALUES(?,?)', tenantId, createdAt);
     return db.get('SELECT id,tenant_id,email,role,created_at FROM users WHERE id=?', userId);
   });
 }
