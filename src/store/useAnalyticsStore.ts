@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { hashString } from '../utils/id';
+import { backendApi } from '../services/api/client';
 
 export interface UsagePoint {
   date: string;
@@ -10,10 +11,20 @@ export interface UsagePoint {
   messages: number;
 }
 
+/**
+ * Where the currently displayed usage series came from.
+ * - `backend` — real tenant usage fetched from the API (may legitimately be empty).
+ * - `local`   — usage recorded on this device (offline / optimistic).
+ * - `sample`  — deterministic demo data shown only when no backend is configured.
+ */
+export type UsageSource = 'backend' | 'local' | 'sample';
+
 interface AnalyticsState {
   usage: UsagePoint[];
+  source: UsageSource;
   hydrated: boolean;
   hydrate(): Promise<void>;
+  refresh(): Promise<void>;
   record(entry: Partial<UsagePoint> & { date?: string }): void;
   reset(): Promise<void>;
 }
@@ -24,7 +35,7 @@ function isoDay(offset = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Deterministic 30-day usage series so charts are populated offline. */
+/** Deterministic 30-day usage series so charts are populated offline (demo only). */
 function seedUsage(days = 30): UsagePoint[] {
   const points: UsagePoint[] = [];
   for (let i = days - 1; i >= 0; i -= 1) {
@@ -42,6 +53,28 @@ function seedUsage(days = 30): UsagePoint[] {
   return points;
 }
 
+/**
+ * Fetch the tenant's real usage series from the backend. Returns `null` when the
+ * backend is not configured or unreachable (so callers can fall back to demo data),
+ * and an array (possibly empty) when the backend answered authoritatively.
+ */
+async function fetchBackendUsage(): Promise<UsagePoint[] | null> {
+  if (!backendApi.enabled) return null;
+  try {
+    await backendApi.ensureSession();
+    const summary = await backendApi.getUsage(30);
+    return (summary.daily ?? []).map((point) => ({
+      date: point.date,
+      tokens: point.tokens,
+      costUsd: point.costUsd,
+      tasks: point.runs,
+      messages: point.messages,
+    }));
+  } catch {
+    return null;
+  }
+}
+
 export function computeTotals(usage: UsagePoint[]) {
   return usage.reduce(
     (acc, p) => ({
@@ -56,11 +89,31 @@ export function computeTotals(usage: UsagePoint[]) {
 
 export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
   usage: [],
+  source: 'sample',
   hydrated: false,
 
   async hydrate() {
     const stored = await storage.get<UsagePoint[]>(STORAGE_KEYS.usage);
-    set({ usage: stored && stored.length ? stored : seedUsage(), hydrated: true });
+    if (stored && stored.length) {
+      set({ usage: stored, source: 'local', hydrated: true });
+      return;
+    }
+    const remote = await fetchBackendUsage();
+    if (remote) {
+      set({ usage: remote, source: 'backend', hydrated: true });
+      return;
+    }
+    set({ usage: seedUsage(), source: 'sample', hydrated: true });
+  },
+
+  async refresh() {
+    const remote = await fetchBackendUsage();
+    if (remote) {
+      set({ usage: remote, source: 'backend' });
+      await storage.set(STORAGE_KEYS.usage, remote);
+      return;
+    }
+    set({ usage: seedUsage(), source: 'sample' });
   },
 
   record(entry) {
@@ -84,13 +137,18 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
         messages: entry.messages ?? 0,
       });
     }
-    set({ usage });
+    set({ usage, source: 'local' });
     void storage.set(STORAGE_KEYS.usage, usage);
   },
 
   async reset() {
-    const usage = seedUsage();
-    set({ usage });
-    await storage.set(STORAGE_KEYS.usage, usage);
+    await storage.set(STORAGE_KEYS.usage, []);
+    const remote = await fetchBackendUsage();
+    if (remote) {
+      set({ usage: remote, source: 'backend' });
+      await storage.set(STORAGE_KEYS.usage, remote);
+      return;
+    }
+    set({ usage: seedUsage(), source: 'sample' });
   },
 }));

@@ -24,6 +24,8 @@ interface FilesState {
   analysis: AnalysisResult | null;
   scanning: boolean;
   hydrated: boolean;
+  /** True when the current listing is generated demo data, not a real workspace scan. */
+  sample: boolean;
   hydrate(): Promise<void>;
   scan(): Promise<void>;
   runAudit(): void;
@@ -83,21 +85,26 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   analysis: null,
   scanning: false,
   hydrated: false,
+  sample: false,
 
   async hydrate() {
     const stored = await storage.get<FileEntry[]>(STORAGE_KEYS.files);
-    const files = stored && stored.length > 0 ? stored : seedWorkspace();
+    const hasStored = Boolean(stored && stored.length > 0);
+    const files = hasStored ? (stored as FileEntry[]) : seedWorkspace();
     set({
       files,
       report: buildReport(files, '/'),
       audit: runAudit(files),
       auditScore: auditScore(runAudit(files)),
+      sample: !hasStored,
       hydrated: true,
     });
   },
 
   async scan() {
     set({ scanning: true });
+    // No live filesystem connector is configured, so this returns a generated
+    // demo workspace and flags it as sample data instead of presenting it as real.
     const files = seedWorkspace();
     const report = buildReport(files, '/');
     const audit = runAudit(files);
@@ -107,6 +114,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       audit,
       auditScore: auditScore(audit),
       scanning: false,
+      sample: true,
     });
     await storage.set(STORAGE_KEYS.files, files);
   },

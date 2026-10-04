@@ -3,7 +3,7 @@ import { Conversation, Message } from '../types/chat';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
-import { DEFAULT_MODEL_ID } from '../../data/models';
+import { DEFAULT_MODEL_ID } from '../data/models';
 import { backendApi, ApiEvent } from '../services/api/client';
 
 let streamToken = 0;
