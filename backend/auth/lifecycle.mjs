@@ -138,11 +138,18 @@ function verifyTotpSecret(secret, code) {
 }
 
 export function consumeQuota(db, tenantId, { tokens = 0, runs = 0 } = {}) {
+  if (tokens < 0 || runs < 0) throw new Error('INVALID_QUOTA_DELTA');
   const period = new Date().toISOString().slice(0, 7);
-  const quota = db.get('SELECT monthly_tokens,monthly_runs FROM usage_quotas WHERE tenant_id=?', tenantId) ?? { monthly_tokens: 100000, monthly_runs: 1000 };
-  const current = db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period) ?? { tokens: 0, runs: 0 };
-  if (current.tokens + tokens > quota.monthly_tokens) throw new Error('MONTHLY_TOKEN_QUOTA_EXCEEDED');
-  if (current.runs + runs > quota.monthly_runs) throw new Error('MONTHLY_RUN_QUOTA_EXCEEDED');
-  db.run('INSERT INTO usage_counters(tenant_id,period,tokens,runs,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(tenant_id,period) DO UPDATE SET tokens=tokens+excluded.tokens,runs=runs+excluded.runs,updated_at=excluded.updated_at', tenantId, period, tokens, runs, now());
-  return { period, tokens: current.tokens + tokens, runs: current.runs + runs, limits: quota };
+  // The read-check-write must be atomic: two concurrent requests could otherwise
+  // both observe the same remaining quota and both pass the limit check, letting a
+  // tenant exceed its plan. BEGIN IMMEDIATE (via db.transaction) takes the write
+  // lock up front so the check and the increment happen under one serialized lock.
+  return db.transaction(() => {
+    const quota = db.get('SELECT monthly_tokens,monthly_runs FROM usage_quotas WHERE tenant_id=?', tenantId) ?? { monthly_tokens: 100000, monthly_runs: 1000 };
+    const current = db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period) ?? { tokens: 0, runs: 0 };
+    if (current.tokens + tokens > quota.monthly_tokens) throw new Error('MONTHLY_TOKEN_QUOTA_EXCEEDED');
+    if (current.runs + runs > quota.monthly_runs) throw new Error('MONTHLY_RUN_QUOTA_EXCEEDED');
+    db.run('INSERT INTO usage_counters(tenant_id,period,tokens,runs,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(tenant_id,period) DO UPDATE SET tokens=tokens+excluded.tokens,runs=runs+excluded.runs,updated_at=excluded.updated_at', tenantId, period, tokens, runs, now());
+    return { period, tokens: current.tokens + tokens, runs: current.runs + runs, limits: quota };
+  });
 }
