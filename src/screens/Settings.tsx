@@ -163,6 +163,24 @@ export function Settings() {
         />
         <SystemStatusCard />
 
+        {/* Operations console — self-improvement + tool availability */}
+        <SectionHeader
+          title="لوحة العمليات"
+          subtitle="التحسين الذاتي الآمن · حالة الأدوات · المراقبة والتراجع"
+          icon="construct-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <Card padded={false}>
+          <ListRow
+            title="مركز العمليات"
+            subtitle="مراجعة مقترحات التحسين الذاتي والموافقة عليها، ومراقبة حالة كل أداة"
+            icon="pulse-outline"
+            iconColor={theme.colors.primary}
+            onPress={() => router.push('/operations')}
+            showChevron
+          />
+        </Card>
+
         {/* Privacy */}
         <SectionHeader title="الخصوصية والبيانات" icon="shield-checkmark-outline" style={{ marginTop: theme.spacing.xl }} />
         <Card padded={false}>

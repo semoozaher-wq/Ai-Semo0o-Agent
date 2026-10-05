@@ -8,3 +8,4 @@ export { Workspace } from './Workspace';
 export { Analytics } from './Analytics';
 export { Settings } from './Settings';
 export { Anatomy } from './Anatomy';
+export { Operations } from './Operations';
