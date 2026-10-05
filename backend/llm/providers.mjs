@@ -46,7 +46,9 @@ function withTimeout(signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
     );
   };
 
-  signal?.addEventListener?.('abort', forward, { once: true });
+  signal?.addEventListener?.('abort', forward, {
+    once: true,
+  });
 
   return {
     signal: controller.signal,
@@ -99,7 +101,9 @@ async function requestJson(
       error.payload = payload;
 
       if (
-        ![408, 429, 500, 502, 503, 504].includes(response.status) ||
+        ![408, 429, 500, 502, 503, 504].includes(
+          response.status
+        ) ||
         attempt === RETRIES
       ) {
         throw error;
@@ -120,7 +124,9 @@ async function requestJson(
         attempt === RETRIES ||
         (
           error?.status &&
-          ![408, 429, 500, 502, 503, 504].includes(error.status)
+          ![408, 429, 500, 502, 503, 504].includes(
+            error.status
+          )
         )
       ) {
         throw error;
@@ -147,7 +153,9 @@ function openAiMessage(payload) {
   const toolCalls =
     Array.isArray(message.tool_calls)
       ? message.tool_calls.map((call) => ({
-          id: call.id ?? `call_${Date.now()}`,
+          id:
+            call.id ??
+            `call_${Date.now()}`,
           name: call.function?.name,
           arguments: parseArguments(
             call.function?.arguments
@@ -164,7 +172,10 @@ function openAiMessage(payload) {
 }
 
 function parseArguments(value) {
-  if (value && typeof value === 'object') {
+  if (
+    value &&
+    typeof value === 'object'
+  ) {
     return value;
   }
 
@@ -216,7 +227,10 @@ async function geminiComplete({
   signal,
 }) {
   const contents = messages
-    .filter((message) => message.role !== 'system')
+    .filter(
+      (message) =>
+        message.role !== 'system'
+    )
     .map((message) => ({
       role:
         message.role === 'assistant'
@@ -227,18 +241,25 @@ async function geminiComplete({
           text:
             typeof message.content === 'string'
               ? message.content
-              : JSON.stringify(message.content ?? ''),
+              : JSON.stringify(
+                  message.content ?? ''
+                ),
         },
       ],
     }));
 
   const systemInstruction = messages
-    .filter((message) => message.role === 'system')
+    .filter(
+      (message) =>
+        message.role === 'system'
+    )
     .map((message) => ({
       text:
         typeof message.content === 'string'
           ? message.content
-          : JSON.stringify(message.content ?? ''),
+          : JSON.stringify(
+              message.content ?? ''
+            ),
     }));
 
   const body = {
@@ -256,7 +277,10 @@ async function geminiComplete({
     body.tools = [
       {
         functionDeclarations: tools
-          .map((tool) => tool?.function)
+          .map(
+            (tool) =>
+              tool?.function
+          )
           .filter(Boolean),
       },
     ];
@@ -281,12 +305,18 @@ async function geminiComplete({
     candidate?.content?.parts ?? [];
 
   const text = parts
-    .filter((part) => typeof part?.text === 'string')
+    .filter(
+      (part) =>
+        typeof part?.text === 'string'
+    )
     .map((part) => part.text)
     .join('');
 
   const toolCalls = parts
-    .filter((part) => part?.functionCall)
+    .filter(
+      (part) =>
+        part?.functionCall
+    )
     .map((part, index) => ({
       id:
         part.functionCall?.id ??
@@ -300,7 +330,9 @@ async function geminiComplete({
   return {
     text,
     toolCalls,
-    usage: usage(payload?.usageMetadata),
+    usage: usage(
+      payload?.usageMetadata
+    ),
     provider: 'gemini',
   };
 }
@@ -313,16 +345,24 @@ async function anthropicComplete({
   signal,
 }) {
   const system = messages
-    .filter((message) => message.role === 'system')
+    .filter(
+      (message) =>
+        message.role === 'system'
+    )
     .map((message) =>
       typeof message.content === 'string'
         ? message.content
-        : JSON.stringify(message.content ?? '')
+        : JSON.stringify(
+            message.content ?? ''
+          )
     )
     .join('\n\n');
 
   const inputMessages = messages
-    .filter((message) => message.role !== 'system')
+    .filter(
+      (message) =>
+        message.role !== 'system'
+    )
     .map((message) => ({
       role:
         message.role === 'assistant'
@@ -331,7 +371,9 @@ async function anthropicComplete({
       content:
         typeof message.content === 'string'
           ? message.content
-          : JSON.stringify(message.content ?? ''),
+          : JSON.stringify(
+              message.content ?? ''
+            ),
     }));
 
   const body = {
@@ -343,7 +385,10 @@ async function anthropicComplete({
 
   if (tools?.length) {
     body.tools = tools
-      .map((tool) => tool?.function)
+      .map(
+        (tool) =>
+          tool?.function
+      )
       .filter(Boolean)
       .map((tool) => ({
         name: tool.name,
@@ -361,8 +406,10 @@ async function anthropicComplete({
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
+        'anthropic-version':
+          '2023-06-01',
+        'content-type':
+          'application/json',
       },
       body: JSON.stringify(body),
     },
@@ -375,29 +422,43 @@ async function anthropicComplete({
       : [];
 
   const text = content
-    .filter((part) => part?.type === 'text')
-    .map((part) => part.text)
+    .filter(
+      (part) =>
+        part?.type === 'text'
+    )
+    .map(
+      (part) =>
+        part.text
+    )
     .join('');
 
   const toolCalls = content
-    .filter((part) => part?.type === 'tool_use')
+    .filter(
+      (part) =>
+        part?.type === 'tool_use'
+    )
     .map((part) => ({
       id:
         part.id ??
         `call_${Date.now()}`,
       name: part.name,
-      arguments: part.input ?? {},
+      arguments:
+        part.input ?? {},
     }));
 
   return {
     text,
     toolCalls,
-    usage: usage(payload?.usage),
+    usage: usage(
+      payload?.usage
+    ),
     provider: 'anthropic',
   };
 }
 
-export function createLLMRouter(env = process.env) {
+export function createLLMRouter(
+  env = process.env
+) {
   const providers = [
     env.OPENAI_API_KEY
       ? {
@@ -423,14 +484,15 @@ export function createLLMRouter(env = process.env) {
             env.GOOGLE_API_KEY,
           defaultModel:
             env.GEMINI_MODEL ||
-            'gemini-3-flash-preview',
+            'gemini-2.5-flash-lite',
         }
       : null,
 
     env.ANTHROPIC_API_KEY
       ? {
           id: 'anthropic',
-          key: env.ANTHROPIC_API_KEY,
+          key:
+            env.ANTHROPIC_API_KEY,
           defaultModel:
             env.ANTHROPIC_MODEL ||
             'claude-haiku-4-5',
@@ -450,7 +512,8 @@ export function createLLMRouter(env = process.env) {
 
   const choose = (model) => {
     const lower =
-      String(model || '').toLowerCase();
+      String(model || '')
+        .toLowerCase();
 
     const preferred =
       lower.includes('gemini')
@@ -462,21 +525,103 @@ export function createLLMRouter(env = process.env) {
 
     return (
       providers.find(
-        (item) => item.id === preferred
+        (item) =>
+          item.id === preferred
       ) ?? providers[0]
     );
+  };
+
+  const getProvider = (id) =>
+    providers.find(
+      (item) =>
+        item.id === id
+    );
+
+  const markFailure = (
+    provider
+  ) => {
+    const state =
+      health.get(provider.id);
+
+    if (!state) {
+      return;
+    }
+
+    state.failures += 1;
+
+    state.unavailableUntil =
+      Date.now() +
+      Math.min(
+        60_000,
+        1_000 *
+          (
+            2 **
+            Math.min(
+              state.failures,
+              6
+            )
+          )
+      );
+  };
+
+  const markSuccess = (
+    provider
+  ) => {
+    const state =
+      health.get(provider.id);
+
+    if (!state) {
+      return;
+    }
+
+    state.failures = 0;
+    state.unavailableUntil = 0;
+  };
+
+  const executeProvider = async ({
+    provider,
+    model,
+    input,
+  }) => {
+    if (provider.id === 'gemini') {
+      return geminiComplete({
+        ...input,
+        apiKey: provider.key,
+        model,
+      });
+    }
+
+    if (provider.id === 'anthropic') {
+      return anthropicComplete({
+        ...input,
+        apiKey: provider.key,
+        model,
+      });
+    }
+
+    return openaiComplete({
+      ...input,
+      apiKey: provider.key,
+      baseUrl: provider.baseUrl,
+      model,
+    });
   };
 
   return {
     status: () =>
       providers.map(
-        ({ id, defaultModel }) => ({
+        ({
+          id,
+          defaultModel,
+        }) => ({
           id,
           model: defaultModel,
           configured: true,
           healthy:
-            (health.get(id)
-              ?.unavailableUntil ?? 0) <= Date.now(),
+            (
+              health.get(id)
+                ?.unavailableUntil ?? 0
+            ) <= Date.now(),
         })
       ),
 
@@ -488,44 +633,21 @@ export function createLLMRouter(env = process.env) {
       }
 
       const normalized =
-        normalizeModelId(input.model);
+        normalizeModelId(
+          input.model
+        );
 
       const explicitFamily =
-        modelProvider(normalized);
+        modelProvider(
+          normalized
+        );
 
-      const preferred =
-        choose(normalized);
+      const primary =
+        getProvider(
+          explicitFamily
+        ) ?? choose(normalized);
 
-      const ordered = [
-        preferred,
-        ...providers,
-      ].filter(
-        (item, index, all) =>
-          item &&
-          all.findIndex(
-            (candidate) =>
-              candidate.id === item.id
-          ) === index
-      );
-
-      /*
-       * IMPORTANT:
-       * The model catalog is the source of truth.
-       * The selected provider must match the model family.
-       *
-       * If the selected provider is temporarily marked
-       * unavailable, do NOT turn that into the misleading
-       * NO_HEALTHY_LLM_PROVIDER error immediately.
-       *
-       * Try the configured provider again so the real API
-       * error can be returned if the request fails.
-       */
-      const candidates = ordered.filter(
-        (item) =>
-          item.id === explicitFamily
-      );
-
-      if (!candidates.length) {
+      if (!primary) {
         throw new Error(
           `NO_PROVIDER_FOR_MODEL:${normalized}:${explicitFamily}`
         );
@@ -533,65 +655,75 @@ export function createLLMRouter(env = process.env) {
 
       let lastError;
 
-      for (const provider of candidates) {
-        const state = health.get(provider.id);
+      /*
+       * PRIMARY PROVIDER
+       *
+       * Respect the requested model exactly.
+       */
+      try {
+        const result =
+          await executeProvider({
+            provider: primary,
+            model: normalized,
+            input,
+          });
 
-        try {
-          const model = normalized;
+        markSuccess(primary);
 
-          const result =
-            provider.id === 'gemini'
-              ? await geminiComplete({
-                  ...input,
-                  apiKey: provider.key,
-                  model,
-                })
-              : provider.id === 'anthropic'
-                ? await anthropicComplete({
-                    ...input,
-                    apiKey: provider.key,
-                    model,
-                  })
-                : await openaiComplete({
-                    ...input,
-                    apiKey: provider.key,
-                    baseUrl: provider.baseUrl,
-                    model,
-                  });
+        return result;
+      } catch (error) {
+        lastError = error;
+        markFailure(primary);
 
-          if (state) {
-            state.failures = 0;
-            state.unavailableUntil = 0;
-          }
+        /*
+         * FALLBACK
+         *
+         * If OpenAI fails, try Gemini automatically.
+         * Gemini receives its own configured/default model
+         * instead of receiving an OpenAI model ID.
+         */
+        if (
+          primary.id === 'openai'
+        ) {
+          const gemini =
+            getProvider(
+              'gemini'
+            );
 
-          return result;
-        } catch (error) {
-          lastError = error;
+          if (gemini) {
+            try {
+              const geminiModel =
+                normalizeModelId(
+                  gemini.defaultModel
+                );
 
-          if (state) {
-            state.failures += 1;
+              const result =
+                await executeProvider({
+                  provider: gemini,
+                  model: geminiModel,
+                  input,
+                });
 
-            state.unavailableUntil =
-              Date.now() +
-              Math.min(
-                60_000,
-                1_000 *
-                  (
-                    2 **
-                    Math.min(
-                      state.failures,
-                      6
-                    )
-                  )
+              markSuccess(gemini);
+
+              return result;
+            } catch (fallbackError) {
+              lastError =
+                fallbackError;
+              markFailure(
+                gemini
               );
+            }
           }
         }
+
+        /*
+         * Preserve the existing Anthropic support.
+         * It is not used as the OpenAI → Gemini fallback,
+         * but remains available when explicitly selected.
+         */
       }
 
-      /*
-       * Always return the actual provider error.
-       * This is critical for production diagnostics.
-       */
       if (lastError) {
         throw lastError;
       }
