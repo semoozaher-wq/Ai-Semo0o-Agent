@@ -1,6 +1,7 @@
 import { id, now, hash } from '../db/client.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, fromProviderToolName, openAITools } from './catalog.mjs';
 import { normalizeModelId } from '../models/catalog.mjs';
+import { loadOverrides } from '../self-improve/store.mjs';
 
 const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
 function addUsage(a = {}, b = {}) { return { promptTokens: (a.promptTokens || 0) + (b.promptTokens || 0), completionTokens: (a.completionTokens || 0) + (b.completionTokens || 0), totalTokens: (a.totalTokens || 0) + (b.totalTokens || 0) }; }
@@ -17,15 +18,16 @@ function writeEvidence(db, run, toolId, args, result) {
   db.run('INSERT INTO tool_calls(id,run_id,tool_id,input_json,output_json,status,created_at) VALUES(?,?,?,?,?,?,?)', id('tool'), run.id, toolId, JSON.stringify(args), JSON.stringify(result), result.ok === false ? 'failed' : 'completed', now());
   return evidenceId;
 }
-function planPrompt(goal) {
-  const allowed = [...TOOL_BY_ID.keys()].join(', ');
-  return `You are the secure planner for an AI agent. Return ONLY JSON with this shape: {"reasoning":string,"steps":[{"id":string,"title":string,"toolId":string,"args":object}]. The toolId MUST be exactly one of: ${allowed}. Choose only tools that directly help. Never invent a tool name. Never choose email.send, calendar.schedule, image.generate, or image.analyze unless the user explicitly asks and the connector is available. Goal:\n${goal}`;
+function planPrompt(goal, { allowed = [...TOOL_BY_ID.keys()], hints = [], notes = [] } = {}) {
+  const guidance = [...hints, ...notes].filter(Boolean).map((line) => `- ${line}`).join('\n');
+  return `You are the secure planner for an AI agent. Return ONLY JSON with this shape: {"reasoning":string,"steps":[{"id":string,"title":string,"toolId":string,"args":object}]. The toolId MUST be exactly one of: ${allowed.join(', ')}. Choose only tools that directly help. Never invent a tool name. Never choose email.send, calendar.schedule, image.generate, or image.analyze unless the user explicitly asks and the connector is available.${guidance ? `\nLearned guidance (from verified past runs):\n${guidance}` : ''} Goal:\n${goal}`;
 }
-function normalizePlan(raw, goal) {
+function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys())) {
   if (!raw || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > 12) throw new Error('PLANNER_INVALID_STEP_COUNT');
   const steps = raw.steps.map((step, index) => {
     const toolId = String(step.toolId || '');
     if (!TOOL_BY_ID.has(toolId)) throw new Error(`PLANNER_UNKNOWN_TOOL:${toolId}`);
+    if (!allowed.has(toolId)) throw new Error(`PLANNER_DISABLED_TOOL:${toolId}`);
     if (!step.args || typeof step.args !== 'object' || Array.isArray(step.args)) throw new Error(`PLANNER_INVALID_ARGS:${index}`);
     return { id: String(step.id || `step_${index + 1}`), title: String(step.title || toolId), toolId, args: step.args };
   });
@@ -36,14 +38,25 @@ function verify(result) { return result && result.ok !== false && result.output 
 export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}) {
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   return async ({ run, payload, signal }) => {
+    // Hard caps are never exceeded, even when a self-improvement override asks for
+    // more. Overrides may only move a limit within these caps.
+    const caps = { maxSteps: 12, maxToolCalls: 48, maxRetries: 3, maxTokens: 250000, maxCostUsd: 100, timeoutMs: 30 * 60_000 };
     const limits = {
-      maxSteps: Math.min(Number(payload.maxSteps || process.env.AGENT_MAX_STEPS || 12), 12),
-      maxToolCalls: Math.min(Number(payload.maxToolCalls || process.env.AGENT_MAX_TOOL_CALLS || 24), 48),
-      maxRetries: Math.min(Number(payload.maxRetries || process.env.AGENT_MAX_RETRIES || 2), 3),
-      maxTokens: Math.min(Number(payload.maxTokens || process.env.AGENT_MAX_TOKENS || 120000), 250000),
-      maxCostUsd: Math.min(Number(payload.maxCostUsd || process.env.AGENT_MAX_COST_USD || 2), 100),
-      timeoutMs: Math.min(Number(payload.timeoutMs || process.env.AGENT_TIMEOUT_MS || 10 * 60_000), 30 * 60_000),
+      maxSteps: Math.min(Number(payload.maxSteps || process.env.AGENT_MAX_STEPS || 12), caps.maxSteps),
+      maxToolCalls: Math.min(Number(payload.maxToolCalls || process.env.AGENT_MAX_TOOL_CALLS || 24), caps.maxToolCalls),
+      maxRetries: Math.min(Number(payload.maxRetries || process.env.AGENT_MAX_RETRIES || 2), caps.maxRetries),
+      maxTokens: Math.min(Number(payload.maxTokens || process.env.AGENT_MAX_TOKENS || 120000), caps.maxTokens),
+      maxCostUsd: Math.min(Number(payload.maxCostUsd || process.env.AGENT_MAX_COST_USD || 2), caps.maxCostUsd),
+      timeoutMs: Math.min(Number(payload.timeoutMs || process.env.AGENT_TIMEOUT_MS || 10 * 60_000), caps.timeoutMs),
     };
+    // Apply tenant self-improvement overrides (bounded, reversible). These can only
+    // raise a limit up to its hard cap; they can never remove a cap or touch security.
+    const overrides = loadOverrides(db, run.tenant_id);
+    for (const [field, value] of Object.entries(overrides.limits)) {
+      if (!(field in limits) || !Number.isFinite(value)) continue;
+      limits[field] = Math.min(Math.max(1, value), caps[field]);
+    }
+    const allowedTools = new Set([...TOOL_BY_ID.keys()].filter((toolId) => !overrides.disabledTools.has(toolId)));
     if (Object.values(limits).some((value) => !Number.isFinite(value) || value <= 0)) throw new Error('AGENT_LIMITS_INVALID');
     const deadline = Date.now() + limits.timeoutMs;
     // Test doubles may use the sentinel model "test"; production routers never do.
@@ -70,9 +83,9 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
     let plan;
     for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
       guard();
-      planner = await llm.complete({ model, messages: [{ role: 'system', content: planPrompt(task?.goal || payload.goal || '') }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
+      planner = await llm.complete({ model, messages: [{ role: 'system', content: planPrompt(task?.goal || payload.goal || '', { allowed: [...allowedTools], hints: overrides.plannerHints, notes: overrides.knowledgeNotes }) }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
       usage = addUsage(usage, planner.usage);
-      try { plan = normalizePlan(parseJson(planner.text), task?.goal || payload.goal || ''); break; }
+      try { plan = normalizePlan(parseJson(planner.text), task?.goal || payload.goal || '', allowedTools); break; }
       catch (error) { emit('planning_failed', { attempt, error: error.message }); if (attempt === limits.maxRetries) throw error; emit('self_healing', { action: 'replan', attempt }); }
     }
     if (plan.steps.length > limits.maxSteps) throw new Error('AGENT_STEP_LIMIT_EXCEEDED');
@@ -104,9 +117,12 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
       const fingerprint = `${step.toolId}:${JSON.stringify(args)}`;
       if (seenCalls.has(fingerprint)) throw new Error('AGENT_LOOP_DETECTED');
       seenCalls.add(fingerprint);
+      // A self-improvement retry policy may raise retries for a specific tool, but
+      // never beyond the hard ceiling of 5.
+      const toolRetries = Math.min(Number(overrides.retryPolicy[step.toolId] ?? overrides.retryPolicy['*'] ?? limits.maxRetries), 5);
       let toolResult;
       let evidenceId;
-      for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
+      for (let attempt = 1; attempt <= toolRetries; attempt += 1) {
         guard();
         try { toolResult = await tools.run(step.toolId, args, { run, task, workspaceRoot, model: payload.model, signal, llm }); }
         catch (error) { toolResult = { ok: false, output: null, error: error instanceof Error ? error.message : String(error) }; }
@@ -114,7 +130,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
         outputs.push({ stepId: step.id, toolId: step.toolId, attempt, result: toolResult, evidenceId });
         emit('tool_completed', { stepId: step.id, toolId: step.toolId, ok: toolResult.ok !== false, output: toolResult.output, error: toolResult.error, evidenceId, attempt });
         if (toolResult.ok !== false) break;
-        if (attempt === limits.maxRetries) throw new Error(toolResult.error || `TOOL_FAILED:${step.toolId}`);
+        if (attempt === toolRetries) throw new Error(toolResult.error || `TOOL_FAILED:${step.toolId}`);
         const diagnosis = await llm.complete({ model, messages: [
           { role: 'system', content: 'Diagnose the failed tool call. Return ONLY JSON: {"action":"retry","args":object}. Never change security, authentication, policy, or permissions.' },
           { role: 'user', content: JSON.stringify({ tool: step.toolId, args, error: toolResult.error }) },
