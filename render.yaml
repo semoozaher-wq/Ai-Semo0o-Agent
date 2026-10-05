@@ -1,31 +1,51 @@
-# Render blueprint for the Ai-Semo0o-Agent BACKEND.
-# Vercel cannot run this backend (it is a long-running Node server that needs
-# node:sqlite + a writable disk + a background worker). Render/Railway/Fly.io
-# can. Deploy this file from the repo root on Render.
+# =============================================================================
+# render.yaml — Blueprint for the Ai-Semo0o-Agent BACKEND on Render.
+# =============================================================================
+# Vercel cannot run this backend (long-running Node server + node:sqlite +
+# writable disk + background worker). Render / Railway / Fly.io / a VPS can.
+#
+# HOW TO USE
+#   1. Push this repository to GitHub.
+#   2. Render Dashboard -> New -> Blueprint -> pick this repo.
+#   3. Render reads this file and creates the service + 1 GB persistent disk.
+#   4. Fill the secret env vars in the dashboard (SECRETS_MASTER_KEY, ...).
+# =============================================================================
 services:
   - type: web
     name: ai-semo0o-backend
     runtime: node
-    plan: starter            # a paid plan is required for a persistent disk
-    buildCommand: npm install
+    plan: starter                 # a paid plan is required for a persistent disk
+    region: frankfurt             # change to the region closest to your users
+    buildCommand: npm install     # the backend itself has no runtime deps
     startCommand: node --experimental-sqlite backend/server.mjs
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 22.11.0
+        value: 22.11.0            # node:sqlite needs Node >= 22.5.0
+      - key: NODE_ENV
+        value: production
       - key: BIND_HOST
         value: 0.0.0.0
+      - key: PORT
+        value: 8787
       - key: DISABLE_WORKER
-        value: "0"
+        value: "0"                # keep the background worker running
+      # The DB lives in its OWN subdirectory: the app enforces a 0700 directory
+      # and /var/data itself is not 0700, so pointing straight at /var/data
+      # would raise DATABASE_DIRECTORY_NOT_PRIVATE.
       - key: DATABASE_FILE
-        value: /var/data/agent.sqlite
+        value: /var/data/db/agent.sqlite
       - key: WORKSPACE_ROOT
         value: /var/data/workspace
-      # Set these in the Render dashboard (do NOT commit real secrets):
-      # - key: ALLOWED_ORIGIN            # e.g. https://your-app.vercel.app
-      # - key: PUBLIC_APP_URL
-      # - key: OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY ...
+      # --- Set these in the Render dashboard (do NOT commit real secrets) -----
+      # - key: SECRETS_MASTER_KEY   # 32+ bytes; generate with:
+      #                             # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+      # - key: ALLOWED_ORIGIN       # exact origin of the Vercel frontend, e.g. https://your-app.vercel.app
+      # - key: PUBLIC_APP_URL       # same as ALLOWED_ORIGIN
+      # - key: OPENAI_API_KEY
+      # - key: ANTHROPIC_API_KEY
+      # - key: GEMINI_API_KEY
     disk:
       name: data
       mountPath: /var/data
