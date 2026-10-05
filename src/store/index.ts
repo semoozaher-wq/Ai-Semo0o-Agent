@@ -6,3 +6,4 @@ export * from './useStoreStore';
 export * from './useFilesStore';
 export * from './useWorkspaceStore';
 export * from './useAnalyticsStore';
+export * from './useOperationsStore';
