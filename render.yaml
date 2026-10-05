@@ -10,6 +10,27 @@
 #   3. Render reads this file and creates the service.
 #   4. Fill the secret env vars in the dashboard (SECRETS_MASTER_KEY, ...).
 #
+# THE START COMMAND (read this — it is why Render used to run `node server.js`)
+# -----------------------------------------------------------------------------
+# The ONLY correct Start Command for this backend is:
+#     node --experimental-sqlite backend/server.mjs
+# (`--experimental-sqlite` is required because Node's built-in `node:sqlite` is
+#  still experimental on Node 22.)
+#
+# Render's DEFAULT start command for a Node web service is `node server.js`.
+# Render uses that default whenever a service has NO explicit Start Command,
+# which happens when the service is created MANUALLY (Dashboard -> New ->
+# Web Service). In that case THIS FILE IS IGNORED, and the deploy crashes with:
+#     Running 'node server.js'
+#     Error: Cannot find module '/opt/render/project/src/server.js'
+#
+# => To apply the Start Command below, create the service from THIS Blueprint
+#    (Dashboard -> New -> Blueprint), OR open the existing service and set
+#    Settings -> Start Command to the exact line above, then redeploy.
+#    A root `server.js` compatibility shim is also shipped as a safety net so
+#    that even Render's default command boots the real backend, but the Start
+#    Command below remains the canonical, supported configuration.
+#
 # FREE vs PAID (read this — it is why the app used to crash on Free)
 # -----------------------------------------------------------------------------
 # The Free plan has NO persistent disk, so `/var/data` is never mounted and is
