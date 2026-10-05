@@ -55,6 +55,7 @@ function RootNavigator() {
         <Stack.Screen name="workspace" />
         <Stack.Screen name="anatomy" />
         <Stack.Screen name="analytics" />
+        <Stack.Screen name="operations" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="privacy" />
         <Stack.Screen name="terms" />
