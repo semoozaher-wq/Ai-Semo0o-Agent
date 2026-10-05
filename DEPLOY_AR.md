@@ -74,7 +74,7 @@ EXPO_PUBLIC_BACKEND_URL = https://<اسم-الباك-إند-بتاعك>.onrender
 2. Render هيقرأ `render.yaml` ويعمل:
    - خدمة Web اسمها `ai-semo0o-backend`
    - أمر التشغيل: `node --experimental-sqlite backend/server.mjs`
-   - قرص دائم (Persistent Disk) بحجم 1GB على `/var/data`
+   - الخطة الافتراضية `free` (بدون قرص دائم). لو عايز قرص دائم 1GB على `/var/data`، غيّر `plan` لـ`starter` وشيل التعليق عن بلوك `disk` في `render.yaml`.
 3. بعد الإنشاء، افتح **Environment** واضبط المتغيّرات السرّية (مش موجودة في الملف لأسباب أمنية):
 
 | المتغيّر | القيمة |
@@ -85,6 +85,8 @@ EXPO_PUBLIC_BACKEND_URL = https://<اسم-الباك-إند-بتاعك>.onrender
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | مفاتيح مزوّدي الذكاء الاصطناعي (اختياري) |
 
 > **ملاحظة مهمة عن قاعدة البيانات:** `DATABASE_FILE` مضبوط على `/var/data/db/agent.sqlite` (جوّه مجلد فرعي `db`). ده مقصود: الكود بيفرض إن مجلد قاعدة البيانات يكون بصلاحيات `0700`، ولو حطيت الملف مباشرة في `/var/data` هيطلع خطأ `DATABASE_DIRECTORY_NOT_PRIVATE`.
+>
+> **على خطة Render المجانية (Free):** مفيش قرص دائم، فمسار `/var/data/db` **مش قابل للكتابة**. الكود دلوقتي بيتحقق من قابلية الكتابة **قبل** ما ينشئ المجلد، ولو مش قابل للكتابة بيرجع تلقائيًّا لمسار آمن وقابل للكتابة (`./backend/data/agent.sqlite` وبعده مجلد النظام المؤقت) مع تسجيل تحذير — يعني السيرفر بيقلع بدون خطأ `EACCES`. ملاحظة: على الخطة المجانية قاعدة البيانات مؤقتة (بتتصفّر مع كل نشر). لو عايز تحتفظ بالبيانات، استخدم خطة مدفوعة + القرص الدائم (شيل التعليق عن بلوك `disk` في `render.yaml` وغيّر `plan` لـ`starter`).
 
 ### ب) الطريقة البديلة — Docker (لأي مكان: Fly.io / Railway / Cloud Run / VPS)
 الملف `backend/Dockerfile` جاهز. من جذر المشروع:

@@ -1,0 +1,578 @@
+From 3ed82f01aeda94d079810d0baba70a54b5cd8392 Mon Sep 17 00:00:00 2001
+From: Ai-Semo0o DevOps <devops@ai-semo0o.local>
+Date: Mon, 5 Oct 2026 05:37:43 +0000
+Subject: [PATCH] fix(db): make SQLite path resilient to unwritable /var/data
+ (Render Free EACCES)
+
+Root cause
+- backend/db/client.mjs blindly ran mkdirSync(path.dirname(DATABASE_FILE))
+  at construction time. On Render's Free plan there is no persistent disk,
+  so /var/data is never mounted and is not writable, which aborted boot with
+  'EACCES: permission denied, mkdir /var/data/db'.
+
+Fix
+- Resolve the SQLite path defensively (resolveDatabaseFile): probe the nearest
+  existing ancestor for writability BEFORE creating anything, then walk an
+  ordered fallback chain: DATABASE_FILE -> DATABASE_DIR -> ./backend/data ->
+  os.tmpdir(). Never mkdir a non-writable fixed path; log a warning on fallback.
+- New optional DATABASE_DIR env var (directory instead of full file path).
+- Preserve the 0700 directory / 0600 file privacy guarantees and every schema,
+  migration and tenant/project isolation rule (migrate() unchanged).
+- server.mjs: bind 0.0.0.0 whenever PORT is set (Render/Railway/Fly/Cloud Run),
+  keep loopback for local dev, allow BIND_HOST override; clearer startup log.
+- render.yaml: default to the Free plan with the persistent disk commented out;
+  document how to re-enable persistence on a paid plan.
+- backend/.env.example + DEPLOY_AR.md: document the fallback behaviour.
+- backend/test/db-path.test.mjs: 4 regression tests for the fallback logic.
+
+Tests
+- node --experimental-sqlite --test backend/test/*.mjs -> 49/49 pass.
+- Live boot with read-only /var/data + DATABASE_FILE=/var/data/db/agent.sqlite
+  -> logs fallback, listens on 0.0.0.0, GET /health -> 200 (no EACCES).
+---
+ DEPLOY_AR.md                  | 154 ++++++++++++++++++++++++++++++++++
+ backend/.env.example          |  53 ++++++++++++
+ backend/db/client.mjs         | 109 ++++++++++++++++++++++--
+ backend/server.mjs            |   9 +-
+ backend/test/db-path.test.mjs |  72 ++++++++++++++++
+ render.yaml                   |  74 ++++++++++++++++
+ 6 files changed, 460 insertions(+), 11 deletions(-)
+ create mode 100644 DEPLOY_AR.md
+ create mode 100644 backend/.env.example
+ create mode 100644 backend/test/db-path.test.mjs
+ create mode 100644 render.yaml
+
+diff --git a/DEPLOY_AR.md b/DEPLOY_AR.md
+new file mode 100644
+index 0000000..b6eeaf7
+--- /dev/null
++++ b/DEPLOY_AR.md
+@@ -0,0 +1,154 @@
++# دليل النشر — Ai-Semo0o-Agent (واجهة على Vercel + باك-إند على Render)
++
++> **الخلاصة أولًا:** مشروعك فيه **جزئين مختلفين تمامًا**، وكل جزء له مكان النشر الصحيح:
++>
++> | الجزء | التقنية | مكان النشر الصحيح |
++> |---|---|---|
++> | **الواجهة (Frontend)** | Expo / React Native Web (تصدير ويب ثابت) | **Vercel** ✅ |
++> | **الباك-إند (Backend)** | سيرفر Node طويل المدى + `node:sqlite` + Worker | **Render / Railway / Fly.io / VPS** ✅ (وليس Vercel ❌) |
++>
++> السبب إن Vercel بيشغّل الكود على شكل **Serverless Functions** (بتنتهي بعد ثوانٍ، وقرص للقراءة فقط، ومفيش عمليات خلفية). والباك-إند بتاعك محتاج العكس تمامًا. لما Vercel حاول يبني `backend/server.mjs` كـ Function، طلع الخطأ:
++>
++> ```
++> [RESOLVE_ERROR] Could not resolve './auth/security.mjs'
++> [RESOLVE_ERROR] Could not resolve './auth/lifecycle.mjs'
++> [RESOLVE_ERROR] Could not resolve './queue/queue.mjs'
++> [RESOLVE_ERROR] Could not resolve './runners/code-runner.mjs'
++> ```
++>
++> **ملاحظة مهمة:** الملفات دي **موجودة فعلًا** ومساراتها سليمة 100%. الملفات موجودة في `backend/auth/` و `backend/queue/` و `backend/runners/`. الخطأ سببه إن Vercel **نسخ ملف `server.mjs` لوحده** كـ Function، فمش لاقى الملفات اللي جنبه.
++
++---
++
++## 1) إثبات إن المسارات سليمة (تشغيل سكربت التحقق)
++
++من جذر المشروع:
++
++```bash
++node scripts/verify-imports.mjs backend
++```
++
++النتيجة المتوقعة:
++
++```
++Scanned 34 files under backend
++Relative imports checked: 76
++Broken relative imports: 0
++All relative imports resolve to existing files. ✅
++```
++
++يعني: **صفر مسار مكسور** في الباك-إند. المشكلة مش في الـ import paths، المشكلة في مكان النشر.
++
++---
++
++## 2) نشر الواجهة على Vercel
++
++### أ) الإعدادات داخل المشروع (اتضافت بالفعل)
++- **`vercel.json`** — بيقول لـ Vercel: ابني الواجهة بس (`npm run build` → `dist/`) واعطّل كشف الـ framework التلقائي.
++- **`.vercelignore`** — بيستثني `backend/` وكل الملفات غير الخاصة بالواجهة، فـ Vercel **مش هيلمس الباك-إند خالص** وبالتالي الخطأ هيختفي.
++
++### ب) خطوات النشر
++1. ارفع المشروع على GitHub.
++2. في Vercel: **Add New → Project → Import** الريبو.
++3. **مهم جدًا:** في إعدادات المشروع، خلي **Root Directory = `.` (جذر الريبو)** — **مش** `backend`.
++4. Vercel هيقرأ `vercel.json` تلقائيًا:
++   - Build Command: `npm run build`
++   - Output Directory: `dist`
++5. اضغط **Deploy**.
++
++### ج) متغيّر بيئة (اختياري لكن مفضّل)
++في **Vercel → Settings → Environment Variables** أضف:
++
++```
++EXPO_PUBLIC_BACKEND_URL = https://<اسم-الباك-إند-بتاعك>.onrender.com
++```
++
++ده عنوان الباك-إند اللي الواجهة هتكلّمه.
++
++---
++
++## 3) نشر الباك-إند على Render
++
++### أ) الطريقة الأسهل — Blueprint (ملف `render.yaml` جاهز)
++1. في Render: **New → Blueprint** واختار نفس الريبو.
++2. Render هيقرأ `render.yaml` ويعمل:
++   - خدمة Web اسمها `ai-semo0o-backend`
++   - أمر التشغيل: `node --experimental-sqlite backend/server.mjs`
++   - الخطة الافتراضية `free` (بدون قرص دائم). لو عايز قرص دائم 1GB على `/var/data`، غيّر `plan` لـ`starter` وشيل التعليق عن بلوك `disk` في `render.yaml`.
++3. بعد الإنشاء، افتح **Environment** واضبط المتغيّرات السرّية (مش موجودة في الملف لأسباب أمنية):
++
++| المتغيّر | القيمة |
++|---|---|
++| `SECRETS_MASTER_KEY` | سرّ 32 بايت على الأقل — تولّده بالأمر: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
++| `ALLOWED_ORIGIN` | دومين الواجهة على Vercel، مثال: `https://your-app.vercel.app` |
++| `PUBLIC_APP_URL` | نفس قيمة `ALLOWED_ORIGIN` |
++| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | مفاتيح مزوّدي الذكاء الاصطناعي (اختياري) |
++
++> **ملاحظة مهمة عن قاعدة البيانات:** `DATABASE_FILE` مضبوط على `/var/data/db/agent.sqlite` (جوّه مجلد فرعي `db`). ده مقصود: الكود بيفرض إن مجلد قاعدة البيانات يكون بصلاحيات `0700`، ولو حطيت الملف مباشرة في `/var/data` هيطلع خطأ `DATABASE_DIRECTORY_NOT_PRIVATE`.
++>
++> **على خطة Render المجانية (Free):** مفيش قرص دائم، فمسار `/var/data/db` **مش قابل للكتابة**. الكود دلوقتي بيتحقق من قابلية الكتابة **قبل** ما ينشئ المجلد، ولو مش قابل للكتابة بيرجع تلقائيًّا لمسار آمن وقابل للكتابة (`./backend/data/agent.sqlite` وبعده مجلد النظام المؤقت) مع تسجيل تحذير — يعني السيرفر بيقلع بدون خطأ `EACCES`. ملاحظة: على الخطة المجانية قاعدة البيانات مؤقتة (بتتصفّر مع كل نشر). لو عايز تحتفظ بالبيانات، استخدم خطة مدفوعة + القرص الدائم (شيل التعليق عن بلوك `disk` في `render.yaml` وغيّر `plan` لـ`starter`).
++
++### ب) الطريقة البديلة — Docker (لأي مكان: Fly.io / Railway / Cloud Run / VPS)
++الملف `backend/Dockerfile` جاهز. من جذر المشروع:
++
++```bash
++docker build -f backend/Dockerfile -t ai-semo0o-backend .
++docker run -p 8787:8787 \
++  -e SECRETS_MASTER_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" \
++  -e ALLOWED_ORIGIN="https://your-app.vercel.app" \
++  -v ai_semo0o_data:/data \
++  ai-semo0o-backend
++```
++
++### ج) الطريقة اليدوية (VPS)
++```bash
++# على السيرفر (Node 22.11+)
++git clone <repo> && cd Ai-Semo0o-Agent-master
++cp backend/.env.example backend/.env   # ثم عدّل القيم
++node --experimental-sqlite backend/server.mjs
++```
++
++---
++
++## 4) التحقق من عمل الباك-إند
++
++```bash
++curl https://<backend-url>/health
++# => {"ok":true,"service":"ai-semo0o-agent-backend","version":"2.0.0",...}
++
++curl https://<backend-url>/ready
++# => يوضّح حالة قاعدة البيانات والـ workspace ومزوّدي الـ LLM
++```
++
++---
++
++## 5) المتغيّرات البيئية — مرجع سريع
++
++| المتغيّر | إلزامي في الإنتاج؟ | الوصف |
++|---|---|---|
++| `SECRETS_MASTER_KEY` | ✅ | سرّ 32 بايت+ لتشفير الأسرار |
++| `DATABASE_FILE` | ✅ | مسار مطلق لملف SQLite (جوّه مجلد فرعي خاص) |
++| `WORKSPACE_ROOT` | ✅ | مسار مطلق لمجلد العمل |
++| `ALLOWED_ORIGIN` | ✅ (تحذير لو ناقص) | أصل الواجهة بالضبط، ممنوع `*` |
++| `BIND_HOST` | ⬜ | `0.0.0.0` على السيرفرات |
++| `PORT` | ⬜ | الافتراضي `8787` |
++| `DISABLE_WORKER` | ⬜ | `1` لو الاستضافة تمنع العمليات الخلفية |
++| `NODE_ENV` | ⬜ | `production` |
++| `OPENAI_API_KEY` وغيرها | ⬜ | مزوّدو الـ LLM |
++
++---
++
++## 6) أسئلة شائعة
++
++**س: ليه ما أقدرش أشغّل الباك-إند على Vercel أصلًا؟**
++ج: لأن Vercel Serverless:
++- الدالة بتقف بعد 10–60 ثانية، والباك-إند سيرفر مستمر.
++- القرص للقراءة فقط (ماعدا `/tmp` المؤقت)، وقاعدة `node:sqlite` محتاجة قرص دائم.
++- مفيش عمليات خلفية (الـ Worker/Queue).
++- `node:sqlite` تجريبي ومحتاج فلاج `--experimental-sqlite` مش مضمون على Vercel.
++
++**س: هل أعدّل مسارات الـ import؟**
++ج: لا. المسارات سليمة (0 مكسور). التعديل الوحيد المطلوب كان سطر استيراد ناقص في `server.mjs` (`access` و `fsConstants`) وده **تم إصلاحه بالفعل**.
++
++**س: عايز كل حاجة على Vercel؟**
++ج: ممكن نظريًا بتحويل الباك-إند لدوال Serverless، لكن ده يتطلّب تغيير قاعدة البيانات (مثل Turso/libSQL) وإلغاء الـ Worker — تغيير كبير ومش مستقر. الأفضل فصل النشر زي ما هو موضّح فوق.
+diff --git a/backend/.env.example b/backend/.env.example
+new file mode 100644
+index 0000000..531d6f9
+--- /dev/null
++++ b/backend/.env.example
+@@ -0,0 +1,53 @@
++# =============================================================================
++# backend/.env.example — copy to backend/.env (never commit the real .env)
++# =============================================================================
++# The backend is a long-running Node server. Run it with:
++#   node --experimental-sqlite backend/server.mjs
++# =============================================================================
++
++# --- Runtime -----------------------------------------------------------------
++NODE_ENV=production
++PORT=8787
++BIND_HOST=0.0.0.0
++
++# --- Secrets (REQUIRED in production) ----------------------------------------
++# 32+ bytes. Generate one with:
++#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
++SECRETS_MASTER_KEY=
++
++# --- Storage (REQUIRED in production, must be ABSOLUTE paths) ----------------
++# Put the SQLite file in its OWN subdirectory: the app enforces a 0700 directory
++# and refuses to start if the parent directory is world/group accessible.
++#
++# The client is defensive: if DATABASE_FILE is not writable (for example on a
++# host without a mounted persistent disk, such as Render's Free plan) it does NOT
++# crash — it falls back to ./backend/data/agent.sqlite and then to the OS temp
++# dir, logging a warning. Set DATABASE_DIR instead of DATABASE_FILE if you only
++# have a writable directory to point at.
++DATABASE_FILE=/var/data/db/agent.sqlite
++# DATABASE_DIR=/var/data/db
++WORKSPACE_ROOT=/var/data/workspace
++
++# --- CORS / frontend ---------------------------------------------------------
++# Exact origin of the deployed frontend. Never use "*".
++ALLOWED_ORIGIN=https://your-app.vercel.app
++PUBLIC_APP_URL=https://your-app.vercel.app
++
++# --- Background worker -------------------------------------------------------
++# Set to 1 only on hosts that forbid long-running background tasks.
++DISABLE_WORKER=0
++
++# --- LLM providers (optional) ------------------------------------------------
++OPENAI_API_KEY=
++ANTHROPIC_API_KEY=
++GEMINI_API_KEY=
++GOOGLE_API_KEY=
++TAVILY_API_KEY=
++
++# --- Billing (optional) ------------------------------------------------------
++BILLING_PROVIDER=
++BILLING_WEBHOOK_SECRET=
++
++# --- Observability (optional) ------------------------------------------------
++LOG_FORMAT=json
++LOG_LEVEL=info
+diff --git a/backend/db/client.mjs b/backend/db/client.mjs
+index 1f6f387..8242af3 100644
+--- a/backend/db/client.mjs
++++ b/backend/db/client.mjs
+@@ -1,5 +1,6 @@
+ import { DatabaseSync } from 'node:sqlite';
+-import { readFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
++import { readFileSync, mkdirSync, chmodSync, statSync, accessSync, existsSync, constants as fsConstants } from 'node:fs';
++import os from 'node:os';
+ import path from 'node:path';
+ import { randomUUID, createHash } from 'node:crypto';
+ 
+@@ -7,17 +8,107 @@ const now = () => new Date().toISOString();
+ const id = (prefix) => `${prefix}_${randomUUID()}`;
+ const hash = (value) => createHash('sha256').update(String(value)).digest('hex');
+ 
++const DB_BASENAME = 'agent.sqlite';
++
++// The SQLite file must live in a directory that is BOTH writable by the current
++// process AND private (mode 0700). On hosts without a mounted persistent disk
++// (for example Render's Free plan) a configured path such as
++// `/var/data/db/agent.sqlite` is NOT writable, and blindly `mkdir`-ing it crashed
++// the process at boot with `EACCES: permission denied, mkdir '/var/data/db'`.
++// The helpers below make path resolution defensive: we never attempt to create a
++// directory whose nearest existing ancestor is not writable, and we fall back to a
++// safe writable location instead of crashing.
++
++// Walk up from `target` until we find a directory that actually exists.
++function nearestExistingAncestor(target) {
++  let dir = path.resolve(target);
++  for (;;) {
++    if (existsSync(dir)) return dir;
++    const parent = path.dirname(dir);
++    if (parent === dir) return dir;
++    dir = parent;
++  }
++}
++
++function isWritableDirectory(dir) {
++  try { accessSync(dir, fsConstants.W_OK); return statSync(dir).isDirectory(); } catch { return false; }
++}
++
++// Create the directory if needed and enforce the 0700 privacy guarantee that the
++// rest of the app (tenant/project isolation, secret storage) relies on. A newly
++// created directory is always 0700 (mkdir's mode is not widened by a typical
++// umask); a directory that already exists is validated but never silently
++// re-permissioned, so an operator who loosened it still gets a hard failure.
++function ensurePrivateDirectory(directory) {
++  mkdirSync(directory, { recursive: true, mode: 0o700 });
++  if ((statSync(directory).mode & 0o077) !== 0) {
++    const error = new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
++    error.code = 'DATABASE_DIRECTORY_NOT_PRIVATE';
++    throw error;
++  }
++}
++
++// Ordered list of candidate database files.
++//   1. DATABASE_FILE  — the primary, operator-controlled path (absolute in prod).
++//      Kept first so an existing persistent disk keeps working unchanged.
++//   2. DATABASE_DIR   — optional convenience for hosts that only expose a writable
++//      directory rather than a full file path.
++//   3. ./backend/data — project-relative, already git-ignored; writable on Render
++//      Free (the repo checkout is writable even without a disk).
++//   4. os.tmpdir()    — last-resort location that is always writable, so the
++//      process can still boot (e.g. read-only container root).
++export function databaseFileCandidates(env = process.env) {
++  const candidates = [];
++  if (env.DATABASE_FILE) candidates.push(env.DATABASE_FILE);
++  if (env.DATABASE_DIR) candidates.push(path.join(env.DATABASE_DIR, DB_BASENAME));
++  candidates.push(path.resolve('backend', 'data', DB_BASENAME));
++  candidates.push(path.join(os.tmpdir(), 'semo0o', DB_BASENAME));
++  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
++}
++
++// Resolve the first candidate whose directory can be created and made private.
++// This never throws EACCES: unusable candidates are skipped, and the caller only
++// sees a classified DATABASE_FILE_UNWRITABLE error if every candidate fails.
++export function resolveDatabaseFile(env = process.env, { logger = console } = {}) {
++  const attempts = [];
++  const configured = env.DATABASE_FILE ? path.resolve(env.DATABASE_FILE) : null;
++  for (const file of databaseFileCandidates(env)) {
++    const directory = path.dirname(file);
++    const ancestor = nearestExistingAncestor(directory);
++    if (!isWritableDirectory(ancestor)) {
++      attempts.push(`${file} (not writable: ${ancestor})`);
++      continue;
++    }
++    try {
++      ensurePrivateDirectory(directory);
++    } catch (error) {
++      attempts.push(`${file} (${error.code || error.message})`);
++      continue;
++    }
++    if (configured && file !== configured) {
++      logger.warn?.(`db: configured DATABASE_FILE '${configured}' is not writable; falling back to '${file}'`);
++    }
++    return file;
++  }
++  const error = new Error(`DATABASE_FILE_UNWRITABLE:${attempts.join(' | ')}`);
++  error.code = 'DATABASE_FILE_UNWRITABLE';
++  error.attempts = attempts;
++  throw error;
++}
++
+ export class Database {
+-  constructor(filename = process.env.DATABASE_FILE ?? path.resolve('data/agent.sqlite')) {
+-    const directory = path.dirname(filename);
+-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+-    if ((statSync(directory).mode & 0o077) !== 0) {
+-      const error = new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
+-      error.code = 'DATABASE_DIRECTORY_NOT_PRIVATE';
++  constructor(filename = resolveDatabaseFile()) {
++    this.file = path.resolve(filename);
++    ensurePrivateDirectory(path.dirname(this.file));
++    this.db = new DatabaseSync(this.file);
++    try { chmodSync(this.file, 0o600); }
++    catch (cause) {
++      this.db.close();
++      const error = new Error('DATABASE_FILE_NOT_PRIVATE');
++      error.code = 'DATABASE_FILE_NOT_PRIVATE';
++      error.cause = cause;
+       throw error;
+     }
+-    this.db = new DatabaseSync(filename);
+-    chmodSync(filename, 0o600);
+     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+     this.migrate();
+   }
+diff --git a/backend/server.mjs b/backend/server.mjs
+index 0ae4847..a144c76 100644
+--- a/backend/server.mjs
++++ b/backend/server.mjs
+@@ -1,5 +1,6 @@
+ import { createServer } from 'node:http';
+-import { mkdir } from 'node:fs/promises';
++import { access, mkdir } from 'node:fs/promises';
++import { constants as fsConstants } from 'node:fs';
+ import path from 'node:path';
+ import { Database, id, now } from './db/client.mjs';
+ import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
+@@ -457,8 +458,12 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
+   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
+   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
+   const port = Number(process.env.PORT || 8787);
++  // Hosted platforms (Render, Fly.io, Railway, Cloud Run, ...) always inject PORT
++  // and require the process to bind 0.0.0.0 so the router can reach it. Local
++  // development keeps the safer loopback default unless BIND_HOST is set.
++  const host = process.env.BIND_HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
+   const shutdown = () => { app.queue.stop(); app.server.close(() => db.close()); };
+   process.once('SIGTERM', shutdown);
+   process.once('SIGINT', shutdown);
+-  app.server.listen(port, process.env.BIND_HOST || '127.0.0.1', () => console.log(`backend listening on ${port}`));
++  app.server.listen(port, host, () => console.log(`backend listening on ${host}:${port} (db: ${db.file})`));
+ }
+diff --git a/backend/test/db-path.test.mjs b/backend/test/db-path.test.mjs
+new file mode 100644
+index 0000000..c61ed95
+--- /dev/null
++++ b/backend/test/db-path.test.mjs
+@@ -0,0 +1,72 @@
++import assert from 'node:assert/strict';
++import { chmod, mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
++import os from 'node:os';
++import path from 'node:path';
++import test from 'node:test';
++import { Database, databaseFileCandidates, resolveDatabaseFile } from '../db/client.mjs';
++
++// A path whose nearest existing ancestor is a *file* (not a directory) can never
++// be made writable. This reproduces the Render Free situation (`/var/data` is not
++// writable) in a way that is independent of the user running the tests, so the
++// "skip an unwritable path" logic is exercised deterministically.
++async function unwritablePath(directory) {
++  const blocker = path.join(directory, 'blocker');
++  await writeFile(blocker, 'not a directory');
++  return path.join(blocker, 'db', 'agent.sqlite');
++}
++
++test('databaseFileCandidates keeps DATABASE_FILE first and appends safe fallbacks', () => {
++  const candidates = databaseFileCandidates({ DATABASE_FILE: '/var/data/db/agent.sqlite', DATABASE_DIR: '/var/data/db2' });
++  assert.equal(candidates[0], path.resolve('/var/data/db/agent.sqlite'));
++  assert.equal(candidates[1], path.resolve('/var/data/db2/agent.sqlite'));
++  assert.ok(candidates.includes(path.resolve('backend', 'data', 'agent.sqlite')));
++  assert.ok(candidates.includes(path.join(os.tmpdir(), 'semo0o', 'agent.sqlite')));
++  assert.equal(new Set(candidates).size, candidates.length, 'candidates must be de-duplicated');
++});
++
++test('resolveDatabaseFile skips an unwritable DATABASE_FILE and falls back to DATABASE_DIR', async () => {
++  const directory = await mkdtemp(path.join(os.tmpdir(), 'semo0o-dbpath-'));
++  try {
++    const bad = await unwritablePath(directory);
++    const goodDir = path.join(directory, 'good');
++    await mkdir(goodDir, { mode: 0o700 });
++    const resolved = resolveDatabaseFile({ DATABASE_FILE: bad, DATABASE_DIR: goodDir }, { logger: { warn() {} } });
++    assert.equal(resolved, path.join(goodDir, 'agent.sqlite'));
++    assert.equal((await stat(goodDir)).mode & 0o777, 0o700);
++  } finally { await rm(directory, { recursive: true, force: true }); }
++});
++
++test('Database boots without EACCES when DATABASE_FILE is unwritable (Render Free)', async () => {
++  const directory = await mkdtemp(path.join(os.tmpdir(), 'semo0o-dbpath-boot-'));
++  const saved = { DATABASE_FILE: process.env.DATABASE_FILE, DATABASE_DIR: process.env.DATABASE_DIR };
++  try {
++    const bad = await unwritablePath(directory);
++    const goodDir = path.join(directory, 'good');
++    await mkdir(goodDir, { mode: 0o700 });
++    process.env.DATABASE_FILE = bad;
++    process.env.DATABASE_DIR = goodDir;
++    const db = new Database();
++    try {
++      assert.equal(db.file, path.join(goodDir, 'agent.sqlite'));
++      assert.equal((await stat(db.file)).mode & 0o777, 0o600);
++      assert.equal(db.get('SELECT COUNT(*) AS count FROM tenants').count, 0);
++    } finally { db.close(); }
++  } finally {
++    if (saved.DATABASE_FILE === undefined) delete process.env.DATABASE_FILE; else process.env.DATABASE_FILE = saved.DATABASE_FILE;
++    if (saved.DATABASE_DIR === undefined) delete process.env.DATABASE_DIR; else process.env.DATABASE_DIR = saved.DATABASE_DIR;
++    await rm(directory, { recursive: true, force: true });
++  }
++});
++
++test('resolveDatabaseFile rejects an existing world/group-accessible directory', async () => {
++  const directory = await mkdtemp(path.join(os.tmpdir(), 'semo0o-dbpath-shared-'));
++  try {
++    const shared = path.join(directory, 'shared');
++    const goodDir = path.join(directory, 'good');
++    await mkdir(shared, { mode: 0o700 });
++    await mkdir(goodDir, { mode: 0o700 });
++    await chmod(shared, 0o755);
++    const resolved = resolveDatabaseFile({ DATABASE_FILE: path.join(shared, 'agent.sqlite'), DATABASE_DIR: goodDir }, { logger: { warn() {} } });
++    assert.equal(resolved, path.join(goodDir, 'agent.sqlite'));
++  } finally { await rm(directory, { recursive: true, force: true }); }
++});
+diff --git a/render.yaml b/render.yaml
+new file mode 100644
+index 0000000..daec524
+--- /dev/null
++++ b/render.yaml
+@@ -0,0 +1,74 @@
++# =============================================================================
++# render.yaml — Blueprint for the Ai-Semo0o-Agent BACKEND on Render.
++# =============================================================================
++# Vercel cannot run this backend (long-running Node server + node:sqlite +
++# writable disk + background worker). Render / Railway / Fly.io / a VPS can.
++#
++# HOW TO USE
++#   1. Push this repository to GitHub.
++#   2. Render Dashboard -> New -> Blueprint -> pick this repo.
++#   3. Render reads this file and creates the service.
++#   4. Fill the secret env vars in the dashboard (SECRETS_MASTER_KEY, ...).
++#
++# FREE vs PAID (read this — it is why the app used to crash on Free)
++# -----------------------------------------------------------------------------
++# The Free plan has NO persistent disk, so `/var/data` is never mounted and is
++# NOT writable. The old configuration pointed DATABASE_FILE at
++# `/var/data/db/agent.sqlite`, and the database client blindly tried to
++# `mkdir /var/data/db`, which aborted the process at boot with:
++#     EACCES: permission denied, mkdir '/var/data/db'
++# The database client is now defensive: it verifies that the target directory is
++# writable and, if not, automatically falls back to a writable location
++# (./backend/data/agent.sqlite, then the OS temp dir). So this blueprint boots on
++# the Free plan out of the box — the SQLite file just lives on the ephemeral
++# filesystem (data is reset on every deploy).
++#
++# To KEEP the database across deploys, use a paid plan and re-enable the
++# persistent disk: set `plan:` to `starter` (or higher) and uncomment the `disk:`
++# block at the bottom of this file.
++# =============================================================================
++services:
++  - type: web
++    name: ai-semo0o-backend
++    runtime: node
++    plan: free                    # Free works now (no disk). Use `starter`+disk for persistence.
++    region: frankfurt             # change to the region closest to your users
++    buildCommand: npm install     # the backend itself has no runtime deps
++    startCommand: node --experimental-sqlite backend/server.mjs
++    healthCheckPath: /health
++    autoDeploy: true
++    envVars:
++      - key: NODE_VERSION
++        value: 22.11.0            # node:sqlite needs Node >= 22.5.0
++      - key: NODE_ENV
++        value: production
++      - key: BIND_HOST
++        value: 0.0.0.0            # the server also defaults to 0.0.0.0 whenever PORT is set
++      - key: PORT
++        value: 8787
++      - key: DISABLE_WORKER
++        value: "0"                # keep the background worker running
++      # Primary database path. On a paid plan + persistent disk this is writable
++      # and persistent. On the Free plan it is NOT writable, so the client
++      # transparently falls back to ./backend/data/agent.sqlite (ephemeral).
++      # Set DATABASE_DIR instead of DATABASE_FILE if you prefer a directory.
++      - key: DATABASE_FILE
++        value: /var/data/db/agent.sqlite
++      - key: WORKSPACE_ROOT
++        value: /var/data/workspace
++      # --- Set these in the Render dashboard (do NOT commit real secrets) -----
++      # - key: SECRETS_MASTER_KEY   # 32+ bytes; generate with:
++      #                             # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
++      # - key: ALLOWED_ORIGIN       # exact origin of the Vercel frontend, e.g. https://your-app.vercel.app
++      # - key: PUBLIC_APP_URL       # same as ALLOWED_ORIGIN
++      # - key: OPENAI_API_KEY
++      # - key: ANTHROPIC_API_KEY
++      # - key: GEMINI_API_KEY
++    # --- OPTIONAL: persistent disk (requires a PAID plan) ---------------------
++    # Uncomment this block AND set `plan:` above to `starter` (or higher) to keep
++    # the SQLite database across deploys. On the Free plan there is no disk, so
++    # leave it commented out.
++    # disk:
++    #   name: data
++    #   mountPath: /var/data
++    #   sizeGB: 1
+-- 
+2.39.5
+
