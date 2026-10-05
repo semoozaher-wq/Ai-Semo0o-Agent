@@ -82,6 +82,40 @@ export function runtimeDefaultCandidates() {
   };
 }
 
+// Ordered candidate workspace roots, mirroring `databaseFileCandidates()` in
+// db/client.mjs:
+//   1. WORKSPACE_ROOT  — the operator-controlled path (kept first so a real
+//      persistent disk keeps working unchanged).
+//   2. <repo>/backend/data/workspace — project-relative and git-ignored; writable
+//      on Render Free (the checkout is writable even without a mounted disk).
+//   3. <tmp>/semo0o/workspace — always-writable last resort, so project creation
+//      can never fail with EACCES just because the configured disk is absent.
+export function workspaceRootCandidates(env = process.env) {
+  const candidates = [];
+  if (env.WORKSPACE_ROOT) candidates.push(env.WORKSPACE_ROOT);
+  candidates.push(...runtimeDefaultCandidates().WORKSPACE_ROOT);
+  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+// Resolve the first candidate workspace root that is writable, creating it when
+// needed. Never throws EACCES: an unusable configured root (for example
+// `/var/data/workspace` on Render's Free plan, where no disk is mounted) is
+// skipped and a safe container default is returned instead. This is the workspace
+// analogue of `resolveDatabaseFile()` and is what stops `POST /projects` from
+// crashing with a 500 when WORKSPACE_ROOT points at an unmounted disk.
+export function resolveWritableWorkspaceRoot(env = process.env, { logger = console } = {}) {
+  const configured = env.WORKSPACE_ROOT ? path.resolve(env.WORKSPACE_ROOT) : null;
+  for (const dir of workspaceRootCandidates(env)) {
+    if (isWritableDirectory(dir) || ensureDirectory(dir)) {
+      if (configured && dir !== configured) {
+        logger.warn?.(`env: configured WORKSPACE_ROOT '${configured}' is not writable; falling back to '${dir}'`);
+      }
+      return dir;
+    }
+  }
+  return null;
+}
+
 // Returns the defaults that WOULD be applied (does not mutate `env`).
 export function resolveRuntimeDefaults(env = process.env) {
   const candidates = runtimeDefaultCandidates();
@@ -99,11 +133,23 @@ export function resolveRuntimeDefaults(env = process.env) {
 
 // Fills missing storage paths in `env` (defaults to process.env) and logs each
 // default it applies. Returns the map of applied defaults.
+//
+// It also REPAIRS a `WORKSPACE_ROOT` that is set but not writable (e.g. an
+// unmounted `/var/data/workspace` on Render's Free plan): the configured value is
+// replaced with the first writable container default. An explicit *writable* root
+// is never touched, so operators who mount a real disk keep their path.
 export function applyRuntimeDefaults(env = process.env, { logger = console } = {}) {
   const defaults = resolveRuntimeDefaults(env);
   for (const [key, value] of Object.entries(defaults)) {
     env[key] = value;
     logger.warn?.(`env: ${key} was not set; using container default '${value}'`);
+  }
+  if (env.WORKSPACE_ROOT) {
+    const writable = resolveWritableWorkspaceRoot(env, { logger });
+    if (writable && path.resolve(writable) !== path.resolve(env.WORKSPACE_ROOT)) {
+      env.WORKSPACE_ROOT = writable;
+      defaults.WORKSPACE_ROOT = writable;
+    }
   }
   return defaults;
 }
