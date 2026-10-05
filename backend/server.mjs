@@ -16,7 +16,7 @@ import { MemoryStore } from './memory/store.mjs';
 import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
 import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
-import { applyRuntimeDefaults } from './config/runtime-defaults.mjs';
+import { applyRuntimeDefaults, resolveWritableWorkspaceRoot } from './config/runtime-defaults.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
 
 const SERVICE_VERSION = '2.0.0';
@@ -153,10 +153,18 @@ function usageSummary(db, tenantId, days = 30) {
   return { period, days: safeDays, quota, counter, daily: merged, totals, generatedAt: now() };
 }
 function resolveWorkspaceRoot(requested, projectId) {
-  const configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
-  // Fail closed in production: without a configured WORKSPACE_ROOT an operator could
-  // let a client point a workspace at an arbitrary absolute path (e.g. /etc) and then
-  // read/write outside the intended sandbox. Dev/test keep the permissive fallback.
+  let configured = process.env.WORKSPACE_ROOT ? path.resolve(process.env.WORKSPACE_ROOT) : null;
+  // A configured root may point at an unmounted/unwritable path (for example
+  // `/var/data/workspace` on Render's Free plan, where no disk is mounted). Left
+  // as-is, every `POST /projects` failed with EACCES -> 500 INTERNAL_ERROR, which
+  // is exactly why the Semo AI UI showed "فشل التشغيل التنفيذي عبر الـBackend"
+  // before the agent run ever started. Repair it to a writable container default
+  // (mirroring the database path fallback). Fail closed only when NO root is
+  // configured in production: an operator must opt in to a workspace.
+  if (configured) {
+    const writable = resolveWritableWorkspaceRoot(process.env);
+    if (writable) configured = writable;
+  }
   if (!configured && process.env.NODE_ENV === 'production') throw new Error('WORKSPACE_ROOT_REQUIRED');
   const candidate = requested ? path.resolve(requested) : configured ? path.join(configured, projectId) : null;
   if (!candidate) throw new Error('WORKSPACE_ROOT_REQUIRED');
