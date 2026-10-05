@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { resolveBackendUrl } from './backend-url';
 
 export interface ApiUser { id: string; tenantId: string; email: string; role: string }
 export interface ApiSession { token: string; expiresAt: string }
@@ -55,7 +56,7 @@ function randomSecret(): string {
 class BackendApiClient {
   private token: string | null = null;
   private user: ApiUser | null = null;
-  constructor(private readonly baseUrl = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_BACKEND_URL) || '') {}
+  constructor(private readonly baseUrl = resolveBackendUrl()) {}
   get enabled(): boolean { return Boolean(this.baseUrl); }
   setSession(session: ApiSession | null, user?: ApiUser): void { this.token = session?.token ?? null; if (user) this.user = user; }
   clearSession(): void { this.token = null; this.user = null; }
