@@ -236,15 +236,29 @@ export function SystemStatusCard() {
               emptyLabel="لا توجد أدوات جاهزة."
             />
             <CapabilityGroup
+              icon="hourglass-outline"
+              title="جزئية (تعمل بحدود — تحتاج مزودًا/مفتاحًا)"
+              tone="warning"
+              ids={tools.partial ?? []}
+              emptyLabel="لا توجد أدوات جزئية."
+            />
+            <CapabilityGroup
               icon="lock-closed-outline"
               title="غير مُهيأة (تتطلب بيانات اعتماد)"
               tone="warning"
               ids={tools.unwired ?? []}
               emptyLabel="كل الأدوات مُهيأة."
             />
+            <CapabilityGroup
+              icon="bug-outline"
+              title="فاشلة (خطأ تشغيلي — تتطلب إصلاحًا)"
+              tone="danger"
+              ids={tools.failed ?? []}
+              emptyLabel="لا توجد أدوات فاشلة."
+            />
             {summary ? (
               <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.md }}>
-                الإجمالي: {summary.live} جاهزة · {summary.unwired} غير مُهيأة · {summary.dangerous} تتطلب موافقة
+                الإجمالي: {summary.live} جاهزة · {summary.partial} جزئية · {summary.unwired} غير مُهيأة · {summary.failed} فاشلة · {summary.dangerous} تتطلب موافقة
               </Text>
             ) : null}
           </>
