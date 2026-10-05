@@ -458,8 +458,12 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
   const port = Number(process.env.PORT || 8787);
+  // Hosted platforms (Render, Fly.io, Railway, Cloud Run, ...) always inject PORT
+  // and require the process to bind 0.0.0.0 so the router can reach it. Local
+  // development keeps the safer loopback default unless BIND_HOST is set.
+  const host = process.env.BIND_HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
   const shutdown = () => { app.queue.stop(); app.server.close(() => db.close()); };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
-  app.server.listen(port, process.env.BIND_HOST || '127.0.0.1', () => console.log(`backend listening on ${port}`));
+  app.server.listen(port, host, () => console.log(`backend listening on ${host}:${port} (db: ${db.file})`));
 }
