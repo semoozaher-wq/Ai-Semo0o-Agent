@@ -19,13 +19,17 @@ export interface ApiUsageSummary {
   totals: { tokens: number; costUsd: number; runs: number; messages: number };
   generatedAt: string;
 }
-export interface ApiToolStatusSummary { live: number; unwired: number; catalogOnly: number; simulated: number; dangerous: number }
+export interface ApiToolStatusSummary { live: number; partial: number; unwired: number; catalogOnly: number; simulated: number; failed: number; dangerous: number }
+export interface ApiToolDetail { id: string; state: string; reason: string | null }
 export interface ApiToolsStatus {
   live: string[];
+  partial: string[];
   catalogOnly: string[];
   simulated: string[];
   unwired: string[];
+  failed: string[];
   dangerous: string[];
+  tools?: ApiToolDetail[];
   summary?: ApiToolStatusSummary;
 }
 export interface ApiModelProvider { id?: string; name?: string; configured: boolean; healthy?: boolean; [key: string]: unknown }
@@ -43,6 +47,37 @@ export interface ApiReadyReport {
   providers?: ApiModelProvider[];
 }
 export interface ApiHealth { ok: boolean; service: string; version?: string; uptimeSeconds?: number; time: string }
+
+export interface ApiMember { userId: string; email: string; role: string; status: string; joinedAt: string }
+export interface ApiInvitation { invitationId: string; email: string; role: string; expiresAt: string; acceptedAt: string | null; createdAt: string; invitedByEmail?: string | null }
+export interface ApiSelfImproveSample { toolId?: string; error?: string; runId?: string; at?: string }
+export interface ApiSelfImproveSignal { signature: string; category: string; occurrences: number; samples: ApiSelfImproveSample[] }
+export interface ApiSelfImprovePatch { kind: string; toolId?: string; target?: string; hint?: string; note?: string; maxAttempts?: number; [key: string]: unknown }
+export interface ApiSelfImproveProposal {
+  id: string;
+  tenantId: string;
+  scope: string;
+  signature: string;
+  category: string;
+  kind: string;
+  status: string;
+  severity: string;
+  title: string;
+  rationale: string;
+  patch: ApiSelfImprovePatch;
+  evidence: { occurrences?: number; windowHours?: number; samples?: ApiSelfImproveSample[]; [key: string]: unknown };
+  regression: Record<string, unknown> | null;
+  occurrences: number;
+  createdBy: string;
+  decidedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  appliedAt?: string | null;
+  rolledBackAt?: string | null;
+}
+export interface ApiSelfImproveEvent { id: string; proposalId: string | null; phase: string; detail: Record<string, unknown>; createdAt: string }
+export interface ApiOutboxEmail { id: string; to: string; template: string; subject: string; status: string; attempts: number; error: string | null; createdAt: string; sentAt: string | null }
+export interface ApiOutboxResponse { providerConfigured: boolean; emails: ApiOutboxEmail[] }
 
 type StoredBootstrap = { email: string; password: string };
 
@@ -122,6 +157,11 @@ class BackendApiClient {
   async confirmMfa(code: string): Promise<{ enabled: boolean }> { return this.request('/auth/mfa/confirm', { method: 'POST', body: JSON.stringify({ code }) }); }
   async inviteMember(email: string, role: 'admin' | 'member' | 'viewer' = 'member'): Promise<{ invitationId: string; expiresAt: string; delivery: string }> { return this.request('/org/invitations', { method: 'POST', body: JSON.stringify({ email, role }) }); }
   async acceptInvitation(token: string): Promise<Record<string, unknown>> { return this.request('/org/invitations/accept', { method: 'POST', body: JSON.stringify({ token }) }); }
+  async listMembers(): Promise<{ members: ApiMember[] }> { return this.request<{ members: ApiMember[] }>('/org/members'); }
+  async updateMemberRole(userId: string, role: 'admin' | 'member' | 'viewer'): Promise<{ member: { userId: string; role: string; status: string } }> { return this.request(`/org/members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role }) }); }
+  async removeMember(userId: string): Promise<Record<string, unknown>> { return this.request(`/org/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }); }
+  async listInvitations(): Promise<{ invitations: ApiInvitation[] }> { return this.request<{ invitations: ApiInvitation[] }>('/org/invitations'); }
+  async revokeInvitation(invitationId: string): Promise<Record<string, unknown>> { return this.request(`/org/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE' }); }
   async createProject(input: { name: string; rootPath?: string }): Promise<ApiProject> { return this.request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(input) }); }
   async chat(input: { message: string; model?: string }): Promise<ApiChatResponse> { return this.request<ApiChatResponse>('/chat', { method: 'POST', body: JSON.stringify(input) }); }
   async createRun(input: Record<string, unknown>): Promise<ApiRun> { return this.request<ApiRun>('/runs', { method: 'POST', body: JSON.stringify(input) }); }
@@ -132,6 +172,18 @@ class BackendApiClient {
   async getBillingStatus(): Promise<ApiBillingStatus> { return this.request<ApiBillingStatus>('/billing/status'); }
   async getHealth(): Promise<ApiHealth> { return this.request<ApiHealth>('/health'); }
   async getReady(): Promise<{ status: number; report: ApiReadyReport }> { const { status, body } = await this.requestTolerant<ApiReadyReport>('/ready'); return { status, report: body }; }
+  async getSelfImproveSignals(windowHours = 168): Promise<{ signals: ApiSelfImproveSignal[]; windowHours: number }> { return this.request(`/self-improve/signals?windowHours=${encodeURIComponent(String(windowHours))}`); }
+  async analyzeSelfImprove(input: { windowHours?: number; minOccurrences?: number } = {}): Promise<{ signals: ApiSelfImproveSignal[]; proposals: ApiSelfImproveProposal[] }> { return this.request('/self-improve/analyze', { method: 'POST', body: JSON.stringify(input) }); }
+  async listSelfImproveProposals(status?: string): Promise<{ proposals: ApiSelfImproveProposal[] }> { const query = status ? `?status=${encodeURIComponent(status)}` : ''; return this.request<{ proposals: ApiSelfImproveProposal[] }>(`/self-improve/proposals${query}`); }
+  async getSelfImproveProposal(proposalId: string): Promise<{ proposal: ApiSelfImproveProposal; events: ApiSelfImproveEvent[] }> { return this.request(`/self-improve/proposals/${encodeURIComponent(proposalId)}`); }
+  async approveProposal(proposalId: string): Promise<{ proposal: ApiSelfImproveProposal }> { return this.request(`/self-improve/proposals/${encodeURIComponent(proposalId)}/approve`, { method: 'POST' }); }
+  async rejectProposal(proposalId: string, reason = ''): Promise<{ proposal: ApiSelfImproveProposal }> { return this.request(`/self-improve/proposals/${encodeURIComponent(proposalId)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }); }
+  async rollbackProposal(proposalId: string, reason = 'manual rollback'): Promise<{ proposal: ApiSelfImproveProposal }> { return this.request(`/self-improve/proposals/${encodeURIComponent(proposalId)}/rollback`, { method: 'POST', body: JSON.stringify({ reason }) }); }
+  async runSelfImproveMonitor(): Promise<{ checked: { proposalId: string; signature: string; occurrences: number; regressed: boolean }[]; rolledBack: ApiSelfImproveProposal[] }> { return this.request('/self-improve/monitor', { method: 'POST' }); }
+  async getSelfImproveHistory(): Promise<{ events: ApiSelfImproveEvent[] }> { return this.request<{ events: ApiSelfImproveEvent[] }>('/self-improve/history'); }
+  async getOutbox(status?: string): Promise<ApiOutboxResponse> { const query = status ? `?status=${encodeURIComponent(status)}` : ''; return this.request<ApiOutboxResponse>(`/notifications/outbox${query}`); }
+  async processOutbox(): Promise<{ providerConfigured: boolean; provider?: string; processed: number; sent: number; failed: number; queued: number }> { return this.request('/notifications/outbox/process', { method: 'POST' }); }
+  async runRetention(): Promise<Record<string, unknown>> { return this.request('/ops/retention/run', { method: 'POST' }); }
   async approve(runId: string, decision: 'allow' | 'deny' | 'cancel'): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/approval`, { method: 'POST', body: JSON.stringify({ decision }) }); }
   async cancel(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }); }
   async retry(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }); }
