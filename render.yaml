@@ -31,6 +31,21 @@
 #    that even Render's default command boots the real backend, but the Start
 #    Command below remains the canonical, supported configuration.
 #
+# ENVIRONMENT VARIABLES (read this — it is why the app used to fail with
+# ENV_VALIDATION_FAILED:MISSING_SECRETS_MASTER_KEY,MISSING_DATABASE_FILE,MISSING_WORKSPACE_ROOT)
+# -----------------------------------------------------------------------------
+# The backend requires three values in production:
+#   * SECRETS_MASTER_KEY — a REAL secret. NO default, never committed. Add it in
+#                          the dashboard (Environment -> Add Env Var). Generate:
+#                          node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+#   * DATABASE_FILE      — absolute path to the SQLite file.
+#   * WORKSPACE_ROOT     — absolute path to the agent workspace.
+# DATABASE_FILE and WORKSPACE_ROOT are NON-secret storage paths and now have safe
+# container defaults (backend/config/runtime-defaults.mjs): when unset they resolve
+# to `<repo>/backend/data/...` (writable on Render Free), falling back to the OS
+# temp dir. So the ONLY value you must add by hand is SECRETS_MASTER_KEY. Set the
+# two storage vars only to override the default (e.g. a paid-plan persistent disk).
+#
 # FREE vs PAID (read this — it is why the app used to crash on Free)
 # -----------------------------------------------------------------------------
 # The Free plan has NO persistent disk, so `/var/data` is never mounted and is
@@ -71,22 +86,32 @@ services:
       #   value: 8787
       - key: DISABLE_WORKER
         value: "0"                # keep the background worker running
-      # Primary database path. On a paid plan + persistent disk this is writable
-      # and persistent. On the Free plan it is NOT writable, so the client
-      # transparently falls back to ./backend/data/agent.sqlite (ephemeral).
-      # Set DATABASE_DIR instead of DATABASE_FILE if you prefer a directory.
-      - key: DATABASE_FILE
-        value: /var/data/db/agent.sqlite
-      - key: WORKSPACE_ROOT
-        value: /var/data/workspace
+      # --- Storage (OPTIONAL — the backend has safe container defaults) -------
+      # Leave these UNSET for the Free plan. When they are not set, the backend
+      # fills them at boot (backend/config/runtime-defaults.mjs) with a writable,
+      # container-appropriate path:
+      #     DATABASE_FILE  -> <repo>/backend/data/agent.sqlite   (falls back to <tmp>/semo0o)
+      #     WORKSPACE_ROOT -> <repo>/backend/data/workspace      (falls back to <tmp>/semo0o/workspace)
+      # `<repo>/backend/data` is git-ignored and writable on Render Free, so the
+      # service boots with no persistent disk. The SQLite client keeps its own
+      # fallback chain if the chosen path turns out to be unwritable.
+      #
+      # Only set them to OVERRIDE the default — typically to use a persistent disk
+      # on a PAID plan (uncomment the `disk:` block at the bottom, set `plan:` to
+      # `starter`+, and uncomment the two vars below).
+      # - key: DATABASE_FILE
+      #   value: /var/data/db/agent.sqlite
+      # - key: WORKSPACE_ROOT
+      #   value: /var/data/workspace
       # --- Set these in the Render dashboard (do NOT commit real secrets) -----
-      # - key: SECRETS_MASTER_KEY   # 32+ bytes; generate with:
-      #                             # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+      # SECRETS_MASTER_KEY is REQUIRED in production and has NO default: generate a
+      # real 32+ byte value and add it in the dashboard (Environment -> Add Env Var).
+      #   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+      # - key: SECRETS_MASTER_KEY
       # - key: ALLOWED_ORIGIN       # exact origin of the Vercel frontend, e.g. https://your-app.vercel.app
       # - key: PUBLIC_APP_URL       # same as ALLOWED_ORIGIN
       # - key: OPENAI_API_KEY
       # - key: ANTHROPIC_API_KEY
-      # - key: GEMINI_API_KEY
     # --- OPTIONAL: persistent disk (requires a PAID plan) ---------------------
     # Uncomment this block AND set `plan:` above to `starter` (or higher) to keep
     # the SQLite database across deploys. On the Free plan there is no disk, so
