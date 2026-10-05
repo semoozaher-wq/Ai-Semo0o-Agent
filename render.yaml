@@ -43,9 +43,11 @@ services:
       - key: NODE_ENV
         value: production
       - key: BIND_HOST
-        value: 0.0.0.0            # the server also defaults to 0.0.0.0 whenever PORT is set
-      - key: PORT
-        value: 8787
+        value: 0.0.0.0            # the server also FORCES 0.0.0.0 on Render whenever PORT is set
+      # Do NOT hardcode PORT: Render injects it automatically (usually 10000) and
+      # its port-scanner probes exactly that port. The server reads process.env.PORT.
+      # - key: PORT
+      #   value: 8787
       - key: DISABLE_WORKER
         value: "0"                # keep the background worker running
       # Primary database path. On a paid plan + persistent disk this is writable
