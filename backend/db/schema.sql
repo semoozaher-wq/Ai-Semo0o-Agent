@@ -290,3 +290,84 @@ CREATE INDEX IF NOT EXISTS idx_evidence_run ON evidence(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_time ON audit_logs(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_run_events_run_time ON run_events(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_run_usage_tenant_time ON run_usage(tenant_id, created_at);
+
+-- ===========================================================================
+-- Self-improvement / self-healing engine (tenant-scoped, human-gated).
+-- The engine observes its own run outcomes, diagnoses recurring failures, and
+-- proposes bounded, security-preserving remediations. Nothing here can modify
+-- authentication, authorization, permissions, billing, or tenant isolation.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS self_improve_proposals (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL CHECK (scope IN ('tenant','platform')) DEFAULT 'tenant',
+  signature TEXT NOT NULL,
+  category TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('tool_disable','planner_hint','retry_policy','limit_adjust','knowledge_note')),
+  status TEXT NOT NULL CHECK (status IN ('proposed','applied','rejected','rolled_back','regressed')) DEFAULT 'proposed',
+  severity TEXT NOT NULL CHECK (severity IN ('low','medium','high')),
+  title TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  patch_json TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  regression_json TEXT,
+  occurrences INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  decided_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  applied_at TEXT,
+  rolled_back_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS self_improve_overrides (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL CHECK (scope IN ('tenant','platform')) DEFAULT 'tenant',
+  kind TEXT NOT NULL,
+  target TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  proposal_id TEXT REFERENCES self_improve_proposals(id) ON DELETE SET NULL,
+  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS self_improve_events (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  proposal_id TEXT,
+  phase TEXT NOT NULL,
+  detail_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_self_improve_proposals_tenant ON self_improve_proposals(tenant_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_self_improve_proposals_signature ON self_improve_proposals(tenant_id, signature);
+CREATE INDEX IF NOT EXISTS idx_self_improve_overrides_lookup ON self_improve_overrides(tenant_id, kind, target, active);
+CREATE INDEX IF NOT EXISTS idx_self_improve_events_tenant ON self_improve_events(tenant_id, created_at);
+
+-- ===========================================================================
+-- Transactional email outbox (durable queue; provider is fail-closed).
+-- Account tokens / invitations are written here so delivery is a real, auditable
+-- step instead of an in-memory claim. A provider adapter must be configured for
+-- any message to reach 'sent'; otherwise it stays 'queued' and never lies.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS email_outbox (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+  to_email TEXT NOT NULL,
+  template TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','sent','failed','suppressed')) DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  provider_id TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  sent_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_outbox_status ON email_outbox(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_email_outbox_tenant ON email_outbox(tenant_id, created_at);
