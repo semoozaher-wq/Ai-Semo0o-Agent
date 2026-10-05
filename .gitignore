@@ -1,28 +1,70 @@
-# Dependencies
-node_modules/
+=============================================================================
 
-# Expo and local development state
+.vercelignore — Vercel builds ONLY the Expo web frontend from this repository.
+
+=============================================================================
+
+WHY THIS FILE EXISTS
+
+The backend (backend/) is a LONG-RUNNING Node HTTP server. It needs:
+
+* node:sqlite + the --experimental-sqlite flag
+
+* a writable, private (0700) directory for the SQLite file
+
+* a background worker process (queue)
+
+None of that is possible on Vercel Serverless Functions, so Vercel must never
+
+try to bundle backend/*.mjs. When it does, the bundler copies only the entry
+
+file and then fails to resolve the sibling relative imports, producing:
+
+[RESOLVE_ERROR] Could not resolve './auth/security.mjs'
+
+[RESOLVE_ERROR] Could not resolve './auth/lifecycle.mjs'
+
+[RESOLVE_ERROR] Could not resolve './queue/queue.mjs'
+
+[RESOLVE_ERROR] Could not resolve './runners/code-runner.mjs'
+
+Excluding the backend here removes it from the Vercel build entirely.
+
+=============================================================================
+
+Backend + all non-frontend code
+
+backend/
+legacy/
+execution-core/
+phase2-core/
+scripts/
+test/
+docs/
+infra/
+data/
+
+
+Tooling / CI / caches
+
+node_modules/
 .expo/
 .expo-shared/
-
-# Build outputs and caches
-web-build/
+.github/
 coverage/
 *.tsbuildinfo
 
-# Local environment and secrets
+
+Docs & archives (never shipped to the CDN)
+
+*.md
+*.zip
+*.sqlite
+*.sqlite-*
+
+
+Local secrets (defence in depth — these are also git-ignored)
+
 .env
 .env.*
 !.env.example
-*.local
-
-# Operating-system/editor files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Backend runtime data
-backend/data/
-backend/*.sqlite
-backend/*.sqlite-*
