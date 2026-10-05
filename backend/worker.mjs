@@ -6,7 +6,11 @@ import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost } from './runtime-shared.mjs';
 import { assertEnv } from './config/env.mjs';
+import { applyRuntimeDefaults } from './config/runtime-defaults.mjs';
 
+// Same storage defaults as the server: fill DATABASE_FILE / WORKSPACE_ROOT when
+// unset (never SECRETS_MASTER_KEY), then run the full production validation.
+applyRuntimeDefaults();
 assertEnv();
 if (process.env.NODE_ENV === 'production') process.umask(0o077);
 const db = new Database();

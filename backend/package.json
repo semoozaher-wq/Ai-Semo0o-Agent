@@ -6,10 +6,10 @@
   "scripts": {
     "test": "npm run test:legacy-harness && npm run test:execution && npm run test:phase1",
     "test:legacy-harness": "tsx test/harness.ts",
-    "test:execution": "node --test test/*.test.mjs",
+    "test:execution": "node --experimental-sqlite --test test/*.test.mjs",
     "test:phase2": "node --test test/phase2-core.test.mjs",
     "test:phase1": "tsx --test test/phase1-orchestrator.test.ts test/code-run-integration.test.ts",
-    "test:backend": "node --test backend/test/*.test.mjs",
+    "test:backend": "node --experimental-sqlite --test backend/test/*.test.mjs",
     "start:backend": "node backend/server.mjs",
     "start": "expo start",
     "android": "expo start --android",

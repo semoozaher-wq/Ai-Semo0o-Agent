@@ -16,6 +16,7 @@ import { MemoryStore } from './memory/store.mjs';
 import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
 import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
+import { applyRuntimeDefaults } from './config/runtime-defaults.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
 
 const SERVICE_VERSION = '2.0.0';
@@ -454,6 +455,11 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
+  // Fill the two NON-SECRET storage paths (DATABASE_FILE / WORKSPACE_ROOT) with
+  // container-appropriate defaults before validation, so the backend boots on a
+  // host that does not set them. SECRETS_MASTER_KEY is never defaulted: the
+  // production secret check below stays fully enforced.
+  applyRuntimeDefaults();
   assertEnv();
   const db = new Database();
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
