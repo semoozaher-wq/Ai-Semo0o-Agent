@@ -15,6 +15,7 @@ import { modelCost, normalizeModelId } from './models/catalog.mjs';
 import { MemoryStore } from './memory/store.mjs';
 import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
 import { assertEnv } from './config/env.mjs';
+import { resolveBindHost } from './config/bind.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
 
 const SERVICE_VERSION = '2.0.0';
@@ -458,12 +459,16 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
   const port = Number(process.env.PORT || 8787);
-  // Hosted platforms (Render, Fly.io, Railway, Cloud Run, ...) always inject PORT
-  // and require the process to bind 0.0.0.0 so the router can reach it. Local
-  // development keeps the safer loopback default unless BIND_HOST is set.
-  const host = process.env.BIND_HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
+  // Render (and every other container host) injects PORT and requires the process
+  // to bind 0.0.0.0 so its router and port-scanner can reach it. resolveBindHost
+  // FORCES 0.0.0.0 on Render (never 127.0.0.1/localhost) and whenever PORT is set;
+  // only a plain local run keeps the loopback default.
+  const host = resolveBindHost();
   const shutdown = () => { app.queue.stop(); app.server.close(() => db.close()); };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
-  app.server.listen(port, host, () => console.log(`backend listening on ${host}:${port} (db: ${db.file})`));
+  app.server.listen(port, host, () => {
+    console.log(`backend listening on ${host}:${port}`);
+    console.log(`backend database: ${db.file}`);
+  });
 }
