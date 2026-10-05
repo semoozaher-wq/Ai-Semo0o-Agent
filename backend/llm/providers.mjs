@@ -9,6 +9,7 @@ function usage(raw = {}) {
     raw.prompt_tokens ??
     raw.input_tokens ??
     raw.promptTokenCount ??
+    raw.promptTokenCount ??
     0
   );
 
@@ -21,6 +22,7 @@ function usage(raw = {}) {
 
   const totalTokens = Number(
     raw.total_tokens ??
+    raw.totalTokenCount ??
     raw.totalTokenCount ??
     promptTokens + completionTokens
   );
@@ -219,6 +221,114 @@ async function openaiComplete({
   return openAiMessage(payload);
 }
 
+function geminiText(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (
+    value &&
+    typeof value === 'object'
+  ) {
+    return JSON.stringify(value);
+  }
+
+  return String(value ?? '');
+}
+
+function sanitizeGeminiSchema(schema) {
+  if (
+    !schema ||
+    typeof schema !== 'object'
+  ) {
+    return {
+      type: 'OBJECT',
+    };
+  }
+
+  const allowed = new Set([
+    'type',
+    'format',
+    'description',
+    'nullable',
+    'enum',
+    'items',
+    'properties',
+    'required',
+    'propertyOrdering',
+  ]);
+
+  const output = {};
+
+  for (const [
+    key,
+    value,
+  ] of Object.entries(schema)) {
+    if (!allowed.has(key)) {
+      continue;
+    }
+
+    if (key === 'properties' && value && typeof value === 'object') {
+      output.properties = Object.fromEntries(
+        Object.entries(value).map(
+          ([name, property]) => [
+            name,
+            sanitizeGeminiSchema(property),
+          ]
+        )
+      );
+      continue;
+    }
+
+    if (key === 'items') {
+      output.items =
+        sanitizeGeminiSchema(value);
+      continue;
+    }
+
+    output[key] = value;
+  }
+
+  if (typeof output.type === 'string') {
+    output.type =
+      output.type.toUpperCase();
+  }
+
+  return output;
+}
+
+function geminiFunctionDeclarations(
+  tools
+) {
+  return (tools ?? [])
+    .map((tool) => {
+      const fn = tool?.function;
+
+      if (!fn?.name) {
+        return null;
+      }
+
+      return {
+        name: fn.name,
+        ...(fn.description
+          ? {
+              description:
+                fn.description,
+            }
+          : {}),
+        parameters:
+          fn.parameters
+            ? sanitizeGeminiSchema(
+                fn.parameters
+              )
+            : {
+                type: 'OBJECT',
+              },
+      };
+    })
+    .filter(Boolean);
+}
+
 async function geminiComplete({
   apiKey,
   model,
@@ -226,77 +336,120 @@ async function geminiComplete({
   tools,
   signal,
 }) {
-  const contents = messages
-    .filter(
-      (message) =>
-        message.role !== 'system'
-    )
-    .map((message) => ({
-      role:
-        message.role === 'assistant'
-          ? 'model'
-          : 'user',
+  const sourceMessages =
+    Array.isArray(messages)
+      ? messages
+      : [];
+
+  const systemParts =
+    sourceMessages
+      .filter(
+        (message) =>
+          message?.role === 'system'
+      )
+      .map((message) => ({
+        text: geminiText(
+          message?.content
+        ),
+      }))
+      .filter(
+        (part) =>
+          part.text.trim().length > 0
+      );
+
+  const contents =
+    sourceMessages
+      .filter(
+        (message) =>
+          message?.role !== 'system'
+      )
+      .map((message) => {
+        const role =
+          message?.role === 'assistant'
+            ? 'model'
+            : 'user';
+
+        return {
+          role,
+          parts: [
+            {
+              text: geminiText(
+                message?.content
+              ),
+            },
+          ],
+        };
+      })
+      .filter(
+        (message) =>
+          message.parts.some(
+            (part) =>
+              typeof part.text ===
+                'string' &&
+              part.text.length > 0
+          )
+      );
+
+  /*
+   * Gemini requires contents to contain at least
+   * one user/model content. Keep the request valid
+   * even if the caller only supplied system messages.
+   */
+  if (!contents.length) {
+    contents.push({
+      role: 'user',
       parts: [
         {
-          text:
-            typeof message.content === 'string'
-              ? message.content
-              : JSON.stringify(
-                  message.content ?? ''
-                ),
+          text: 'Continue.',
         },
       ],
-    }));
-
-  const systemInstruction = messages
-    .filter(
-      (message) =>
-        message.role === 'system'
-    )
-    .map((message) => ({
-      text:
-        typeof message.content === 'string'
-          ? message.content
-          : JSON.stringify(
-              message.content ?? ''
-            ),
-    }));
+    });
+  }
 
   const body = {
-    ...(systemInstruction.length
+    ...(systemParts.length
       ? {
-          systemInstruction: {
-            parts: systemInstruction,
+          system_instruction: {
+            parts: systemParts,
           },
         }
       : {}),
     contents,
   };
 
-  if (tools?.length) {
+  const functionDeclarations =
+    geminiFunctionDeclarations(
+      tools
+    );
+
+  if (functionDeclarations.length) {
     body.tools = [
       {
-        functionDeclarations: tools
-          .map(
-            (tool) =>
-              tool?.function
-          )
-          .filter(Boolean),
+        functionDeclarations,
       },
     ];
+
+    body.tool_config = {
+      function_calling_config: {
+        mode: 'AUTO',
+      },
+    };
   }
 
-  const payload = await requestJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
+  const payload =
+    await requestJson(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type':
+            'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    },
-    { signal }
-  );
+      { signal }
+    );
 
   const candidate =
     payload?.candidates?.[0];
@@ -307,9 +460,13 @@ async function geminiComplete({
   const text = parts
     .filter(
       (part) =>
-        typeof part?.text === 'string'
+        typeof part?.text ===
+        'string'
     )
-    .map((part) => part.text)
+    .map(
+      (part) =>
+        part.text
+    )
     .join('');
 
   const toolCalls = parts
@@ -733,4 +890,4 @@ export function createLLMRouter(
       );
     },
   };
-}
+    }
