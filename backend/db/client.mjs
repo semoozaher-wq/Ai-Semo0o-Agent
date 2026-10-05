@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
+import { readFileSync, mkdirSync, chmodSync, statSync, accessSync, existsSync, constants as fsConstants } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -7,17 +8,107 @@ const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${randomUUID()}`;
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex');
 
+const DB_BASENAME = 'agent.sqlite';
+
+// The SQLite file must live in a directory that is BOTH writable by the current
+// process AND private (mode 0700). On hosts without a mounted persistent disk
+// (for example Render's Free plan) a configured path such as
+// `/var/data/db/agent.sqlite` is NOT writable, and blindly `mkdir`-ing it crashed
+// the process at boot with `EACCES: permission denied, mkdir '/var/data/db'`.
+// The helpers below make path resolution defensive: we never attempt to create a
+// directory whose nearest existing ancestor is not writable, and we fall back to a
+// safe writable location instead of crashing.
+
+// Walk up from `target` until we find a directory that actually exists.
+function nearestExistingAncestor(target) {
+  let dir = path.resolve(target);
+  for (;;) {
+    if (existsSync(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return dir;
+    dir = parent;
+  }
+}
+
+function isWritableDirectory(dir) {
+  try { accessSync(dir, fsConstants.W_OK); return statSync(dir).isDirectory(); } catch { return false; }
+}
+
+// Create the directory if needed and enforce the 0700 privacy guarantee that the
+// rest of the app (tenant/project isolation, secret storage) relies on. A newly
+// created directory is always 0700 (mkdir's mode is not widened by a typical
+// umask); a directory that already exists is validated but never silently
+// re-permissioned, so an operator who loosened it still gets a hard failure.
+function ensurePrivateDirectory(directory) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if ((statSync(directory).mode & 0o077) !== 0) {
+    const error = new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
+    error.code = 'DATABASE_DIRECTORY_NOT_PRIVATE';
+    throw error;
+  }
+}
+
+// Ordered list of candidate database files.
+//   1. DATABASE_FILE  — the primary, operator-controlled path (absolute in prod).
+//      Kept first so an existing persistent disk keeps working unchanged.
+//   2. DATABASE_DIR   — optional convenience for hosts that only expose a writable
+//      directory rather than a full file path.
+//   3. ./backend/data — project-relative, already git-ignored; writable on Render
+//      Free (the repo checkout is writable even without a disk).
+//   4. os.tmpdir()    — last-resort location that is always writable, so the
+//      process can still boot (e.g. read-only container root).
+export function databaseFileCandidates(env = process.env) {
+  const candidates = [];
+  if (env.DATABASE_FILE) candidates.push(env.DATABASE_FILE);
+  if (env.DATABASE_DIR) candidates.push(path.join(env.DATABASE_DIR, DB_BASENAME));
+  candidates.push(path.resolve('backend', 'data', DB_BASENAME));
+  candidates.push(path.join(os.tmpdir(), 'semo0o', DB_BASENAME));
+  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+// Resolve the first candidate whose directory can be created and made private.
+// This never throws EACCES: unusable candidates are skipped, and the caller only
+// sees a classified DATABASE_FILE_UNWRITABLE error if every candidate fails.
+export function resolveDatabaseFile(env = process.env, { logger = console } = {}) {
+  const attempts = [];
+  const configured = env.DATABASE_FILE ? path.resolve(env.DATABASE_FILE) : null;
+  for (const file of databaseFileCandidates(env)) {
+    const directory = path.dirname(file);
+    const ancestor = nearestExistingAncestor(directory);
+    if (!isWritableDirectory(ancestor)) {
+      attempts.push(`${file} (not writable: ${ancestor})`);
+      continue;
+    }
+    try {
+      ensurePrivateDirectory(directory);
+    } catch (error) {
+      attempts.push(`${file} (${error.code || error.message})`);
+      continue;
+    }
+    if (configured && file !== configured) {
+      logger.warn?.(`db: configured DATABASE_FILE '${configured}' is not writable; falling back to '${file}'`);
+    }
+    return file;
+  }
+  const error = new Error(`DATABASE_FILE_UNWRITABLE:${attempts.join(' | ')}`);
+  error.code = 'DATABASE_FILE_UNWRITABLE';
+  error.attempts = attempts;
+  throw error;
+}
+
 export class Database {
-  constructor(filename = process.env.DATABASE_FILE ?? path.resolve('data/agent.sqlite')) {
-    const directory = path.dirname(filename);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    if ((statSync(directory).mode & 0o077) !== 0) {
-      const error = new Error('DATABASE_DIRECTORY_NOT_PRIVATE');
-      error.code = 'DATABASE_DIRECTORY_NOT_PRIVATE';
+  constructor(filename = resolveDatabaseFile()) {
+    this.file = path.resolve(filename);
+    ensurePrivateDirectory(path.dirname(this.file));
+    this.db = new DatabaseSync(this.file);
+    try { chmodSync(this.file, 0o600); }
+    catch (cause) {
+      this.db.close();
+      const error = new Error('DATABASE_FILE_NOT_PRIVATE');
+      error.code = 'DATABASE_FILE_NOT_PRIVATE';
+      error.cause = cause;
       throw error;
     }
-    this.db = new DatabaseSync(filename);
-    chmodSync(filename, 0o600);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.migrate();
   }
