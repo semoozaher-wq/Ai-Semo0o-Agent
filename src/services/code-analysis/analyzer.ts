@@ -16,8 +16,8 @@ export interface CodeIssue {
   severity: Severity;
   rule: string;
   message: string;
-  suggestion?: string;
-  fix?: CodeFix;
+  suggestion?: string | undefined;
+  fix?: CodeFix | undefined;
 }
 
 export interface AnalysisResult {
