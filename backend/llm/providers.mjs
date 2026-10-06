@@ -672,6 +672,322 @@ async function anthropicComplete({
   };
 }
 
+// -----------------------------------------------------------------------------
+// Streaming (Server-Sent Events) support.
+//
+// `POST /chat/stream` consumes `llm.stream(...)` as an async generator of frames:
+//   { type: 'token', text }                          -> an incremental answer chunk
+//   { type: 'done', text, usage, provider, model }   -> the terminal frame
+//
+// Each provider is streamed in its own native wire format and normalised to the
+// frames above. Streaming is a transport optimisation, never a hard requirement:
+// when the runtime cannot expose a readable body, `readSse` throws
+// `LLM_STREAM_UNSUPPORTED` and the router falls back to a buffered completion.
+// -----------------------------------------------------------------------------
+
+function parseSseBlock(block) {
+  const lines = block.split('\n');
+  let event;
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).replace(/^ /, ''));
+    }
+  }
+
+  if (!dataLines.length) {
+    return null;
+  }
+
+  return { event, data: dataLines.join('\n') };
+}
+
+async function* readSse(response) {
+  const body = response.body;
+
+  if (!body || typeof body.getReader !== 'function') {
+    const error = new Error('LLM_STREAM_UNSUPPORTED: response body is not a readable stream');
+    error.code = 'LLM_STREAM_UNSUPPORTED';
+    throw error;
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    // Normalise CRLF so both `\n\n` and `\r\n\r\n` frame separators are handled.
+    buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed) yield parsed;
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+
+  const trailing = parseSseBlock(buffer);
+  if (trailing) yield trailing;
+}
+
+async function readStreamError(response, context) {
+  const text = await response.text().catch(() => '');
+  let payload = {};
+
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text.slice(0, 1000) };
+  }
+
+  return buildHttpError(response.status, payload, context);
+}
+
+async function* openaiStream({
+  apiKey,
+  model,
+  messages,
+  tools,
+  signal,
+  baseUrl = 'https://api.openai.com/v1',
+}) {
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const timeout = withTimeout(signal);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
+      }),
+      signal: timeout.signal,
+    });
+
+    if (!response.ok) {
+      throw await readStreamError(response, { provider: 'openai', model, endpoint: url });
+    }
+
+    let usageRaw = null;
+    let text = '';
+
+    for await (const event of readSse(response)) {
+      if (!event.data || event.data === '[DONE]') continue;
+
+      let chunk;
+      try {
+        chunk = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      const delta = chunk?.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string' && delta.length) {
+        text += delta;
+        yield { type: 'token', text: delta };
+      }
+
+      if (chunk?.usage) usageRaw = chunk.usage;
+    }
+
+    yield { type: 'done', text, usage: usage(usageRaw ?? {}), provider: 'openai' };
+  } finally {
+    timeout.close();
+  }
+}
+
+async function* anthropicStream({ apiKey, model, messages, tools, signal }) {
+  const system = (messages ?? [])
+    .filter((message) => message.role === 'system')
+    .map((message) => (typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? '')))
+    .join('\n\n');
+
+  const inputMessages = (messages ?? [])
+    .filter((message) => message.role !== 'system')
+    .map((message) => ({
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? ''),
+    }));
+
+  const body = {
+    model,
+    max_tokens: 4096,
+    stream: true,
+    messages: inputMessages,
+    ...(system ? { system } : {}),
+  };
+
+  if (tools?.length) {
+    body.tools = tools
+      .map((tool) => tool?.function)
+      .filter(Boolean)
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.parameters ?? { type: 'object' },
+      }));
+  }
+
+  const url = 'https://api.anthropic.com/v1/messages';
+  const timeout = withTimeout(signal);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+      },
+      body: JSON.stringify(body),
+      signal: timeout.signal,
+    });
+
+    if (!response.ok) {
+      throw await readStreamError(response, { provider: 'anthropic', model, endpoint: url });
+    }
+
+    let usageRaw = null;
+    let text = '';
+
+    for await (const event of readSse(response)) {
+      if (!event.data) continue;
+
+      let chunk;
+      try {
+        chunk = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      if (event.event === 'content_block_delta' && typeof chunk?.delta?.text === 'string') {
+        text += chunk.delta.text;
+        yield { type: 'token', text: chunk.delta.text };
+      } else if (event.event === 'message_start' && chunk?.message?.usage) {
+        usageRaw = { ...(usageRaw ?? {}), ...chunk.message.usage };
+      } else if (event.event === 'message_delta' && chunk?.usage) {
+        usageRaw = { ...(usageRaw ?? {}), ...chunk.usage };
+      }
+    }
+
+    yield { type: 'done', text, usage: usage(usageRaw ?? {}), provider: 'anthropic' };
+  } finally {
+    timeout.close();
+  }
+}
+
+async function* geminiStream({ apiKey, model, messages, tools, signal }) {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+
+  const systemParts = sourceMessages
+    .filter((message) => message?.role === 'system')
+    .map((message) => ({ text: geminiText(message?.content) }))
+    .filter((part) => part.text.trim().length > 0);
+
+  const contents = sourceMessages
+    .filter((message) => message?.role !== 'system')
+    .map((message) => ({
+      role: message?.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: geminiText(message?.content) }],
+    }))
+    .filter((message) => message.parts.some((part) => typeof part.text === 'string' && part.text.length > 0));
+
+  if (!contents.length) {
+    contents.push({ role: 'user', parts: [{ text: 'Continue.' }] });
+  }
+
+  const body = {
+    ...(systemParts.length ? { system_instruction: { parts: systemParts } } : {}),
+    contents,
+  };
+
+  const functionDeclarations = geminiFunctionDeclarations(tools);
+  if (functionDeclarations.length) {
+    body.tools = [{ functionDeclarations }];
+    body.tool_config = { function_calling_config: { mode: 'AUTO' } };
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
+  const timeout = withTimeout(signal);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': apiKey,
+        accept: 'text/event-stream',
+      },
+      body: JSON.stringify(body),
+      signal: timeout.signal,
+    });
+
+    if (!response.ok) {
+      throw await readStreamError(response, { provider: 'gemini', model, endpoint: url });
+    }
+
+    let usageRaw = null;
+    let text = '';
+
+    for await (const event of readSse(response)) {
+      if (!event.data) continue;
+
+      let chunk;
+      try {
+        chunk = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      const parts = chunk?.candidates?.[0]?.content?.parts ?? [];
+      for (const part of parts) {
+        if (typeof part?.text === 'string' && part.text.length) {
+          text += part.text;
+          yield { type: 'token', text: part.text };
+        }
+      }
+
+      if (chunk?.usageMetadata) usageRaw = chunk.usageMetadata;
+    }
+
+    yield { type: 'done', text, usage: usage(usageRaw ?? {}), provider: 'gemini' };
+  } finally {
+    timeout.close();
+  }
+}
+
+async function* streamProvider({ provider, model, input }) {
+  if (provider.id === 'gemini') {
+    yield* geminiStream({ ...input, apiKey: provider.key, model });
+    return;
+  }
+
+  if (provider.id === 'anthropic') {
+    yield* anthropicStream({ ...input, apiKey: provider.key, model });
+    return;
+  }
+
+  yield* openaiStream({ ...input, apiKey: provider.key, baseUrl: provider.baseUrl, model });
+}
+
 export function createLLMRouter(
   env = process.env
 ) {
@@ -973,6 +1289,89 @@ export function createLLMRouter(
       throw lastError ?? new Error(
         `NO_HEALTHY_LLM_PROVIDER:${normalized}:${requestedFamily}`
       );
+    },
+
+    /*
+     * Streaming counterpart of `complete`. It resolves the exact same
+     * provider/model pair (a model is only ever streamed to a provider that
+     * serves its family; an unconfigured family is transparently remapped to a
+     * compatible model) and yields normalised frames:
+     *   { type: 'token', text }  and a terminal { type: 'done', ... }.
+     *
+     * If the runtime cannot stream the provider response, it degrades to a
+     * single-shot completion delivered as one token frame, so the endpoint
+     * always produces a valid SSE response.
+     */
+    async *stream(input = {}) {
+      if (!providers.length) {
+        const error = new Error(
+          'NO_SERVER_LLM_PROVIDER_CONFIGURED: set at least one of OPENAI_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY), ANTHROPIC_API_KEY'
+        );
+        error.code = 'NO_SERVER_LLM_PROVIDER_CONFIGURED';
+        throw error;
+      }
+
+      const normalized = normalizeModelId(input.model);
+      const requestedFamily = modelProvider(normalized);
+      const familyProvider = getProvider(requestedFamily);
+
+      let provider;
+      let model;
+      let substituted;
+
+      if (familyProvider) {
+        provider = familyProvider;
+        model = normalized;
+        substituted = false;
+      } else {
+        provider =
+          providers.find(
+            (item) => (health.get(item.id)?.unavailableUntil ?? 0) <= Date.now()
+          ) ?? providers[0];
+        model = compatibleModelFor(provider);
+        substituted = true;
+      }
+
+      // Hard invariant: never stream a model to a provider that does not serve it.
+      if (!isModelCompatible(model, provider.id)) {
+        throw new Error(
+          `LLM_MODEL_PROVIDER_MISMATCH: provider=${provider.id} model=${model}`
+        );
+      }
+
+      try {
+        for await (const frame of streamProvider({ provider, model, input })) {
+          if (frame.type === 'done') {
+            markSuccess(provider);
+            yield { ...frame, model, requestedModel: normalized, substituted };
+          } else {
+            yield frame;
+          }
+        }
+      } catch (error) {
+        if (error?.code === 'LLM_STREAM_UNSUPPORTED') {
+          const result = await executeProvider({ provider, model, input });
+          markSuccess(provider);
+
+          if (result.text) {
+            yield { type: 'token', text: result.text };
+          }
+
+          yield {
+            type: 'done',
+            text: result.text,
+            usage: result.usage,
+            provider: provider.id,
+            model,
+            requestedModel: normalized,
+            substituted,
+          };
+          return;
+        }
+
+        markFailure(provider);
+        throw error;
+      }
     },
   };
 }
