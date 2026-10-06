@@ -43,6 +43,8 @@ export function purgeTenant(db, tenantId) {
     del('runs', 'DELETE FROM runs WHERE tenant_id=?', tenantId);
     del('tasks', 'DELETE FROM tasks WHERE tenant_id=?', tenantId);
     del('messages', 'DELETE FROM messages WHERE tenant_id=?', tenantId);
+    del('chat_messages', 'DELETE FROM chat_messages WHERE tenant_id=?', tenantId);
+    del('conversations', 'DELETE FROM conversations WHERE tenant_id=?', tenantId);
     del('embeddings', 'DELETE FROM embeddings WHERE document_id IN (SELECT id FROM documents WHERE tenant_id=?)', tenantId);
     del('documents', 'DELETE FROM documents WHERE tenant_id=?', tenantId);
     del('workspaces', 'DELETE FROM workspaces WHERE project_id IN (SELECT id FROM projects WHERE tenant_id=?)', tenantId);
