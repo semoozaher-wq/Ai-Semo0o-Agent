@@ -157,7 +157,7 @@ export function BodyMap({
             fill,
             stroke: isSelected ? theme.colors.primary : stroke,
             strokeWidth: isSelected ? 2 : 1,
-            onPress: isNeutral ? undefined : () => onSelectGroup(s.group),
+            ...(isNeutral ? {} : { onPress: () => onSelectGroup(s.group) }),
           } as const;
 
           if (s.kind === 'ellipse') {
@@ -169,7 +169,7 @@ export function BodyMap({
                 rx={s.rx}
                 ry={s.ry}
                 {...common}
-                accessibilityLabel={isNeutral ? undefined : `اختيار مجموعة ${s.group}`}
+                {...(isNeutral ? {} : { accessibilityLabel: `اختيار مجموعة ${s.group}` })}
               />
             );
           }
@@ -182,7 +182,7 @@ export function BodyMap({
               height={s.h}
               rx={s.r}
               {...common}
-              accessibilityLabel={isNeutral ? undefined : `اختيار مجموعة ${s.group}`}
+              {...(isNeutral ? {} : { accessibilityLabel: `اختيار مجموعة ${s.group}` })}
             />
           );
         })}
