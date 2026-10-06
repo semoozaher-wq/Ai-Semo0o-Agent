@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { resolveBackendUrl } from './backend-url';
+import { consumeSse } from './sse';
 
 export interface ApiUser { id: string; tenantId: string; email: string; role: string }
 export interface ApiSession { token: string; expiresAt: string }
@@ -8,6 +9,20 @@ export interface ApiProject { projectId: string; workspaceId: string }
 export interface ApiRun { runId: string; taskId: string; status: string }
 export interface ApiRunSnapshot { status: string; result?: { final?: string; outputs?: unknown[]; error?: string } | null; events?: { type: string; payload_json: string }[]; usage?: unknown[] }
 export interface ApiChatResponse { text: string; provider: string; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }
+export interface ApiChatStreamFrame {
+  type: string;
+  text?: string;
+  conversationId?: string;
+  userMessageId?: string;
+  assistantMessageId?: string;
+  provider?: string;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  error?: string;
+  chars?: number;
+  [key: string]: unknown;
+}
+export interface ApiChatConversation { id: string; title: string; mode: string; status: string; project_id?: string | null; last_message_at?: string | null; created_at: string; updated_at: string }
+export interface ApiRecoverableConversation { conversationId: string; title: string; interrupted: number }
 export interface ApiEvent { type: string; at?: string; stepId?: string; toolId?: string; approvalId?: string; title?: string; reason?: string; final?: string; steps?: number; details?: Record<string, unknown>; [key: string]: unknown }
 export interface ApiUsagePoint { date: string; tokens: number; costUsd: number; runs: number; messages: number }
 export interface ApiUsageSummary {
@@ -164,6 +179,29 @@ class BackendApiClient {
   async revokeInvitation(invitationId: string): Promise<Record<string, unknown>> { return this.request(`/org/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE' }); }
   async createProject(input: { name: string; rootPath?: string }): Promise<ApiProject> { return this.request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(input) }); }
   async chat(input: { message: string; model?: string }): Promise<ApiChatResponse> { return this.request<ApiChatResponse>('/chat', { method: 'POST', body: JSON.stringify(input) }); }
+  // Streams a chat reply over Server-Sent Events. Each `event:`/`data:` pair is
+  // normalised into an `ApiChatStreamFrame` (`start` | `token` | `done` | `error`).
+  // The caller accumulates `token` frames; `start` carries the durable
+  // conversation/assistant ids so the client can reconcile after a reload.
+  async chatStream(
+    input: { message: string; model?: string; conversationId?: string },
+    onFrame: (frame: ApiChatStreamFrame) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(input),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    await consumeSse(response, ({ event, data }) => {
+      onFrame({ type: event, ...(data as Record<string, unknown>) } as ApiChatStreamFrame);
+    });
+  }
+  async listConversations(): Promise<{ conversations: ApiChatConversation[] }> { return this.request<{ conversations: ApiChatConversation[] }>('/conversations'); }
+  async getRecoverableChats(): Promise<{ conversations: ApiRecoverableConversation[] }> { return this.request<{ conversations: ApiRecoverableConversation[] }>('/chat/recoverable'); }
+  async recoverChat(conversationId: string): Promise<{ recovered: { id: string; conversationId: string; content: string }[] }> { return this.request(`/conversations/${encodeURIComponent(conversationId)}/recover`, { method: 'POST' }); }
   async createRun(input: Record<string, unknown>): Promise<ApiRun> { return this.request<ApiRun>('/runs', { method: 'POST', body: JSON.stringify(input) }); }
   async getRun(runId: string): Promise<ApiRunSnapshot> { return this.request<ApiRunSnapshot>(`/runs/${encodeURIComponent(runId)}`); }
   async getUsage(days = 30): Promise<ApiUsageSummary> { return this.request<ApiUsageSummary>(`/usage?days=${encodeURIComponent(String(days))}`); }
@@ -190,21 +228,8 @@ class BackendApiClient {
   async pause(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/pause`, { method: 'POST' }); }
   async resume(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/resume`, { method: 'POST' }); }
   async streamEvents(runId: string, onEvent: (event: ApiEvent) => void, signal?: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`, { headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, signal });
-    if (!response.ok || !response.body) throw new Error(`BACKEND_SSE_${response.status}`);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      buffer += decoder.decode(next.value, { stream: true });
-      const chunks = buffer.split('\n\n'); buffer = chunks.pop() ?? '';
-      for (const chunk of chunks) {
-        const data = chunk.split('\n').find((line) => line.startsWith('data: '))?.slice(6);
-        if (data) { try { onEvent(JSON.parse(data) as ApiEvent); } catch { /* ignore malformed event */ } }
-      }
-    }
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`, { headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
+    await consumeSse(response, ({ data }) => onEvent(data as ApiEvent));
   }
 }
 
