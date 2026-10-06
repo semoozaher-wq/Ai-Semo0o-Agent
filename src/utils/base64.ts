@@ -11,7 +11,10 @@ const B64_ALPHABET =
 
 const B64_LOOKUP: Record<string, number> = (() => {
   const table: Record<string, number> = {};
-  for (let i = 0; i < B64_ALPHABET.length; i += 1) table[B64_ALPHABET[i]] = i;
+  for (let i = 0; i < B64_ALPHABET.length; i += 1) {
+    const ch = B64_ALPHABET[i];
+    if (ch !== undefined) table[ch] = i;
+  }
   return table;
 })();
 
@@ -48,21 +51,22 @@ function toBytes(input: string): Uint8Array {
 function fromBytes(bytes: Uint8Array): string {
   let out = '';
   for (let i = 0; i < bytes.length; ) {
-    const b0 = bytes[i++];
+    const b0 = bytes[i] ?? 0;
+    i += 1;
     if (b0 < 0x80) {
       out += String.fromCharCode(b0);
     } else if (b0 < 0xe0) {
-      out += String.fromCharCode(((b0 & 0x1f) << 6) | (bytes[i++] & 0x3f));
+      out += String.fromCharCode(((b0 & 0x1f) << 6) | ((bytes[i++] ?? 0) & 0x3f));
     } else if (b0 < 0xf0) {
       out += String.fromCharCode(
-        ((b0 & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f),
+        ((b0 & 0x0f) << 12) | (((bytes[i++] ?? 0) & 0x3f) << 6) | ((bytes[i++] ?? 0) & 0x3f),
       );
     } else {
       const cp =
         ((b0 & 0x07) << 18) |
-        ((bytes[i++] & 0x3f) << 12) |
-        ((bytes[i++] & 0x3f) << 6) |
-        (bytes[i++] & 0x3f);
+        (((bytes[i++] ?? 0) & 0x3f) << 12) |
+        (((bytes[i++] ?? 0) & 0x3f) << 6) |
+        ((bytes[i++] ?? 0) & 0x3f);
       const rel = cp - 0x10000;
       out += String.fromCharCode(0xd800 + (rel >> 10), 0xdc00 + (rel & 0x3ff));
     }
@@ -75,7 +79,7 @@ export function encodeBase64(input: string): string {
   const bytes = toBytes(input);
   let out = '';
   for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
+    const b0 = bytes[i] ?? 0;
     const b1 = i + 1 < bytes.length ? bytes[i + 1] : undefined;
     const b2 = i + 2 < bytes.length ? bytes[i + 2] : undefined;
     out += B64_ALPHABET[b0 >> 2];
@@ -94,7 +98,7 @@ export function decodeBase64(input: string): string {
   let bits = 0;
   for (let i = 0; i < clean.length; i += 1) {
     const ch = clean[i];
-    if (ch === '=') break;
+    if (ch === undefined || ch === '=') break;
     const val = B64_LOOKUP[ch];
     if (val === undefined) continue;
     buffer = (buffer << 6) | val;
@@ -115,7 +119,7 @@ export function base64ToBytes(input: string): Uint8Array {
   let bits = 0;
   for (let i = 0; i < clean.length; i += 1) {
     const ch = clean[i];
-    if (ch === '=') break;
+    if (ch === undefined || ch === '=') break;
     const val = B64_LOOKUP[ch];
     if (val === undefined) continue;
     buffer = (buffer << 6) | val;
@@ -132,7 +136,7 @@ export function base64ToBytes(input: string): Uint8Array {
 export function bytesToBase64(bytes: Uint8Array): string {
   let out = '';
   for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
+    const b0 = bytes[i] ?? 0;
     const b1 = i + 1 < bytes.length ? bytes[i + 1] : undefined;
     const b2 = i + 2 < bytes.length ? bytes[i + 2] : undefined;
     out += B64_ALPHABET[b0 >> 2];

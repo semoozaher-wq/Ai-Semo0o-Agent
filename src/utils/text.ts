@@ -29,11 +29,16 @@ export function highlightRanges(
 ): { text: string; match: boolean }[] {
   if (!query.trim()) return [{ text, match: false }];
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(${escaped})`, 'gi');
+  // `split` needs the global flag, but a global regex is stateful: calling
+  // `.test()` on it advances `lastIndex`, which would mis-flag consecutive
+  // matches (e.g. highlightRanges('abab', 'ab')). Use a separate, anchored,
+  // non-global matcher so every segment is tested independently.
+  const splitter = new RegExp(`(${escaped})`, 'gi');
+  const matcher = new RegExp(`^${escaped}$`, 'i');
   return text
-    .split(regex)
+    .split(splitter)
     .filter((part) => part.length > 0)
-    .map((part) => ({ text: part, match: regex.test(part) }));
+    .map((part) => ({ text: part, match: matcher.test(part) }));
 }
 
 export function stripMarkdown(input: string): string {
