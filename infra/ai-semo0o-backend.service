@@ -15,7 +15,7 @@ Environment=BIND_HOST=127.0.0.1
 Environment=DATABASE_FILE=/var/lib/semo0o/agent.sqlite
 Environment=WORKSPACE_ROOT=/var/lib/semo0o/workspaces
 EnvironmentFile=/etc/semo0o/agent.env
-ExecStart=/usr/bin/node backend/server.mjs
+ExecStart=/usr/bin/node --experimental-sqlite backend/server.mjs
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

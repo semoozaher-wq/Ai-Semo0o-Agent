@@ -13,7 +13,7 @@ Environment=NODE_ENV=production
 Environment=DATABASE_FILE=/var/lib/semo0o/agent.sqlite
 Environment=WORKSPACE_ROOT=/var/lib/semo0o/workspaces
 EnvironmentFile=/etc/semo0o/agent.env
-ExecStart=/usr/bin/node backend/worker.mjs
+ExecStart=/usr/bin/node --experimental-sqlite backend/worker.mjs
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
