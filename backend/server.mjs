@@ -18,6 +18,12 @@ import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
 import { applyRuntimeDefaults, resolveWritableWorkspaceRoot } from './config/runtime-defaults.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
+import { collectMetrics, computeSlo, isMetricsAuthorized, renderPrometheus } from './observability/metrics.mjs';
+import { analyze as selfImproveAnalyze, applyProposal, detectSignals, monitor as selfImproveMonitor, rejectProposal, rollbackProposal } from './self-improve/engine.mjs';
+import { getProposal, listEvents as listSelfImproveEvents, listProposals } from './self-improve/store.mjs';
+import { enqueueEmail, listOutbox, processOutbox } from './notifications/outbox.mjs';
+import { listInvitations, listMembers, removeMember, revokeInvitation, updateMemberRole } from './org/members.mjs';
+import { purgeTenant, runRetention } from './ops/retention.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -99,6 +105,17 @@ function routeParts(url) { return new URL(url, 'http://localhost').pathname.spli
 function validateText(value, name, max = 120) {
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) throw new Error(`INVALID_${name.toUpperCase()}`);
   return value.trim();
+}
+// Best-effort transactional email enqueue. Account lifecycle flows (register,
+// password reset, invitations) must never fail because the outbox write failed;
+// the caller reports the real delivery state from the return value (queued vs.
+// NOT_VERIFIED_EMAIL_DELIVERY) so the API never claims an email was sent.
+function safeEnqueueEmail(db, payload) {
+  try {
+    return enqueueEmail(db, payload);
+  } catch {
+    return null;
+  }
 }
 function requiresApprovalFor(kind, input) {
   return kind === 'code.run' || kind === 'workspace.write' || kind === 'workspace.delete' || kind === 'email.send' || input.requiresApproval === true;
@@ -213,12 +230,24 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const report = await readinessReport({ db, llm });
         return send(response, report.ok ? 200 : 503, { ok: report.ok, service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, checks: report.checks, providers: report.providers, time: now() });
       }
+      if (method === 'GET' && parts.join('/') === 'metrics') {
+        // Prometheus scrape endpoint: reachable from loopback or with the
+        // configured METRICS_TOKEN. Never exposed to unauthenticated public callers.
+        if (!isMetricsAuthorized({ remoteAddress: request.socket.remoteAddress ?? '', token: bearer(request), expectedToken: process.env.METRICS_TOKEN ?? '' })) throw new Error('UNAUTHORIZED');
+        const windowHours = Math.max(1, Math.min(24 * 30, Number(new URL(request.url, 'http://localhost').searchParams.get('windowHours')) || 24));
+        const metrics = collectMetrics(db, { windowHours });
+        const slo = computeSlo(db, { windowHours });
+        response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(renderPrometheus(metrics, slo));
+        return;
+      }
       if (method === 'POST' && parts.join('/') === 'auth/register') {
         const input = await body(request);
         const result = createUser(db, input);
         const session = createSession(db, result.id);
-        issueAccountToken(db, result.id, 'email_verification');
-        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role, emailVerified: false }, session, verificationRequired: true, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
+        const token = issueAccountToken(db, result.id, 'email_verification');
+        const outbox = safeEnqueueEmail(db, { tenantId: result.tenant_id, to: result.email, template: 'email_verification', body: `Verify your email with this token: ${token}` });
+        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role, emailVerified: false }, session, verificationRequired: true, delivery: outbox ? 'queued' : 'NOT_VERIFIED_EMAIL_DELIVERY', outboxId: outbox?.outboxId ?? null });
       }
       if (method === 'POST' && parts.join('/') === 'auth/login') {
         const input = await body(request);
@@ -228,9 +257,15 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request); return send(response, 200, { user: verifyEmail(db, validateText(input.token, 'TOKEN', 256)) });
       }
       if (method === 'POST' && parts.join('/') === 'auth/request-password-reset') {
-        const input = await body(request); const user = db.get('SELECT id FROM users WHERE lower(email)=lower(?)', validateText(input.email, 'EMAIL', 320));
-        if (user) issueAccountToken(db, user.id, 'password_reset');
-        return send(response, 202, { accepted: true, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
+        const input = await body(request); const user = db.get('SELECT id,tenant_id,email FROM users WHERE lower(email)=lower(?)', validateText(input.email, 'EMAIL', 320));
+        let outbox = null;
+        if (user) {
+          const token = issueAccountToken(db, user.id, 'password_reset');
+          outbox = safeEnqueueEmail(db, { tenantId: user.tenant_id, to: user.email, template: 'password_reset', body: `Reset your Semo AI password with this token: ${token}` });
+        }
+        // Always 202 with a generic body so the endpoint cannot be used to
+        // enumerate which email addresses have accounts.
+        return send(response, 202, { accepted: true, delivery: outbox ? 'queued' : 'NOT_VERIFIED_EMAIL_DELIVERY', outboxId: outbox?.outboxId ?? null });
       }
       if (method === 'POST' && parts.join('/') === 'auth/reset-password') {
         const input = await body(request); resetPassword(db, validateText(input.token, 'TOKEN', 256), input.password, passwordHash); return send(response, 200, { ok: true });
@@ -249,8 +284,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       const user = requireUser(db, request);
       if (method === 'GET' && parts.join('/') === 'tools/status') {
-        const status = tools.status?.() ?? { live: [], catalogOnly: [], simulated: [], unwired: [], dangerous: [] };
-        const summary = { live: status.live?.length ?? 0, unwired: status.unwired?.length ?? 0, catalogOnly: status.catalogOnly?.length ?? 0, simulated: status.simulated?.length ?? 0, dangerous: status.dangerous?.length ?? 0 };
+        const status = tools.status?.() ?? { live: [], partial: [], catalogOnly: [], simulated: [], unwired: [], failed: [], dangerous: [], tools: [] };
+        const summary = { live: status.live?.length ?? 0, partial: status.partial?.length ?? 0, unwired: status.unwired?.length ?? 0, failed: status.failed?.length ?? 0, catalogOnly: status.catalogOnly?.length ?? 0, simulated: status.simulated?.length ?? 0, dangerous: status.dangerous?.length ?? 0 };
         return send(response, 200, { ...status, summary });
       }
       if (method === 'GET' && parts.join('/') === 'models/status') return send(response, 200, { providers: llm.status?.() ?? [] });
@@ -311,15 +346,103 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       if (method === 'DELETE' && parts.join('/') === 'me') {
         const input = await body(request);
         if (input.confirmEmail?.toLowerCase() !== user.email.toLowerCase()) throw new Error('DELETE_CONFIRMATION_REQUIRED');
-        db.transaction(() => { db.run('DELETE FROM projects WHERE tenant_id=?', user.tenantId); db.run('DELETE FROM tenants WHERE id=?', user.tenantId); });
-        return send(response, 200, { deleted: true });
+        requireRole(user, ['owner']);
+        // FK-safe, complete erasure of the tenant and all of its data.
+        const counts = purgeTenant(db, user.tenantId);
+        return send(response, 200, { deleted: true, purged: counts });
+      }
+      if (method === 'POST' && parts.join('/') === 'ops/retention/run') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, runRetention(db, {}));
       }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/setup') { return send(response, 200, enableMfa(db, user.id)); }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/confirm') { const input = await body(request); return send(response, 200, confirmMfa(db, user.id, validateText(input.code, 'MFA_CODE', 6))); }
       if (method === 'POST' && parts.join('/') === 'org/invitations') {
-        requireRole(user, ['owner', 'admin']); const input = await body(request); const invite = createInvitation(db, { tenantId: user.tenantId, invitedBy: user.id, email: input.email, role: input.role || 'member' }); return send(response, 201, { invitationId: invite.invitationId, expiresAt: invite.expiresAt, delivery: 'NOT_VERIFIED_EMAIL_DELIVERY' });
+        requireRole(user, ['owner', 'admin']); const input = await body(request); const invite = createInvitation(db, { tenantId: user.tenantId, invitedBy: user.id, email: input.email, role: input.role || 'member' });
+        const outbox = safeEnqueueEmail(db, { tenantId: user.tenantId, to: invite.email ?? input.email, template: 'invitation', body: `You have been invited to a Semo AI workspace. Accept with this token: ${invite.token}` });
+        return send(response, 201, { invitationId: invite.invitationId, expiresAt: invite.expiresAt, delivery: outbox ? 'queued' : 'NOT_VERIFIED_EMAIL_DELIVERY', outboxId: outbox?.outboxId ?? null });
       }
       if (method === 'POST' && parts.join('/') === 'org/invitations/accept') { const input = await body(request); return send(response, 200, { membership: acceptInvitation(db, { token: validateText(input.token, 'TOKEN', 256), userId: user.id }) }); }
+      // --- Organization / membership management (owner/admin) ----------------
+      if (method === 'GET' && parts.join('/') === 'org/members') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, { members: listMembers(db, user.tenantId) });
+      }
+      if (method === 'PATCH' && parts[0] === 'org' && parts[1] === 'members' && parts[2] && parts.length === 3) {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request);
+        return send(response, 200, { member: updateMemberRole(db, { tenantId: user.tenantId, userId: parts[2], role: validateText(input.role, 'ROLE', 16), actorId: user.id }) });
+      }
+      if (method === 'DELETE' && parts[0] === 'org' && parts[1] === 'members' && parts[2] && parts.length === 3) {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, removeMember(db, { tenantId: user.tenantId, userId: parts[2], actorId: user.id }));
+      }
+      if (method === 'GET' && parts.join('/') === 'org/invitations') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, { invitations: listInvitations(db, user.tenantId) });
+      }
+      if (method === 'DELETE' && parts[0] === 'org' && parts[1] === 'invitations' && parts[2] && parts.length === 3) {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, revokeInvitation(db, { tenantId: user.tenantId, invitationId: parts[2], actorId: user.id }));
+      }
+      // --- Self-improvement / self-healing engine -----------------------------
+      // Read-only signal detection is available to any member; every mutating
+      // action (analyze/approve/reject/rollback/monitor) requires owner or admin.
+      if (method === 'GET' && parts.join('/') === 'self-improve/signals') {
+        const windowHours = Math.max(1, Math.min(24 * 30, Number(new URL(request.url, 'http://localhost').searchParams.get('windowHours')) || 168));
+        return send(response, 200, { signals: detectSignals(db, { tenantId: user.tenantId, windowHours }), windowHours });
+      }
+      if (method === 'POST' && parts.join('/') === 'self-improve/analyze') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request);
+        const windowHours = Math.max(1, Math.min(24 * 30, Number(input.windowHours) || 168));
+        const minOccurrences = Math.max(1, Math.min(50, Number(input.minOccurrences) || 2));
+        return send(response, 200, selfImproveAnalyze(db, { tenantId: user.tenantId, windowHours, minOccurrences, autoCreate: true, createdBy: user.id }));
+      }
+      if (method === 'GET' && parts.join('/') === 'self-improve/proposals') {
+        const status = new URL(request.url, 'http://localhost').searchParams.get('status') || undefined;
+        return send(response, 200, { proposals: listProposals(db, user.tenantId, { status }) });
+      }
+      if (method === 'GET' && parts[0] === 'self-improve' && parts[1] === 'proposals' && parts[2] && parts.length === 3) {
+        const proposal = getProposal(db, user.tenantId, parts[2]);
+        if (!proposal) throw new Error('NOT_FOUND');
+        return send(response, 200, { proposal, events: listSelfImproveEvents(db, user.tenantId, { proposalId: proposal.id }) });
+      }
+      if (method === 'POST' && parts[0] === 'self-improve' && parts[1] === 'proposals' && parts[3] === 'approve') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, { proposal: applyProposal(db, { tenantId: user.tenantId, proposalId: parts[2], decidedBy: user.id }) });
+      }
+      if (method === 'POST' && parts[0] === 'self-improve' && parts[1] === 'proposals' && parts[3] === 'reject') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request).catch(() => ({}));
+        return send(response, 200, { proposal: rejectProposal(db, { tenantId: user.tenantId, proposalId: parts[2], decidedBy: user.id, reason: input.reason }) });
+      }
+      if (method === 'POST' && parts[0] === 'self-improve' && parts[1] === 'proposals' && parts[3] === 'rollback') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request).catch(() => ({}));
+        return send(response, 200, { proposal: rollbackProposal(db, { tenantId: user.tenantId, proposalId: parts[2], decidedBy: user.id, reason: input.reason || 'manual rollback' }) });
+      }
+      if (method === 'POST' && parts.join('/') === 'self-improve/monitor') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, selfImproveMonitor(db, { tenantId: user.tenantId }));
+      }
+      if (method === 'GET' && parts.join('/') === 'self-improve/history') {
+        return send(response, 200, { events: listSelfImproveEvents(db, user.tenantId, { limit: 200 }) });
+      }
+      // --- Transactional email outbox (admin) --------------------------------
+      // Operators inspect queued/failed transactional mail and drain the queue
+      // through the configured provider. Without a provider the process route
+      // reports the fail-closed state and preserves queued rows.
+      if (method === 'GET' && parts.join('/') === 'notifications/outbox') {
+        requireRole(user, ['owner', 'admin']);
+        const status = new URL(request.url, 'http://localhost').searchParams.get('status') || undefined;
+        const providerConfigured = Boolean(process.env.EMAIL_PROVIDER && process.env.EMAIL_WEBHOOK_URL);
+        return send(response, 200, { providerConfigured, emails: listOutbox(db, user.tenantId, { status }) });
+      }
+      if (method === 'POST' && parts.join('/') === 'notifications/outbox/process') {
+        requireRole(user, ['owner', 'admin']);
+        return send(response, 200, await processOutbox(db, { env: process.env }));
+      }
       if (method === 'POST' && parts.join('/') === 'chat/stream') {
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
@@ -452,7 +575,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? "INTERNAL_ERROR" : message });
     }
   });
