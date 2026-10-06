@@ -1,0 +1,117 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 491e93e..861edc4 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -30,6 +30,11 @@ jobs:
+       - name: Type check
+         run: npm run typecheck
+ 
++      # `pdf.extract` shells out to poppler's `pdftotext`; install it so the
++      # pdf.extract regression test runs for real (it self-skips when absent).
++      - name: Install poppler-utils (pdftotext for the pdf.extract tool test)
++        run: sudo apt-get update && sudo apt-get install -y poppler-utils
++
+       - name: Run project tests
+         run: npm test
+ 
+diff --git a/.github/workflows/quality.yml b/.github/workflows/quality.yml
+index 3ac33a4..f9cd663 100644
+--- a/.github/workflows/quality.yml
++++ b/.github/workflows/quality.yml
+@@ -51,6 +51,11 @@ jobs:
+       - name: Lint
+         run: npm run lint
+ 
++      # `pdf.extract` shells out to poppler's `pdftotext`; install it so the
++      # pdf.extract regression test runs for real (it self-skips when absent).
++      - name: Install poppler-utils (pdftotext for the pdf.extract tool test)
++        run: sudo apt-get update && sudo apt-get install -y poppler-utils
++
+       - name: Tests (unit + integration + backend + pain-map)
+         run: npm test
+ 
+diff --git a/backend/test/tools-await.test.mjs b/backend/test/tools-await.test.mjs
+index 4a0403d..1b18508 100644
+--- a/backend/test/tools-await.test.mjs
++++ b/backend/test/tools-await.test.mjs
+@@ -1,4 +1,5 @@
+ import assert from 'node:assert/strict';
++import { spawnSync } from 'node:child_process';
+ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+ import os from 'node:os';
+ import path from 'node:path';
+@@ -41,6 +42,12 @@ const MINIMAL_PDF = [
+   '',
+ ].join('\n');
+ 
++// `pdf.extract` shells out to poppler's `pdftotext`. CI installs poppler-utils,
++// but the binary is optional in other environments, so this regression test
++// (which targets the missing-`await` bug, not poppler itself) skips cleanly when
++// the binary is unavailable instead of failing the whole suite.
++const PDFTOTEXT_AVAILABLE = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error;
++
+ async function fixture() {
+   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-tools-await-'));
+   const db = new Database(path.join(dir, 'agent.sqlite'));
+@@ -78,7 +85,7 @@ test('data.profile resolves its path and profiles a CSV (regression: missing awa
+   } finally { await fx.close(); }
+ });
+ 
+-test('pdf.extract resolves its path and extracts text (regression: missing await)', async () => {
++test('pdf.extract resolves its path and extracts text (regression: missing await)', { skip: PDFTOTEXT_AVAILABLE ? false : 'pdftotext (poppler-utils) not installed' }, async () => {
+   const fx = await fixture();
+   try {
+     const result = await fx.tools.run('pdf.extract', { path: 'mini.pdf' }, { workspaceRoot: fx.dir });
+diff --git a/package-lock.json b/package-lock.json
+index 66e22a9..6f0973a 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -10836,9 +10836,9 @@
+       }
+     },
+     "node_modules/shell-quote": {
+-      "version": "1.10.0",
+-      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.10.0.tgz",
+-      "integrity": "sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==",
++      "version": "1.12.0",
++      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.12.0.tgz",
++      "integrity": "sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.4"
+@@ -11848,13 +11848,16 @@
+       }
+     },
+     "node_modules/uuid": {
+-      "version": "7.0.3",
+-      "resolved": "https://registry.npmjs.org/uuid/-/uuid-7.0.3.tgz",
+-      "integrity": "sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==",
+-      "deprecated": "uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).",
++      "version": "11.1.1",
++      "resolved": "https://registry.npmjs.org/uuid/-/uuid-11.1.1.tgz",
++      "integrity": "sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==",
++      "funding": [
++        "https://github.com/sponsors/broofa",
++        "https://github.com/sponsors/ctavan"
++      ],
+       "license": "MIT",
+       "bin": {
+-        "uuid": "dist/bin/uuid"
++        "uuid": "dist/esm/bin/uuid"
+       }
+     },
+     "node_modules/validate-npm-package-name": {
+diff --git a/package.json b/package.json
+index cac851c..d7191ca 100644
+--- a/package.json
++++ b/package.json
+@@ -66,5 +66,9 @@
+     "expo-doctor": "^1.20.4",
+     "tsx": "^4.20.6",
+     "typescript": "~6.0.3"
++  },
++  "overrides": {
++    "shell-quote": "^1.12.0",
++    "uuid": "^11.1.1"
+   }
+ }
