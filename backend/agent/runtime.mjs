@@ -90,7 +90,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
     }
     if (plan.steps.length > limits.maxSteps) throw new Error('AGENT_STEP_LIMIT_EXCEEDED');
     db.run('UPDATE runs SET checkpoint_json=?, updated_at=? WHERE id=?', JSON.stringify({ plan, stepIndex: resumeFrom }), now(), run.id);
-    emit('planning_completed', { provider: planner.provider, steps: plan.steps.length, usage: planner.usage });
+    emit('planning_completed', { provider: planner.provider, model: planner.model, requestedModel: planner.requestedModel, substituted: planner.substituted === true, steps: plan.steps.length, usage: planner.usage });
     const toolSchemas = openAITools();
     for (let index = resumeFrom; index < plan.steps.length; index += 1) {
       guard();
