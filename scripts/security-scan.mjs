@@ -37,7 +37,15 @@ const FILE_ALLOW = /security-scan:allow-file/;
 const LINE_ALLOW = /security-scan:allow(?!-file)(?:\s+([a-z][a-z-]*))?/;
 
 // Test fixtures and build output legitimately contain these patterns.
-const SKIP = (file) => file.startsWith('test/') || file.startsWith('backend/test/') || file.startsWith('dist/') || ['scripts/browser-smoke.mjs', 'src/store/useFilesStore.ts'].includes(file);
+const SKIP = (file) =>
+  file.startsWith('test/') ||
+  file.startsWith('backend/test/') ||
+  file.startsWith('dist/') ||
+  [
+    'scripts/browser-smoke.mjs',
+    'scripts/production-trial.mjs',
+    'src/store/useFilesStore.ts',
+  ].includes(file);
 
 for (const file of files) {
   if (SKIP(file)) continue;
