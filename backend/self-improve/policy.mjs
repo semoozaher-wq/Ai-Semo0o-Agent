@@ -18,7 +18,9 @@ export const FORBIDDEN_PATCH_TOKENS = Object.freeze([
   'password', 'password_hash', 'secret', 'secrets_master_key', 'api_key', 'apikey',
   'token_hash', 'session', 'authenticate', 'authorization', 'permission', 'role',
   'tenant_id', 'tenantid', 'billing', 'subscription', 'quota', 'mfa', 'recovery_code',
-  'sandbox', 'docker', 'eval(', 'child_process', 'require(', 'import ',
+  // The `eval` entry below is a forbidden-token *string literal* (data this list
+  // blocks), not a call, so it is explicitly exempted from the SAST eval rule.
+  'sandbox', 'docker', 'eval(', 'child_process', 'require(', 'import ', // security-scan:allow eval
 ]);
 
 // Bounded numeric ranges the engine may move within. Anything outside is clamped
