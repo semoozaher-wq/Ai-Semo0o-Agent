@@ -8,6 +8,9 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true,
     "paths": {
       "@/*": ["./src/*"],
       "@app/*": ["./app/*"]
@@ -19,5 +22,8 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": ["node_modules", "legacy"]
+  "exclude": [
+    "node_modules",
+    "legacy"
+  ]
 }
