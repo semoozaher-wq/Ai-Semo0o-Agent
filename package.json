@@ -26,7 +26,8 @@
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "generate:anatomy": "node scripts/generate-317-pain-map.js data/anatomyPainMap.json",
     "validate:pain-map": "node scripts/validate-pain-map.js data/anatomyPainMap.json",
-    "smoke:backend": "bash scripts/boot-smoke.sh"
+    "smoke:backend": "bash scripts/boot-smoke.sh",
+    "trial:self-improve": "node --experimental-sqlite scripts/production-trial.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.16",

@@ -110,8 +110,18 @@ services:
       # - key: SECRETS_MASTER_KEY
       # - key: ALLOWED_ORIGIN       # exact origin of the Vercel frontend, e.g. https://your-app.vercel.app
       # - key: PUBLIC_APP_URL       # same as ALLOWED_ORIGIN
+      # --- LLM providers: set at least ONE, or chat/agent runs fail closed ----
+      # The request is sent only to the provider that serves the chosen model.
+      # If that provider is unconfigured the request is remapped to a configured
+      # provider's compatible model (logged as LLM_MODEL_SUBSTITUTED). With none
+      # configured, runs fail with NO_SERVER_LLM_PROVIDER_CONFIGURED.
       # - key: OPENAI_API_KEY
+      # - key: OPENAI_API_BASE        # optional OpenAI-compatible gateway URL
+      # - key: OPENAI_MODEL           # optional, default gpt-5-mini
+      # - key: GEMINI_API_KEY         # or GOOGLE_API_KEY
+      # - key: GEMINI_MODEL           # optional, default gemini-2.5-flash-lite
       # - key: ANTHROPIC_API_KEY
+      # - key: ANTHROPIC_MODEL        # optional, default claude-haiku-4-5
     # --- OPTIONAL: persistent disk (requires a PAID plan) ---------------------
     # Uncomment this block AND set `plan:` above to `starter` (or higher) to keep
     # the SQLite database across deploys. On the Free plan there is no disk, so
