@@ -116,6 +116,7 @@ export class AgentExecutor {
       iterations += 1;
 
       const step = current.steps[i];
+      if (!step) continue;
       const runningStep: TaskStep = {
         ...step,
         status: 'running',

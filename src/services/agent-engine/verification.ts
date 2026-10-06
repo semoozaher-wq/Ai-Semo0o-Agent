@@ -45,9 +45,9 @@ export interface VerificationCriteria {
 
 export interface VerificationResult {
   status: VerificationStatus;
-  criteria: { id: string; passed: boolean; description: string; reason?: string }[];
+  criteria: { id: string; passed: boolean; description: string; reason?: string | undefined }[];
   evidenceIds: string[];
-  failureKind?: FailureKind;
+  failureKind?: FailureKind | undefined;
   summary: string;
   verifiedAt: string;
 }
@@ -98,7 +98,7 @@ export function verifyEvidence(input: VerificationInput): VerificationResult {
       case 'output_present':
         return { id: criterion.id, passed: input.actualResult !== undefined && input.actualResult !== null, description: criterion.description, reason: 'Execution output is empty.' };
       case 'not_simulated':
-        return { id: criterion.id, passed: Boolean(primary) && primary.simulated === false, description: criterion.description, reason: 'Simulated results cannot be verification evidence.' };
+        return { id: criterion.id, passed: primary !== undefined && primary.simulated === false, description: criterion.description, reason: 'Simulated results cannot be verification evidence.' };
       case 'output_includes': {
         const actual = typeof input.actualResult === 'string' ? input.actualResult : JSON.stringify(input.actualResult ?? '');
         const passed = actual.includes(criterion.value ?? '');
@@ -108,7 +108,7 @@ export function verifyEvidence(input: VerificationInput): VerificationResult {
         return { id: criterion.id, passed: false, description: criterion.description, reason: 'Unknown verification criterion.' };
     }
   });
-  const requiredFailed = checks.some((check, index) => criteria[index].required && !check.passed);
+  const requiredFailed = checks.some((check, index) => criteria[index]?.required && !check.passed);
   const executionFailed = (primary?.output as { ok?: unknown } | undefined)?.ok === false;
   const status: VerificationStatus = requiredFailed
     ? (executionFailed || (evidence.length && input.actualResult !== undefined && input.actualResult !== null) ? 'FAILED' : 'UNVERIFIED')

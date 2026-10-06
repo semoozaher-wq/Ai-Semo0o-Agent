@@ -105,7 +105,7 @@ export function createPlan(goal: string, _model: string): Plan {
 
   // Re-map dependsOn to real step ids.
   steps.forEach((step, index) => {
-    step.dependsOn = index === 0 ? [] : [steps[index - 1].id];
+    step.dependsOn = index === 0 ? [] : [steps[index - 1]?.id ?? ''];
   });
 
   return {
@@ -129,7 +129,7 @@ export function replan(plan: Plan, failedStepId: string): Plan {
     kind: 'reflect',
     title: 'خطة استرداد',
     description: 'تحليل سبب الفشل وتعديل المسار قبل إعادة المحاولة.',
-    dependsOn: idx === 0 ? [] : [plan.steps[idx - 1].id],
+    dependsOn: idx === 0 ? [] : [plan.steps[idx - 1]?.id ?? ''],
     status: 'pending',
   };
   const steps = [...plan.steps];

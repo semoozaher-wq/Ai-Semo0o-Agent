@@ -50,9 +50,9 @@ export interface LLMPlannerOptions {
   model: string;
   providers: LLMProvider[];
   tools: ToolDefinition[];
-  context?: string;
-  maxTokens?: number;
-  signal?: AbortSignal;
+  context?: string | undefined;
+  maxTokens?: number | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface LLMPlanResult {

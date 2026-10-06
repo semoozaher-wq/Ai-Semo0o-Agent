@@ -25,8 +25,8 @@ export interface ToolRunResult {
   output: unknown;
   logs: string[];
   durationMs: number;
-  simulated?: boolean;
-  error?: string;
+  simulated?: boolean | undefined;
+  error?: string | undefined;
 }
 
 export interface ToolImplementationResult {
@@ -140,7 +140,7 @@ export async function runTool(
   }
 
   // Strict validation against the compiled JSON schema.
-  const schema = toOpenAITools([definition])[0].function.parameters;
+  const schema = toOpenAITools([definition])[0]?.function.parameters ?? { type: 'object' };
   const validation = validateToolArguments(schema, args);
   if (!validation.ok) {
     return {

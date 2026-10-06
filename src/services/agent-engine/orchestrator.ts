@@ -33,9 +33,9 @@ export interface OrchestratorEvent {
     | 'step_completed'
     | 'verification_required'
     | 'run_finished';
-  stepId?: string;
-  toolId?: string;
-  details?: Record<string, unknown>;
+  stepId?: string | undefined;
+  toolId?: string | undefined;
+  details?: Record<string, unknown> | undefined;
 }
 
 export interface OrchestratorInput {
@@ -75,12 +75,12 @@ export interface OrchestratorResult {
   events: OrchestratorEvent[];
   outputs: {
     stepId: string;
-    toolId?: string;
+    toolId?: string | undefined;
     ok: boolean;
     simulated: boolean;
     output: unknown;
-    error?: string;
-    durationMs?: number;
+    error?: string | undefined;
+    durationMs?: number | undefined;
   }[];
   warnings: string[];
   errors: string[];
@@ -115,8 +115,9 @@ export class AgentOrchestrator {
   constructor(private readonly planner: LLMPlanner = new LLMPlanner()) {}
 
   async run(input: OrchestratorInput): Promise<OrchestratorResult> {
-    const events: OrchestratorEvent[] = [event('planning_started')];
-    input.onEvent?.(events[0]);
+    const firstEvent = event('planning_started');
+    const events: OrchestratorEvent[] = [firstEvent];
+    input.onEvent?.(firstEvent);
     const pushEvent = (next: OrchestratorEvent): void => {
       events.push(next);
       input.onEvent?.(next);

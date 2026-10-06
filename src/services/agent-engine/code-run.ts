@@ -8,9 +8,9 @@ export interface CodeRunFile {
 export interface CodeRunRequest {
   language: 'javascript' | 'typescript' | 'python';
   source: string;
-  files?: CodeRunFile[];
-  timeoutMs?: number;
-  maxOutputBytes?: number;
+  files?: CodeRunFile[] | undefined;
+  timeoutMs?: number | undefined;
+  maxOutputBytes?: number | undefined;
 }
 
 export interface CodeRunEvidence {
