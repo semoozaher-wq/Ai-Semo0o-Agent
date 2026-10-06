@@ -9,8 +9,8 @@
     "npm": ">=10.9.0"
   },
   "scripts": {
-    "start:backend": "node server.mjs",
-    "start:worker": "node worker.mjs",
+    "start:backend": "node --experimental-sqlite server.mjs",
+    "start:worker": "node --experimental-sqlite worker.mjs",
     "test:backend": "node --experimental-sqlite --test test/*.test.mjs",
     "smoke:backend": "bash ../scripts/boot-smoke.sh"
   }

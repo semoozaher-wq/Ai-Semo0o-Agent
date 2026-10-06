@@ -18,12 +18,15 @@ import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
 import { applyRuntimeDefaults, resolveWritableWorkspaceRoot } from './config/runtime-defaults.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
-import { collectMetrics, computeSlo, isMetricsAuthorized, renderPrometheus } from './observability/metrics.mjs';
+import { isMetricsAuthorized, renderPrometheus } from './observability/metrics.mjs';
 import { analyze as selfImproveAnalyze, applyProposal, detectSignals, monitor as selfImproveMonitor, rejectProposal, rollbackProposal } from './self-improve/engine.mjs';
 import { getProposal, listEvents as listSelfImproveEvents, listProposals } from './self-improve/store.mjs';
 import { enqueueEmail, listOutbox, processOutbox } from './notifications/outbox.mjs';
 import { listInvitations, listMembers, removeMember, revokeInvitation, updateMemberRole } from './org/members.mjs';
-import { purgeTenant, runRetention } from './ops/retention.mjs';
+import { runRetention } from './ops/retention.mjs';
+import { deleteTenantAccount, deleteUserAccount } from './account/deletion.mjs';
+import { evaluateAlerts, renderAlertMetrics } from './observability/alerts.mjs';
+import { ChatStore } from './chat/store.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -213,6 +216,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm });
   const memory = new MemoryStore(db);
+  const chat = new ChatStore(db);
   runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost }));
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
@@ -222,7 +226,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       applySecurityHeaders(response, origin && request.headers.origin === origin ? origin : '');
       if (request.headers.origin && origin && request.headers.origin !== origin) throw new Error('CORS_ORIGIN_DENIED');
       if (!rateLimiter.allow(request.socket.remoteAddress ?? 'unknown')) throw new Error('RATE_LIMITED');
-      if (request.method === 'OPTIONS') { response.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS'); response.setHeader('access-control-allow-headers', 'authorization,content-type'); return send(response, 204, {}); }
+      if (request.method === 'OPTIONS') { response.setHeader('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS'); response.setHeader('access-control-allow-headers', 'authorization,content-type,x-request-id'); response.setHeader('access-control-max-age', '600'); return send(response, 204, {}); }
       const parts = routeParts(request.url);
       const method = request.method;
       if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, uptimeSeconds: Math.round((Date.now() - SERVICE_STARTED_AT) / 1000), time: now() });
@@ -235,10 +239,11 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         // configured METRICS_TOKEN. Never exposed to unauthenticated public callers.
         if (!isMetricsAuthorized({ remoteAddress: request.socket.remoteAddress ?? '', token: bearer(request), expectedToken: process.env.METRICS_TOKEN ?? '' })) throw new Error('UNAUTHORIZED');
         const windowHours = Math.max(1, Math.min(24 * 30, Number(new URL(request.url, 'http://localhost').searchParams.get('windowHours')) || 24));
-        const metrics = collectMetrics(db, { windowHours });
-        const slo = computeSlo(db, { windowHours });
+        // Evaluate alerts once and reuse its metrics/SLO so /metrics also carries
+        // the currently-firing alert series for an external Alertmanager.
+        const report = evaluateAlerts(db, { windowHours });
         response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
-        response.end(renderPrometheus(metrics, slo));
+        response.end(`${renderPrometheus(report.metrics, report.slo)}${renderAlertMetrics(report.firing)}`);
         return;
       }
       if (method === 'POST' && parts.join('/') === 'auth/register') {
@@ -341,19 +346,57 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'GET' && parts.join('/') === 'me/export') {
-        return send(response, 200, { user: { id: user.id, tenantId: user.tenantId, email: user.email, role: user.role }, projects: db.all('SELECT id,name,created_at FROM projects WHERE tenant_id=? ORDER BY created_at', user.tenantId), messages: db.all('SELECT id,project_id,role,content,created_at FROM messages WHERE tenant_id=? ORDER BY created_at', user.tenantId), memory: db.all('SELECT id,project_id,source,content,created_at FROM documents WHERE tenant_id=? ORDER BY created_at', user.tenantId), exportedAt: now() });
+        // A complete, self-service data export (GDPR/CCPA style). Runs, audit
+        // entries, and outbox rows are scoped to the caller's own identity so a
+        // member cannot export another member's activity.
+        return send(response, 200, {
+          user: { id: user.id, tenantId: user.tenantId, email: user.email, role: user.role },
+          memberships: db.all('SELECT tenant_id, role, status, created_at FROM tenant_members WHERE user_id=?', user.id),
+          projects: db.all('SELECT id,name,created_at FROM projects WHERE tenant_id=? ORDER BY created_at', user.tenantId),
+          messages: db.all('SELECT id,project_id,role,content,created_at FROM messages WHERE tenant_id=? AND user_id=? ORDER BY created_at', user.tenantId, user.id),
+          conversations: db.all('SELECT id,title,mode,status,created_at,updated_at FROM conversations WHERE tenant_id=? AND user_id=? ORDER BY created_at', user.tenantId, user.id),
+          chatMessages: db.all('SELECT id,conversation_id,role,content,status,created_at FROM chat_messages WHERE tenant_id=? AND user_id=? ORDER BY created_at', user.tenantId, user.id),
+          memory: db.all('SELECT id,project_id,source,content,created_at FROM documents WHERE tenant_id=? ORDER BY created_at', user.tenantId),
+          runs: db.all('SELECT r.id,r.status,r.created_at,r.updated_at FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.tenant_id=? AND t.created_by=? ORDER BY r.created_at', user.tenantId, user.id),
+          usage: usageSummary(db, user.tenantId, 90),
+          audit: db.all('SELECT action,resource_type,resource_id,created_at FROM audit_logs WHERE tenant_id=? AND user_id=? ORDER BY created_at', user.tenantId, user.id),
+          outbox: db.all('SELECT id,to_email,template,status,created_at FROM email_outbox WHERE tenant_id=? AND lower(to_email)=lower(?) ORDER BY created_at', user.tenantId, user.email),
+          exportedAt: now(),
+        });
       }
       if (method === 'DELETE' && parts.join('/') === 'me') {
         const input = await body(request);
         if (input.confirmEmail?.toLowerCase() !== user.email.toLowerCase()) throw new Error('DELETE_CONFIRMATION_REQUIRED');
-        requireRole(user, ['owner']);
-        // FK-safe, complete erasure of the tenant and all of its data.
-        const counts = purgeTenant(db, user.tenantId);
-        return send(response, 200, { deleted: true, purged: counts });
+        // `scope: 'tenant'` erases the whole tenant (owner-only). The default,
+        // `scope: 'self'`, erases only the caller's account and personal data —
+        // the operation a non-owner member needs, which previously always 403'd.
+        if (input.scope === 'tenant') {
+          requireRole(user, ['owner']);
+          const result = deleteTenantAccount(db, { tenantId: user.tenantId, userId: user.id, force: input.force === true });
+          return send(response, 200, { deleted: true, ...result });
+        }
+        const result = deleteUserAccount(db, { tenantId: user.tenantId, userId: user.id, transferOwnershipTo: input.transferOwnershipTo ?? null });
+        return send(response, 200, { deleted: true, ...result });
       }
       if (method === 'POST' && parts.join('/') === 'ops/retention/run') {
         requireRole(user, ['owner', 'admin']);
         return send(response, 200, runRetention(db, {}));
+      }
+      if (method === 'GET' && parts.join('/') === 'ops/alerts') {
+        requireRole(user, ['owner', 'admin']);
+        const windowHours = Math.max(1, Math.min(24 * 30, Number(new URL(request.url, 'http://localhost').searchParams.get('windowHours')) || 24));
+        const report = evaluateAlerts(db, { windowHours });
+        // Do not leak the full metrics blob in the alert view; the SLO summary and
+        // the firing set are what an operator acts on.
+        return send(response, 200, {
+          windowHours: report.windowHours,
+          generatedAt: report.generatedAt,
+          ok: report.ok,
+          highestSeverity: report.highestSeverity,
+          firing: report.firing,
+          alerts: report.alerts,
+          slo: report.slo,
+        });
       }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/setup') { return send(response, 200, enableMfa(db, user.id)); }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/confirm') { const input = await body(request); return send(response, 200, confirmMfa(db, user.id, validateText(input.code, 'MFA_CODE', 6))); }
@@ -443,6 +486,30 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         requireRole(user, ['owner', 'admin']);
         return send(response, 200, await processOutbox(db, { env: process.env }));
       }
+      // ---- Durable chat state -------------------------------------------------
+      if (method === 'GET' && parts.join('/') === 'conversations') {
+        const limit = Number(new URL(request.url, 'http://localhost').searchParams.get('limit')) || 50;
+        return send(response, 200, { conversations: chat.listConversations({ tenantId: user.tenantId, userId: user.id, limit }) });
+      }
+      if (method === 'POST' && parts.join('/') === 'conversations') {
+        const input = await body(request);
+        return send(response, 201, chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: input.title, projectId: input.projectId ?? null, mode: input.mode ?? 'chat' }));
+      }
+      if (method === 'GET' && parts.join('/') === 'chat/recoverable') {
+        return send(response, 200, { conversations: chat.listRecoverable({ tenantId: user.tenantId, userId: user.id }) });
+      }
+      if (parts[0] === 'conversations' && parts[1] && parts.length <= 3) {
+        const conversationId = parts[1];
+        if (method === 'GET' && parts.length === 2) return send(response, 200, chat.getConversation({ tenantId: user.tenantId, userId: user.id, conversationId }));
+        if (method === 'PATCH' && parts.length === 2) { const input = await body(request); return send(response, 200, chat.renameConversation({ tenantId: user.tenantId, userId: user.id, conversationId, title: input.title })); }
+        if (method === 'DELETE' && parts.length === 2) return send(response, 200, chat.deleteConversation({ tenantId: user.tenantId, userId: user.id, conversationId }));
+        if (method === 'POST' && parts[2] === 'recover') return send(response, 200, { recovered: chat.recoverInterrupted({ tenantId: user.tenantId, userId: user.id, conversationId }) });
+        if (method === 'POST' && parts[2] === 'messages') {
+          const input = await body(request);
+          const message = chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: validateText(input.content, 'MESSAGE', 12000), status: 'complete' });
+          return send(response, 201, message);
+        }
+      }
       if (method === 'POST' && parts.join('/') === 'chat/stream') {
         const input = await body(request);
         const message = validateText(input.message, 'MESSAGE', 12000);
@@ -451,8 +518,19 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         // Quota is checked BEFORE any bytes are written so an over-quota tenant still
         // receives a clean JSON 402 from the outer error handler.
         consumeQuota(db, user.tenantId, {});
+        // Resolve or create the conversation and persist the user turn BEFORE the
+        // first byte, so a dropped connection never loses the user's message.
+        const conversationId = input.conversationId
+          ? chat.getConversation({ tenantId: user.tenantId, userId: user.id, conversationId: input.conversationId }).id
+          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: message.slice(0, 80), mode: 'chat' }).id;
+        const userMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: message, status: 'complete' });
+        // The assistant row is created as `streaming` up front. If this process
+        // dies mid-stream the row is left `streaming` and `recoverInterrupted`
+        // sweeps it to `interrupted` for retry — no silent data loss.
+        const assistantMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, role: 'assistant', content: '', status: 'streaming', model });
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
         const writeFrame = (event, data) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        writeFrame('start', { conversationId, userMessageId: userMessage.id, assistantMessageId: assistantMessage.id });
         let usage = null;
         let provider = null;
         let text = '';
@@ -466,10 +544,14 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           }
           const streamTokens = Number(usage?.totalTokens) || 0;
           if (streamTokens > 0) consumeQuota(db, user.tenantId, { tokens: streamTokens });
-          db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.stream.completed', 'chat', user.id, JSON.stringify({ provider, model, usage, chars: text.length }), now());
-          writeFrame('done', { provider, usage, chars: text.length });
+          chat.updateMessage({ tenantId: user.tenantId, messageId: assistantMessage.id, patch: { content: text, status: 'complete', provider, usage } });
+          db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.stream.completed', 'chat', user.id, JSON.stringify({ conversationId, provider, model, usage, chars: text.length }), now());
+          writeFrame('done', { conversationId, assistantMessageId: assistantMessage.id, provider, usage, chars: text.length });
         } catch (error) {
-          writeFrame('error', { error: error instanceof Error ? error.message : String(error) });
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          // Preserve the partial text and record the failure so the client can retry.
+          chat.updateMessage({ tenantId: user.tenantId, messageId: assistantMessage.id, patch: { content: text, status: 'error', error: errorMessage } });
+          writeFrame('error', { conversationId, assistantMessageId: assistantMessage.id, error: errorMessage });
         } finally {
           response.end();
         }
@@ -480,14 +562,19 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const message = validateText(input.message, 'MESSAGE', 12000);
         const model = normalizeModelId(input.model);
         consumeQuota(db, user.tenantId, {});
+        const conversationId = input.conversationId
+          ? chat.getConversation({ tenantId: user.tenantId, userId: user.id, conversationId: input.conversationId }).id
+          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: message.slice(0, 80), mode: 'chat' }).id;
+        chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: message, status: 'complete' });
         const result = await llm.complete({ model, messages: [
           { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
           { role: 'user', content: message },
         ] });
         const chatTokens = Number(result.usage?.totalTokens ?? result.usage?.total_tokens) || 0;
         if (chatTokens > 0) consumeQuota(db, user.tenantId, { tokens: chatTokens });
-        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.completed', 'chat', user.id, JSON.stringify({ provider: result.provider, model: model || null, usage: result.usage }), now());
-        return send(response, 200, { text: result.text, provider: result.provider, usage: result.usage });
+        const assistantMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, role: 'assistant', content: result.text ?? '', status: 'complete', provider: result.provider, model, usage: result.usage });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.completed', 'chat', user.id, JSON.stringify({ conversationId, provider: result.provider, model: model || null, usage: result.usage }), now());
+        return send(response, 200, { conversationId, messageId: assistantMessage.id, text: result.text, provider: result.provider, usage: result.usage });
       }
       if (method === 'POST' && parts[0] === 'projects' && parts.length === 1) {
         const input = await body(request);
@@ -575,14 +662,14 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? "INTERNAL_ERROR" : message });
     }
   });
   server.headersTimeout = 15_000;
   server.requestTimeout = 30_000;
   server.maxHeadersCount = 64;
-  return { server, db, queue: runQueue };
+  return { server, db, queue: runQueue, chat };
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {

@@ -28,8 +28,17 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Only the backend tree is needed at runtime.
+# The backend statically imports shared runtime modules that live OUTSIDE
+# backend/, so they must be copied too (preserving the relative layout):
+#   backend/tools/registry.mjs      -> ../../execution-core/tavily-search.mjs
+#   backend/runners/code-runner.mjs -> ../../execution-core/code-run-tool.mjs
+#   backend/browser/pool.mjs        -> ../../phase2-core/browser-agent.mjs
+#   backend/browser/runner.mjs      -> ../../phase2-core/browser-agent.mjs
+# Copying only backend/ makes the container crash at boot with
+# ERR_MODULE_NOT_FOUND before it can ever bind a port.
 COPY backend ./backend
+COPY execution-core ./execution-core
+COPY phase2-core ./phase2-core
 
 # Persistent, writable location for the SQLite DB + workspace.
 RUN mkdir -p /data/db /data/workspace
