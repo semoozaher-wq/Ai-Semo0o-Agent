@@ -20,11 +20,23 @@ export class DistributedRateLimiter {
   cleanup() { this.db.run('DELETE FROM rate_limit_buckets WHERE expires_at<?', new Date().toISOString()); }
 }
 
-export function applySecurityHeaders(response, origin = '') {
+export function applySecurityHeaders(response, origin = '', { secure = process.env.NODE_ENV === 'production' } = {}) {
   response.setHeader('x-content-type-options', 'nosniff');
   response.setHeader('x-frame-options', 'DENY');
   response.setHeader('referrer-policy', 'no-referrer');
-  response.setHeader('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+  response.setHeader('content-security-policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  // Lock down browser features this API never needs.
+  response.setHeader('permissions-policy', 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()');
+  response.setHeader('cross-origin-opener-policy', 'same-origin');
+  response.setHeader('cross-origin-resource-policy', 'same-origin');
+  response.setHeader('x-permitted-cross-domain-policies', 'none');
+  response.setHeader('x-dns-prefetch-control', 'off');
   response.setHeader('cache-control', 'no-store');
+  // HSTS is ignored by browsers over plain HTTP, so it is safe to send always; we
+  // only advertise it in production to avoid pinning a developer host.
+  if (secure) response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  // Vary on Origin so a shared cache never serves one origin's CORS response to
+  // another.
+  response.setHeader('vary', 'Origin');
   if (origin) response.setHeader('access-control-allow-origin', origin);
 }
