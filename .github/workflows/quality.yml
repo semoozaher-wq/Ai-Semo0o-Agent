@@ -87,3 +87,13 @@ jobs:
         env:
           SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
         run: npm run smoke:backend
+
+      # Drives the full self-improvement lifecycle through the real REST API
+      # (signals -> analyze -> approve -> monitor -> rollback) against real run
+      # telemetry, and asserts the safety guarantees: RBAC (owner/admin only),
+      # tenant isolation, and fail-closed automatic rollback on regression.
+      # See scripts/production-trial.mjs.
+      - name: Production trial (self-improvement pipeline)
+        env:
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
+        run: npm run trial:self-improve
