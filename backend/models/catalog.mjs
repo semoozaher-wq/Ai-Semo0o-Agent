@@ -40,6 +40,31 @@ export function modelProvider(model) {
   ].provider;
 }
 
+// The model a provider falls back to when the caller asked for a model that
+// belongs to a DIFFERENT (unconfigured) provider. Every entry is a real member
+// of SUPPORTED_MODELS for that provider, so a remap can never produce a model
+// the provider does not serve (the original cause of LLM_HTTP_404).
+export const PROVIDER_DEFAULT_MODEL = Object.freeze({
+  openai: 'gpt-5-mini',
+  gemini: 'gemini-2.5-flash-lite',
+  anthropic: 'claude-haiku-4-5',
+});
+
+export function defaultModelForProvider(provider) {
+  const candidate = PROVIDER_DEFAULT_MODEL[provider];
+  return candidate && SUPPORTED_MODELS[candidate] ? candidate : 'gpt-5-mini';
+}
+
+// True only when `model` is a supported model served by `provider`. Used as a
+// hard invariant before any request is dispatched to a provider.
+export function isModelCompatible(model, provider) {
+  try {
+    return modelProvider(model) === provider;
+  } catch {
+    return false;
+  }
+}
+
 export function modelCost(model, usage = {}) {
   const spec = SUPPORTED_MODELS[
     normalizeModelId(model)
