@@ -274,6 +274,10 @@ CREATE TABLE IF NOT EXISTS run_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+-- Auth lookups are case-insensitive (`WHERE lower(email)=lower(?)`) and so cannot
+-- use the UNIQUE(tenant_id, email) index; this functional index keeps login,
+-- registration, and password-reset off a full table scan.
+CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email));
 CREATE INDEX IF NOT EXISTS idx_members_user ON tenant_members(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_invitations_tenant_email ON invitations(tenant_id, email, accepted_at);
 CREATE INDEX IF NOT EXISTS idx_account_tokens_lookup ON account_tokens(token_hash, kind, used_at);
@@ -371,3 +375,52 @@ CREATE TABLE IF NOT EXISTS email_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_email_outbox_status ON email_outbox(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_email_outbox_tenant ON email_outbox(tenant_id, created_at);
+-- Data-rights export filters the outbox by recipient case-insensitively.
+CREATE INDEX IF NOT EXISTS idx_email_outbox_recipient ON email_outbox(tenant_id, lower(to_email), created_at);
+
+-- ===========================================================================
+-- Durable chat state (conversations + messages).
+--
+-- Chat used to be stateless: a reload lost the thread and an interrupted stream
+-- left no record. Conversations are now first-class, tenant-scoped rows so the
+-- client can list, resume, retry, and recover an interrupted assistant reply.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('chat','agent')) DEFAULT 'chat',
+  status TEXT NOT NULL CHECK (status IN ('active','archived')) DEFAULT 'active',
+  last_message_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+  content TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','streaming','complete','error','interrupted')) DEFAULT 'complete',
+  provider TEXT,
+  model TEXT,
+  usage_json TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_tenant_user ON conversations(tenant_id, user_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_status ON chat_messages(tenant_id, status, created_at);
+
+-- Hot-path indexes added during the performance pass: tool-call status scans
+-- (metrics/SLO), per-user message history, and session lookup by user.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_tenant_user ON messages(tenant_id, user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);

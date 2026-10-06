@@ -133,6 +133,9 @@ export class Database {
     this.db.exec('CREATE TABLE IF NOT EXISTS usage_quotas (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE, monthly_tokens INTEGER NOT NULL DEFAULT 100000, monthly_runs INTEGER NOT NULL DEFAULT 1000, updated_at TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS usage_counters (tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, period TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0, runs INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY (tenant_id, period))');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_members_user ON tenant_members(user_id, status); CREATE INDEX IF NOT EXISTS idx_invitations_tenant_email ON invitations(tenant_id, email, accepted_at); CREATE INDEX IF NOT EXISTS idx_account_tokens_lookup ON account_tokens(token_hash, kind, used_at)');
+    // Functional indexes for case-insensitive lookups (auth + outbox export) that
+    // would otherwise full-scan; idempotent so existing databases pick them up.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email)); CREATE INDEX IF NOT EXISTS idx_email_outbox_recipient ON email_outbox(tenant_id, lower(to_email), created_at)');
     const tenants = this.db.prepare('SELECT id FROM tenants').all();
     for (const tenant of tenants) {
       this.db.prepare('INSERT OR IGNORE INTO usage_quotas(tenant_id,updated_at) VALUES(?,?)').run(tenant.id, now());
