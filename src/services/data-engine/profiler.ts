@@ -70,8 +70,8 @@ export function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
+    ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+    : sorted[mid] ?? 0;
 }
 
 export function pearson(a: number[], b: number[]): number {
@@ -83,8 +83,8 @@ export function pearson(a: number[], b: number[]): number {
   let da = 0;
   let db = 0;
   for (let i = 0; i < n; i += 1) {
-    const x = a[i] - ma;
-    const y = b[i] - mb;
+    const x = (a[i] ?? 0) - ma;
+    const y = (b[i] ?? 0) - mb;
     num += x * y;
     da += x * x;
     db += y * y;
@@ -207,13 +207,16 @@ export function profileDataset(rows: Row[]): DatasetProfile {
   const correlations: Correlation[] = [];
   for (let i = 0; i < numericProfiles.length; i += 1) {
     for (let j = i + 1; j < numericProfiles.length; j += 1) {
-      const a = rows.map((r) => toNumber(r[numericProfiles[i].name]));
-      const b = rows.map((r) => toNumber(r[numericProfiles[j].name]));
+      const pi = numericProfiles[i];
+      const pj = numericProfiles[j];
+      if (!pi || !pj) continue;
+      const a = rows.map((r) => toNumber(r[pi.name]));
+      const b = rows.map((r) => toNumber(r[pj.name]));
       const r = pearson(a, b);
       if (Math.abs(r) >= 0.5) {
         correlations.push({
-          a: numericProfiles[i].name,
-          b: numericProfiles[j].name,
+          a: pi.name,
+          b: pj.name,
           r: Number(r.toFixed(2)),
         });
       }

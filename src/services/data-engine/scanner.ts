@@ -191,7 +191,7 @@ export function seedWorkspace(size = WORKSPACE_SIZE): FileEntry[] {
         sizeBytes,
         createdAt: isoDaysAgo(ageDays + 30),
         updatedAt: isoDaysAgo(ageDays),
-        tags: [folder.split('/')[0]],
+        tags: [folder.split('/')[0] ?? ''],
         starred: seed % 17 === 0,
       });
 
@@ -338,7 +338,7 @@ export function buildTree(files: FileEntry[]): FolderNode {
     const existing = index.get(path);
     if (existing) return existing;
     const parts = path.split('/');
-    const name = parts[parts.length - 1];
+    const name = parts[parts.length - 1] ?? '';
     const parentPath = parts.slice(0, -1).join('/') || '/';
     const parent = ensure(parentPath);
     const node: FolderNode = {
