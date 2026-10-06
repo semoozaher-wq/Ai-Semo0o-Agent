@@ -74,7 +74,7 @@ function eventLog(next: ApiEvent): { message: string; level: LogLevel } | undefi
 function updateLiveStep(task: Task, next: ApiEvent & { stepId?: string; details?: Record<string, unknown> }): Task {
   if (!next.stepId) return task;
   const existingIndex = task.steps.findIndex((step) => step.id === next.stepId);
-  const current = existingIndex >= 0 ? task.steps[existingIndex] : {
+  const current: TaskStep = (existingIndex >= 0 ? task.steps[existingIndex] : undefined) ?? {
     id: next.stepId,
     index: task.steps.length,
     kind: (next.details?.kind ?? 'tool') as TaskStep['kind'],

@@ -120,13 +120,14 @@ export const useAnalyticsStore = create<AnalyticsState>((set, get) => ({
     const date = entry.date ?? isoDay(0);
     const usage = [...get().usage];
     const idx = usage.findIndex((p) => p.date === date);
-    if (idx >= 0) {
+    const existing = idx >= 0 ? usage[idx] : undefined;
+    if (existing) {
       usage[idx] = {
-        ...usage[idx],
-        tokens: usage[idx].tokens + (entry.tokens ?? 0),
-        costUsd: usage[idx].costUsd + (entry.costUsd ?? 0),
-        tasks: usage[idx].tasks + (entry.tasks ?? 0),
-        messages: usage[idx].messages + (entry.messages ?? 0),
+        ...existing,
+        tokens: existing.tokens + (entry.tokens ?? 0),
+        costUsd: existing.costUsd + (entry.costUsd ?? 0),
+        tasks: existing.tasks + (entry.tasks ?? 0),
+        messages: existing.messages + (entry.messages ?? 0),
       };
     } else {
       usage.push({

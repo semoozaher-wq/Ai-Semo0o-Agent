@@ -17,7 +17,7 @@ export interface WorkspaceExportInfo {
   filename: string;
   sizeBytes: number;
   fileCount: number;
-  url?: string;
+  url?: string | undefined;
   dataUrl: string;
 }
 
@@ -25,11 +25,11 @@ interface WorkspaceState {
   workspace: Workspace;
   hydrated: boolean;
   busy: boolean;
-  error?: string;
-  lastExport?: WorkspaceExportInfo;
+  error?: string | undefined;
+  lastExport?: WorkspaceExportInfo | undefined;
   hydrate(): Promise<void>;
   refresh(): void;
-  importRepo(url: string, opts?: { ref?: string; path?: string; maxFiles?: number; token?: string }): Promise<number>;
+  importRepo(url: string, opts?: { ref?: string | undefined; path?: string | undefined; maxFiles?: number | undefined; token?: string | undefined }): Promise<number>;
   importArchive(bytes: Uint8Array, name: string): Promise<number>;
   read(path: string): WorkspaceFile | undefined;
   write(path: string, content: string): void;

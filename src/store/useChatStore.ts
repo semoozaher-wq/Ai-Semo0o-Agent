@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Conversation, Message } from '../types/chat';
+import { Conversation, Message, MessageStatus } from '../types/chat';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
@@ -21,6 +21,7 @@ interface ChatState {
   deleteConversation(id: string): Promise<void>;
   renameConversation(id: string, title: string): void;
   send(text: string, opts?: { model?: string; mode?: 'chat' | 'agent' }): Promise<void>;
+  recoverInterrupted(): Promise<number>;
   stop(): void;
   clear(): Promise<void>;
 }
@@ -48,6 +49,39 @@ export const useChatStore = create<ChatState>((set, get) => {
     else if (event.type === 'tool_completed') patchMessage(conversationId, assistantId, { content: `تم تنفيذ ${String(event.toolId ?? 'الأداة')} والتحقق من النتيجة…`, status: 'streaming' });
     else if (event.type === 'step_completed') patchMessage(conversationId, assistantId, { content: `تم التحقق من الخطوة ${String(event.stepId ?? '')}…`, status: 'streaming' });
     else if (event.type === 'run_finished' && typeof event.final === 'string') patchMessage(conversationId, assistantId, { content: event.final, status: 'complete' });
+  };
+  // Stream a chat reply token-by-token. Returns true when the stream reached a
+  // terminal frame (`done`/`error`); false when streaming is unavailable so the
+  // caller can degrade to a single-shot completion. The `start` frame's
+  // conversationId is persisted on the local thread so it can be resumed.
+  const streamChat = async (conversationId: string, assistantId: string, content: string, model: string, backendId: string | undefined, token: number): Promise<boolean> => {
+    let streamed = '';
+    let terminal = false;
+    try {
+      await backendApi.chatStream(
+        { message: content, model, ...(backendId ? { conversationId: backendId } : {}) },
+        (frame) => {
+          if (token !== streamToken) return;
+          if (frame.type === 'start' && typeof frame.conversationId === 'string') {
+            const backendConversationId = frame.conversationId;
+            set((state) => ({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, backendId: backendConversationId } : item) }));
+          } else if (frame.type === 'token' && typeof frame.text === 'string') {
+            streamed += frame.text;
+            patchMessage(conversationId, assistantId, { content: streamed, status: 'streaming' });
+          } else if (frame.type === 'done') {
+            terminal = true;
+            patchMessage(conversationId, assistantId, { content: streamed, status: 'complete', model });
+          } else if (frame.type === 'error') {
+            terminal = true;
+            patchMessage(conversationId, assistantId, { content: streamed, status: 'error', error: typeof frame.error === 'string' ? frame.error : 'CHAT_STREAM_FAILED' });
+          }
+        },
+        activeController?.signal,
+      );
+      return terminal;
+    } catch {
+      return false;
+    }
   };
 
   return {
@@ -80,8 +114,14 @@ export const useChatStore = create<ChatState>((set, get) => {
       const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
       try {
         if (mode === 'chat') {
-          const result = await backendApi.chat({ message: content, model });
-          if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
+          const streamed = await streamChat(conversationId, assistantId, content, model, conversation?.backendId, token);
+          // Streaming unavailable (older backend, proxy that buffers SSE, or an
+          // empty stream): fall back to a single-shot completion so the user
+          // still gets an answer.
+          if (!streamed && token === streamToken) {
+            const result = await backendApi.chat({ message: content, model });
+            if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
+          }
         } else {
           const project = await ensureProject();
           const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
@@ -93,6 +133,32 @@ export const useChatStore = create<ChatState>((set, get) => {
       } catch (error) {
         if (token === streamToken) patchMessage(conversationId, assistantId, { content: 'تعذّر تشغيل الوكيل عبر الـBackend.', status: 'error', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED' });
       } finally { if (token === streamToken) set({ streaming: false }); persist(); }
+    },
+    async recoverInterrupted() {
+      // Ask the backend which threads hold a reply that was left mid-stream by a
+      // crash/restart, sweep them to `interrupted`, and mirror that locally so
+      // the UI can offer a retry instead of spinning forever.
+      try {
+        const { conversations } = await backendApi.getRecoverableChats();
+        if (!conversations.length) return 0;
+        const recoveredBackendIds = new Set<string>();
+        let count = 0;
+        for (const item of conversations) {
+          try { const result = await backendApi.recoverChat(item.conversationId); count += result.recovered.length; recoveredBackendIds.add(item.conversationId); } catch { /* keep sweeping the rest */ }
+        }
+        set((state) => {
+          const messages = { ...state.messages };
+          for (const conversation of state.conversations) {
+            if (!conversation.backendId || !recoveredBackendIds.has(conversation.backendId)) continue;
+            const list = messages[conversation.id];
+            if (!list) continue;
+            messages[conversation.id] = list.map((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'pending') ? { ...message, status: 'interrupted' as MessageStatus } : message);
+          }
+          return { messages };
+        });
+        persist();
+        return count;
+      } catch { return 0; }
     },
     stop() { streamToken += 1; activeController?.abort(); activeController = null; set({ streaming: false }); persist(); },
     async clear() { streamToken += 1; activeController?.abort(); set({ conversations: [], messages: {}, activeId: null, streaming: false }); await storage.remove(STORAGE_KEYS.conversations); await storage.remove(STORAGE_KEYS.messages); },
