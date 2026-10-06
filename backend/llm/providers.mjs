@@ -1,8 +1,68 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { normalizeModelId, modelProvider } from '../models/catalog.mjs';
+import { normalizeModelId, modelProvider, defaultModelForProvider, isModelCompatible } from '../models/catalog.mjs';
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const RETRIES = 2;
+
+// Statuses worth retrying: transient server/rate-limit/timeout conditions.
+const RETRYABLE_STATUS = [408, 429, 500, 502, 503, 504];
+
+function truncateDetail(value, max = 300) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+// A clear, actionable hint that names the exact env var to fix. This is what
+// replaces the opaque `LLM_HTTP_404` an operator used to see.
+function providerHint(provider, model) {
+  if (provider === 'gemini') {
+    return `Gemini does not serve model "${model}". Set GEMINI_MODEL to a supported Gemini model (e.g. gemini-2.5-flash-lite) or configure OPENAI_API_KEY for OpenAI models.`;
+  }
+  if (provider === 'anthropic') {
+    return `Anthropic does not serve model "${model}". Set ANTHROPIC_MODEL to a supported Claude model (e.g. claude-haiku-4-5) or configure OPENAI_API_KEY.`;
+  }
+  if (provider === 'openai') {
+    return `The OpenAI endpoint does not serve model "${model}". Set OPENAI_MODEL to a supported model (e.g. gpt-5-mini) or point OPENAI_API_BASE at a gateway that serves "${model}".`;
+  }
+  return `The configured provider does not serve model "${model}".`;
+}
+
+// Build a diagnostic error. A 404 is almost always "this provider does not
+// serve this model" (wrong model for the endpoint, or a model whose real
+// provider is not configured), so it is surfaced as LLM_MODEL_NOT_FOUND with
+// provider/model/endpoint/hint instead of the opaque LLM_HTTP_404.
+function buildHttpError(status, payload, context = {}) {
+  const provider = context.provider ?? 'unknown';
+  const model = context.model ?? 'unknown';
+  const endpoint = context.endpoint ?? 'unknown';
+  const detail = truncateDetail(
+    payload?.error?.message ??
+    payload?.error ??
+    payload?.message ??
+    payload?.raw ??
+    ''
+  );
+
+  const isNotFound = status === 404;
+  const code = isNotFound ? 'LLM_MODEL_NOT_FOUND' : `LLM_HTTP_${status}`;
+  const hint = isNotFound ? providerHint(provider, model) : undefined;
+
+  const error = new Error(
+    `${code}: provider=${provider} model=${model} endpoint=${endpoint}` +
+    `${detail ? ` detail=${detail}` : ''}` +
+    `${hint ? ` hint=${hint}` : ''}`
+  );
+
+  error.code = code;
+  error.status = status;
+  error.provider = provider;
+  error.model = model;
+  error.endpoint = endpoint;
+  if (hint) error.hint = hint;
+  error.payload = payload;
+
+  return error;
+}
 
 function usage(raw = {}) {
   const promptTokens = Number(
@@ -64,7 +124,7 @@ function withTimeout(signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
 async function requestJson(
   url,
   init,
-  { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}
+  { signal, timeoutMs = DEFAULT_TIMEOUT_MS, context = {} } = {}
 ) {
   let lastError;
 
@@ -95,15 +155,14 @@ async function requestJson(
         return payload;
       }
 
-      const error = new Error(
-        `LLM_HTTP_${response.status}`
+      const error = buildHttpError(
+        response.status,
+        payload,
+        { ...context, endpoint: url }
       );
 
-      error.status = response.status;
-      error.payload = payload;
-
       if (
-        ![408, 429, 500, 502, 503, 504].includes(
+        !RETRYABLE_STATUS.includes(
           response.status
         ) ||
         attempt === RETRIES
@@ -126,7 +185,7 @@ async function requestJson(
         attempt === RETRIES ||
         (
           error?.status &&
-          ![408, 429, 500, 502, 503, 504].includes(
+          !RETRYABLE_STATUS.includes(
             error.status
           )
         )
@@ -215,7 +274,7 @@ async function openaiComplete({
           : {}),
       }),
     },
-    { signal }
+    { signal, context: { provider: 'openai', model } }
   );
 
   return openAiMessage(payload);
@@ -448,7 +507,7 @@ async function geminiComplete({
         },
         body: JSON.stringify(body),
       },
-      { signal }
+      { signal, context: { provider: 'gemini', model } }
     );
 
   const candidate =
@@ -667,27 +726,6 @@ export function createLLMRouter(
     ])
   );
 
-  const choose = (model) => {
-    const lower =
-      String(model || '')
-        .toLowerCase();
-
-    const preferred =
-      lower.includes('gemini')
-        ? 'gemini'
-        : lower.includes('claude') ||
-            lower.includes('anthropic')
-          ? 'anthropic'
-          : 'openai';
-
-    return (
-      providers.find(
-        (item) =>
-          item.id === preferred
-      ) ?? providers[0]
-    );
-  };
-
   const getProvider = (id) =>
     providers.find(
       (item) =>
@@ -764,6 +802,37 @@ export function createLLMRouter(
     });
   };
 
+  // Resolve a model that is GUARANTEED to be served by `provider`. Prefers the
+  // operator-configured default (env OPENAI_MODEL / GEMINI_MODEL / ANTHROPIC_MODEL)
+  // when it is valid for that provider, otherwise the catalog default. This is
+  // what makes cross-provider remapping safe: the result always belongs to the
+  // provider, so it can never produce a 404 model-not-found.
+  const compatibleModelFor = (provider) => {
+    try {
+      const configured =
+        normalizeModelId(
+          provider.defaultModel
+        );
+
+      if (
+        isModelCompatible(
+          configured,
+          provider.id
+        )
+      ) {
+        return configured;
+      }
+    } catch {
+      /* fall through to the catalog default */
+    }
+
+    return defaultModelForProvider(
+      provider.id
+    );
+  };
+
+  const substitutionNotices = new Set();
+
   return {
     status: () =>
       providers.map(
@@ -784,9 +853,11 @@ export function createLLMRouter(
 
     async complete(input) {
       if (!providers.length) {
-        throw new Error(
-          'NO_SERVER_LLM_PROVIDER_CONFIGURED'
+        const error = new Error(
+          'NO_SERVER_LLM_PROVIDER_CONFIGURED: set at least one of OPENAI_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY), ANTHROPIC_API_KEY'
         );
+        error.code = 'NO_SERVER_LLM_PROVIDER_CONFIGURED';
+        throw error;
       }
 
       const normalized =
@@ -794,100 +865,114 @@ export function createLLMRouter(
           input.model
         );
 
-      const explicitFamily =
+      const requestedFamily =
         modelProvider(
           normalized
         );
 
-      const primary =
-        getProvider(
-          explicitFamily
-        ) ?? choose(normalized);
-
-      if (!primary) {
-        throw new Error(
-          `NO_PROVIDER_FOR_MODEL:${normalized}:${explicitFamily}`
-        );
-      }
-
-      let lastError;
-
       /*
-       * PRIMARY PROVIDER
+       * ROOT-CAUSE FIX (LLM_HTTP_404)
        *
-       * Respect the requested model exactly.
+       * A model is only ever dispatched to a provider that actually serves its
+       * family. Previously the requested model ID was sent verbatim to whichever
+       * provider happened to be configured first, so an OpenAI model such as
+       * `gpt-5` was POSTed to the Gemini endpoint and Gemini answered 404
+       * (model not found).
+       *
+       *   1. If the requested model's provider IS configured -> use it with the
+       *      EXACT requested model. A failure here is a real provider error and
+       *      is surfaced as-is (never silently swapped for another family).
+       *   2. If the requested model's provider is NOT configured -> remap to a
+       *      configured provider using THAT provider's own compatible model.
+       *      This is a transparent substitution (flagged on the result and
+       *      logged), never a fake response.
        */
-      try {
+      const familyProvider =
+        getProvider(
+          requestedFamily
+        );
+
+      if (familyProvider) {
         const result =
           await executeProvider({
-            provider: primary,
+            provider: familyProvider,
             model: normalized,
             input,
           });
 
-        markSuccess(primary);
+        markSuccess(familyProvider);
 
-        return result;
-      } catch (error) {
-        lastError = error;
-        markFailure(primary);
+        return {
+          ...result,
+          model: normalized,
+          requestedModel: normalized,
+          substituted: false,
+        };
+      }
 
-        /*
-         * FALLBACK
-         *
-         * If OpenAI fails, try Gemini automatically.
-         * Gemini receives its own configured/default model
-         * instead of receiving an OpenAI model ID.
-         */
+      let lastError;
+
+      for (const provider of providers) {
+        const model =
+          compatibleModelFor(
+            provider
+          );
+
+        // Hard invariant: never send a model to a provider that does not serve it.
         if (
-          primary.id === 'openai'
+          !isModelCompatible(
+            model,
+            provider.id
+          )
         ) {
-          const gemini =
-            getProvider(
-              'gemini'
-            );
-
-          if (gemini) {
-            try {
-              const geminiModel =
-                normalizeModelId(
-                  gemini.defaultModel
-                );
-
-              const result =
-                await executeProvider({
-                  provider: gemini,
-                  model: geminiModel,
-                  input,
-                });
-
-              markSuccess(gemini);
-
-              return result;
-            } catch (fallbackError) {
-              lastError =
-                fallbackError;
-              markFailure(
-                gemini
-              );
-            }
-          }
+          throw new Error(
+            `LLM_MODEL_PROVIDER_MISMATCH: provider=${provider.id} model=${model}`
+          );
         }
 
-        /*
-         * Preserve the existing Anthropic support.
-         * It is not used as the OpenAI → Gemini fallback,
-         * but remains available when explicitly selected.
-         */
+        try {
+          const result =
+            await executeProvider({
+              provider,
+              model,
+              input,
+            });
+
+          markSuccess(provider);
+
+          const noticeKey =
+            `${normalized}->${provider.id}:${model}`;
+
+          if (
+            !substitutionNotices.has(
+              noticeKey
+            )
+          ) {
+            substitutionNotices.add(
+              noticeKey
+            );
+
+            process.emitWarning(
+              `llm: requested model "${normalized}" belongs to provider "${requestedFamily}", which is not configured; using "${model}" on "${provider.id}" instead`,
+              { code: 'LLM_MODEL_SUBSTITUTED' }
+            );
+          }
+
+          return {
+            ...result,
+            model,
+            requestedModel: normalized,
+            substituted: true,
+          };
+        } catch (error) {
+          lastError = error;
+          markFailure(provider);
+        }
       }
 
-      if (lastError) {
-        throw lastError;
-      }
-
-      throw new Error(
-        `NO_HEALTHY_LLM_PROVIDER:${normalized}:${explicitFamily}`
+      throw lastError ?? new Error(
+        `NO_HEALTHY_LLM_PROVIDER:${normalized}:${requestedFamily}`
       );
     },
   };
-    }
+}
