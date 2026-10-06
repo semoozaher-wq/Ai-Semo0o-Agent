@@ -10,10 +10,10 @@ export interface StatCardProps {
   label: string;
   value: string;
   icon: IconName;
-  tone?: string;
-  trend?: number[];
-  delta?: string;
-  onPress?: () => void;
+  tone?: string | undefined;
+  trend?: number[] | undefined;
+  delta?: string | undefined;
+  onPress?: (() => void) | undefined;
 }
 
 export function StatCard({

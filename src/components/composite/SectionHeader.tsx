@@ -6,11 +6,11 @@ import { Icon, IconName } from '../ui/Icon';
 
 export interface SectionHeaderProps {
   title: string;
-  subtitle?: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  icon?: IconName;
-  style?: StyleProp<ViewStyle>;
+  subtitle?: string | undefined;
+  actionLabel?: string | undefined;
+  onAction?: (() => void) | undefined;
+  icon?: IconName | undefined;
+  style?: StyleProp<ViewStyle> | undefined;
 }
 
 export function SectionHeader({

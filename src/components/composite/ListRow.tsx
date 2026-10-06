@@ -6,12 +6,12 @@ import { Icon, IconName } from '../ui/Icon';
 
 export interface ListRowProps {
   title: string;
-  subtitle?: string;
-  icon?: IconName;
-  iconColor?: string;
-  right?: React.ReactNode;
-  onPress?: () => void;
-  showChevron?: boolean;
+  subtitle?: string | undefined;
+  icon?: IconName | undefined;
+  iconColor?: string | undefined;
+  right?: React.ReactNode | undefined;
+  onPress?: (() => void) | undefined;
+  showChevron?: boolean | undefined;
 }
 
 export function ListRow({
