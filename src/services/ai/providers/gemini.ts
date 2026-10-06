@@ -68,7 +68,7 @@ function mapFinishReason(reason: string | undefined, hasTools: boolean): ChatCom
 /** Convert internal messages to Gemini `contents` + `systemInstruction`. */
 export function toGeminiContents(messages: ChatCompletionMessage[]): {
   contents: GeminiContent[];
-  systemInstruction?: { parts: GeminiPart[] };
+  systemInstruction?: { parts: GeminiPart[] } | undefined;
 } {
   const systemTexts: string[] = [];
   const contents: GeminiContent[] = [];
@@ -292,7 +292,7 @@ function openAiToolsToGemini(
 type JsonSchema = NonNullable<ChatCompletionRequest['tools']>[number]['function']['parameters'];
 
 function toGeminiParameters(node: JsonSchema): Record<string, unknown> {
-  const rawType = Array.isArray(node.type) ? node.type[0] : node.type ?? 'string';
+  const rawType = Array.isArray(node.type) ? node.type[0] ?? 'string' : node.type ?? 'string';
   const out: Record<string, unknown> = {
     type: rawType.toUpperCase(),
   };

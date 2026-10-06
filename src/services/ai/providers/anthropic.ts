@@ -67,7 +67,7 @@ function mapStopReason(reason: string | null | undefined): ChatCompletionResult[
 
 /** Internal messages → Anthropic `system` + `messages`. */
 export function toAnthropicMessages(messages: ChatCompletionMessage[]): {
-  system?: string;
+  system?: string | undefined;
   messages: AnthropicMessage[];
 } {
   const systemTexts: string[] = [];
