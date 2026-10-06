@@ -16,9 +16,9 @@ export interface AppError {
   code: string;
   message: string;
   /** Optional developer-facing detail (never shown to end users raw). */
-  detail?: string;
+  detail?: string | undefined;
   /** Whether the operation can be retried safely. */
-  retryable?: boolean;
+  retryable?: boolean | undefined;
 }
 
 export function ok<T>(value: T): Result<T, never> {

@@ -38,21 +38,21 @@ export interface PlanStep {
   dependsOn: string[];
   status: StepStatus;
   /** Optional tool selected by an LLM planner for this step. */
-  toolId?: string;
+  toolId?: string | undefined;
   /** Arguments are validated again by the tool runtime before execution. */
-  toolArgs?: Record<string, unknown>;
+  toolArgs?: Record<string, unknown> | undefined;
 }
 
 export interface TaskStep extends PlanStep {
-  startedAt?: string;
-  finishedAt?: string;
-  output?: string;
-  toolInvocations?: ToolInvocation[];
-  error?: string;
-  logs?: string[];
-  verificationStatus?: 'VERIFIED' | 'FAILED' | 'BLOCKED' | 'UNVERIFIED';
-  evidenceIds?: string[];
-  retries?: number;
+  startedAt?: string | undefined;
+  finishedAt?: string | undefined;
+  output?: string | undefined;
+  toolInvocations?: ToolInvocation[] | undefined;
+  error?: string | undefined;
+  logs?: string[] | undefined;
+  verificationStatus?: 'VERIFIED' | 'FAILED' | 'BLOCKED' | 'UNVERIFIED' | undefined;
+  evidenceIds?: string[] | undefined;
+  retries?: number | undefined;
 }
 
 export interface Plan {
@@ -70,18 +70,18 @@ export interface Task {
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-  plan?: Plan;
+  startedAt?: string | undefined;
+  finishedAt?: string | undefined;
+  plan?: Plan | undefined;
   steps: TaskStep[];
   /** 0..1 */
   progress: number;
-  agentId?: string;
+  agentId?: string | undefined;
   model: string;
-  result?: string;
-  error?: string;
-  tokensUsed?: number;
-  iterations?: number;
+  result?: string | undefined;
+  error?: string | undefined;
+  tokensUsed?: number | undefined;
+  iterations?: number | undefined;
 }
 
 export interface TaskTemplate {

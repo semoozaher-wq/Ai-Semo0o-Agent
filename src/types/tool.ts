@@ -53,9 +53,9 @@ export interface ToolInvocation {
   toolId: string;
   args: Record<string, unknown>;
   startedAt: string;
-  finishedAt?: string;
+  finishedAt?: string | undefined;
   status: 'pending' | 'running' | 'success' | 'error';
   output?: unknown;
-  error?: string;
-  durationMs?: number;
+  error?: string | undefined;
+  durationMs?: number | undefined;
 }

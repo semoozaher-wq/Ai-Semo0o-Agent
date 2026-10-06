@@ -52,7 +52,7 @@ export interface AnatomyCatalog {
 /** A resolved educational guidance block for a selected fragment. */
 export interface PainGuidance {
   part: MusclePart;
-  group?: MuscleGroup;
+  group?: MuscleGroup | undefined;
   warning?: string | null;
   recommendation: string;
   commonCauses: string[];

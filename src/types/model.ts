@@ -145,12 +145,12 @@ export interface ChatCompletionMessage {
 export interface ChatCompletionRequest {
   model: string;
   messages: ChatCompletionMessage[];
-  temperature?: number;
-  maxTokens?: number;
-  stream?: boolean;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
+  stream?: boolean | undefined;
   /** JSON-schema tool descriptors. */
-  tools?: ToolSchema[];
-  toolChoice?: ToolChoice;
+  tools?: ToolSchema[] | undefined;
+  toolChoice?: ToolChoice | undefined;
   /** Optional structured JSON response contract for planning/extraction. */
   responseFormat?: {
     type: 'json_schema';
@@ -161,7 +161,7 @@ export interface ChatCompletionRequest {
     };
   };
   /** Abort in-flight network requests. */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 }
 
 export interface TokenUsage {
@@ -177,7 +177,7 @@ export interface ChatCompletionResult {
   usage: TokenUsage;
   finishReason: 'stop' | 'length' | 'tool_calls' | 'error';
   /** Present when `finishReason === 'tool_calls'`. */
-  toolCalls?: ToolCall[];
+  toolCalls?: ToolCall[] | undefined;
   /** Raw provider payload, useful for debugging. */
   raw?: unknown;
 }
@@ -187,8 +187,8 @@ export interface ChatCompletionChunk {
   delta: string;
   done: boolean;
   /** Emitted (typically on the final chunk) when the model requests tools. */
-  toolCalls?: ToolCall[];
-  finishReason?: ChatCompletionResult['finishReason'];
+  toolCalls?: ToolCall[] | undefined;
+  finishReason?: ChatCompletionResult['finishReason'] | undefined;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -196,13 +196,13 @@ export interface ChatCompletionChunk {
 /* -------------------------------------------------------------------------- */
 
 export interface ProviderConfig {
-  apiKey?: string;
+  apiKey?: string | undefined;
   /** Override the REST base URL (Azure, OpenRouter, self-hosted gateway…). */
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   /** Extra headers merged into every request (e.g. OpenRouter attribution). */
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
   /** Request timeout in milliseconds. */
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
 }
 
 export type ProviderConfigMap = Partial<Record<ProviderId, ProviderConfig>>;

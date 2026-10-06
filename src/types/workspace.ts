@@ -32,7 +32,7 @@ export interface WorkspaceFile {
   isBinary: boolean;
   source: WorkspaceOriginKind;
   /** Repo URL / archive name the file came from. */
-  sourceRef?: string;
+  sourceRef?: string | undefined;
   /** True when the file was created or edited inside the app. */
   modified: boolean;
   createdAt: string;
@@ -66,7 +66,7 @@ export interface GitHubRepoRef {
 export interface GitHubTreeEntry {
   path: string;
   type: 'blob' | 'tree';
-  size?: number;
+  size?: number | undefined;
   sha: string;
 }
 

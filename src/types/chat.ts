@@ -1,7 +1,7 @@
 import { ChatRole, TokenUsage } from './model';
 import { ToolInvocation } from './tool';
 
-export type MessageStatus = 'pending' | 'streaming' | 'complete' | 'error';
+export type MessageStatus = 'pending' | 'streaming' | 'complete' | 'error' | 'interrupted';
 
 export type AttachmentKind = 'image' | 'document' | 'audio' | 'code' | 'other';
 
@@ -21,12 +21,12 @@ export interface Message {
   content: string;
   createdAt: string;
   status: MessageStatus;
-  model?: string;
-  attachments?: Attachment[];
-  toolInvocations?: ToolInvocation[];
-  agentTaskId?: string;
-  usage?: TokenUsage;
-  error?: string;
+  model?: string | undefined;
+  attachments?: Attachment[] | undefined;
+  toolInvocations?: ToolInvocation[] | undefined;
+  agentTaskId?: string | undefined;
+  usage?: TokenUsage | undefined;
+  error?: string | undefined;
 }
 
 export interface Conversation {
@@ -39,6 +39,9 @@ export interface Conversation {
   messageCount: number;
   lastMessagePreview?: string;
   agentId?: string;
+  /** Server-side conversation id, captured from the stream `start` frame so the
+   *  thread can be resumed and recovered after a reload. */
+  backendId?: string | undefined;
 }
 
 export interface ChatQuickAction {
