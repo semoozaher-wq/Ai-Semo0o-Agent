@@ -1,131 +1,89 @@
 # =============================================================================
 # render.yaml — Blueprint for the Ai-Semo0o-Agent BACKEND on Render.
 # =============================================================================
-# Vercel cannot run this backend (long-running Node server + node:sqlite +
-# writable disk + background worker). Render / Railway / Fly.io / a VPS can.
-#
-# HOW TO USE
-#   1. Push this repository to GitHub.
-#   2. Render Dashboard -> New -> Blueprint -> pick this repo.
-#   3. Render reads this file and creates the service.
-#   4. Fill the secret env vars in the dashboard (SECRETS_MASTER_KEY, ...).
-#
-# THE START COMMAND (read this — it is why Render used to run `node server.js`)
-# -----------------------------------------------------------------------------
-# The ONLY correct Start Command for this backend is:
-#     node --experimental-sqlite backend/server.mjs
-# (`--experimental-sqlite` is required because Node's built-in `node:sqlite` is
-#  still experimental on Node 22.)
-#
-# Render's DEFAULT start command for a Node web service is `node server.js`.
-# Render uses that default whenever a service has NO explicit Start Command,
-# which happens when the service is created MANUALLY (Dashboard -> New ->
-# Web Service). In that case THIS FILE IS IGNORED, and the deploy crashes with:
-#     Running 'node server.js'
-#     Error: Cannot find module '/opt/render/project/src/server.js'
-#
-# => To apply the Start Command below, create the service from THIS Blueprint
-#    (Dashboard -> New -> Blueprint), OR open the existing service and set
-#    Settings -> Start Command to the exact line above, then redeploy.
-#    A root `server.js` compatibility shim is also shipped as a safety net so
-#    that even Render's default command boots the real backend, but the Start
-#    Command below remains the canonical, supported configuration.
-#
-# ENVIRONMENT VARIABLES (read this — it is why the app used to fail with
-# ENV_VALIDATION_FAILED:MISSING_SECRETS_MASTER_KEY,MISSING_DATABASE_FILE,MISSING_WORKSPACE_ROOT)
-# -----------------------------------------------------------------------------
-# The backend requires three values in production:
-#   * SECRETS_MASTER_KEY — a REAL secret. NO default, never committed. Add it in
-#                          the dashboard (Environment -> Add Env Var). Generate:
-#                          node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-#   * DATABASE_FILE      — absolute path to the SQLite file.
-#   * WORKSPACE_ROOT     — absolute path to the agent workspace.
-# DATABASE_FILE and WORKSPACE_ROOT are NON-secret storage paths and now have safe
-# container defaults (backend/config/runtime-defaults.mjs): when unset they resolve
-# to `<repo>/backend/data/...` (writable on Render Free), falling back to the OS
-# temp dir. So the ONLY value you must add by hand is SECRETS_MASTER_KEY. Set the
-# two storage vars only to override the default (e.g. a paid-plan persistent disk).
-#
-# FREE vs PAID (read this — it is why the app used to crash on Free)
-# -----------------------------------------------------------------------------
-# The Free plan has NO persistent disk, so `/var/data` is never mounted and is
-# NOT writable. The old configuration pointed DATABASE_FILE at
-# `/var/data/db/agent.sqlite`, and the database client blindly tried to
-# `mkdir /var/data/db`, which aborted the process at boot with:
-#     EACCES: permission denied, mkdir '/var/data/db'
-# The database client is now defensive: it verifies that the target directory is
-# writable and, if not, automatically falls back to a writable location
-# (./backend/data/agent.sqlite, then the OS temp dir). So this blueprint boots on
-# the Free plan out of the box — the SQLite file just lives on the ephemeral
-# filesystem (data is reset on every deploy).
-#
-# To KEEP the database across deploys, use a paid plan and re-enable the
-# persistent disk: set `plan:` to `starter` (or higher) and uncomment the `disk:`
-# block at the bottom of this file.
-# =============================================================================
+
 services:
   - type: web
     name: ai-semo0o-backend
     runtime: node
-    plan: free                    # Free works now (no disk). Use `starter`+disk for persistence.
-    region: frankfurt             # change to the region closest to your users
-    buildCommand: npm install     # the backend itself has no runtime deps
+    plan: free
+    region: frankfurt
+
+    # Reproducible install from package-lock.json
+    buildCommand: npm ci
+
+    # Canonical backend start command
     startCommand: node --experimental-sqlite backend/server.mjs
+
     healthCheckPath: /health
     autoDeploy: true
+
     envVars:
       - key: NODE_VERSION
-        value: 22.11.0            # node:sqlite needs Node >= 22.5.0
+        value: 22.11.0
+
       - key: NODE_ENV
         value: production
+
+      # Structured production logs
+      - key: LOG_FORMAT
+        value: json
+
       - key: BIND_HOST
-        value: 0.0.0.0            # the server also FORCES 0.0.0.0 on Render whenever PORT is set
-      # Do NOT hardcode PORT: Render injects it automatically (usually 10000) and
-      # its port-scanner probes exactly that port. The server reads process.env.PORT.
-      # - key: PORT
-      #   value: 8787
+        value: 0.0.0.0
+
+      # Render injects PORT automatically.
       - key: DISABLE_WORKER
-        value: "0"                # keep the background worker running
-      # --- Storage (OPTIONAL — the backend has safe container defaults) -------
-      # Leave these UNSET for the Free plan. When they are not set, the backend
-      # fills them at boot (backend/config/runtime-defaults.mjs) with a writable,
-      # container-appropriate path:
-      #     DATABASE_FILE  -> <repo>/backend/data/agent.sqlite   (falls back to <tmp>/semo0o)
-      #     WORKSPACE_ROOT -> <repo>/backend/data/workspace      (falls back to <tmp>/semo0o/workspace)
-      # `<repo>/backend/data` is git-ignored and writable on Render Free, so the
-      # service boots with no persistent disk. The SQLite client keeps its own
-      # fallback chain if the chosen path turns out to be unwritable.
+        value: "0"
+
+      # -----------------------------------------------------------------------
+      # STORAGE
+      # -----------------------------------------------------------------------
+      # On Render Free there is no persistent disk.
+      # The application automatically falls back to:
+      #   backend/data/agent.sqlite
+      #   backend/data/workspace
       #
-      # Only set them to OVERRIDE the default — typically to use a persistent disk
-      # on a PAID plan (uncomment the `disk:` block at the bottom, set `plan:` to
-      # `starter`+, and uncomment the two vars below).
+      # Do NOT set DATABASE_FILE or WORKSPACE_ROOT to /var/data on Free.
+      #
+      # For a paid Render plan with Persistent Disk, configure:
+      #
       # - key: DATABASE_FILE
       #   value: /var/data/db/agent.sqlite
+      #
       # - key: WORKSPACE_ROOT
       #   value: /var/data/workspace
-      # --- Set these in the Render dashboard (do NOT commit real secrets) -----
-      # SECRETS_MASTER_KEY is REQUIRED in production and has NO default: generate a
-      # real 32+ byte value and add it in the dashboard (Environment -> Add Env Var).
-      #   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+
+      # -----------------------------------------------------------------------
+      # SECRETS
+      # -----------------------------------------------------------------------
+      # Add real secrets from the Render Dashboard.
+      # NEVER commit their values to GitHub.
+      #
       # - key: SECRETS_MASTER_KEY
-      # - key: ALLOWED_ORIGIN       # exact origin of the Vercel frontend, e.g. https://your-app.vercel.app
-      # - key: PUBLIC_APP_URL       # same as ALLOWED_ORIGIN
-      # --- LLM providers: set at least ONE, or chat/agent runs fail closed ----
-      # The request is sent only to the provider that serves the chosen model.
-      # If that provider is unconfigured the request is remapped to a configured
-      # provider's compatible model (logged as LLM_MODEL_SUBSTITUTED). With none
-      # configured, runs fail with NO_SERVER_LLM_PROVIDER_CONFIGURED.
+      # - key: ALLOWED_ORIGIN
+      # - key: PUBLIC_APP_URL
+
+      # -----------------------------------------------------------------------
+      # LLM PROVIDERS
+      # -----------------------------------------------------------------------
+      # Configure at least one provider in Render Dashboard.
+      #
       # - key: OPENAI_API_KEY
-      # - key: OPENAI_API_BASE        # optional OpenAI-compatible gateway URL
-      # - key: OPENAI_MODEL           # optional, default gpt-5-mini
-      # - key: GEMINI_API_KEY         # or GOOGLE_API_KEY
-      # - key: GEMINI_MODEL           # optional, default gemini-2.5-flash-lite
+      # - key: OPENAI_API_BASE
+      # - key: OPENAI_MODEL
+      #
+      # - key: GEMINI_API_KEY
+      # - key: GEMINI_MODEL
+      #
       # - key: ANTHROPIC_API_KEY
-      # - key: ANTHROPIC_MODEL        # optional, default claude-haiku-4-5
-    # --- OPTIONAL: persistent disk (requires a PAID plan) ---------------------
-    # Uncomment this block AND set `plan:` above to `starter` (or higher) to keep
-    # the SQLite database across deploys. On the Free plan there is no disk, so
-    # leave it commented out.
+      # - key: ANTHROPIC_MODEL
+
+    # -------------------------------------------------------------------------
+    # OPTIONAL PERSISTENT DISK
+    # -------------------------------------------------------------------------
+    # Only for PAID Render plans.
+    #
     # disk:
     #   name: data
     #   mountPath: /var/data
