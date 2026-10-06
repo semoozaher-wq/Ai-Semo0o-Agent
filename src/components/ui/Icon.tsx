@@ -19,9 +19,9 @@ export type IconTone =
 
 export interface IconProps {
   name: IconName;
-  size?: number;
-  color?: string;
-  tone?: IconTone;
+  size?: number | undefined;
+  color?: string | undefined;
+  tone?: IconTone | undefined;
 }
 
 const TONE_KEYS: Record<IconTone, keyof ThemeColors> = {

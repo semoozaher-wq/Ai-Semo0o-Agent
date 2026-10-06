@@ -12,11 +12,11 @@ import { Gradient } from './Gradient';
 export interface CardProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
-  padded?: boolean;
-  onPress?: () => void;
-  gradient?: GradientName;
-  accent?: string;
-  bordered?: boolean;
+  padded?: boolean | undefined;
+  onPress?: (() => void) | undefined;
+  gradient?: GradientName | undefined;
+  accent?: string | undefined;
+  bordered?: boolean | undefined;
 }
 
 export function Card({

@@ -14,7 +14,7 @@ export type BadgeTone =
 
 export interface BadgeProps {
   label: string;
-  tone?: BadgeTone;
+  tone?: BadgeTone | undefined;
   style?: StyleProp<ViewStyle>;
 }
 

@@ -23,15 +23,15 @@ export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export interface ButtonProps {
   label: string;
-  onPress?: () => void;
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  icon?: IconName;
-  iconRight?: IconName;
-  loading?: boolean;
-  disabled?: boolean;
-  fullWidth?: boolean;
-  style?: StyleProp<ViewStyle>;
+  onPress?: (() => void) | undefined;
+  variant?: ButtonVariant | undefined;
+  size?: ButtonSize | undefined;
+  icon?: IconName | undefined;
+  iconRight?: IconName | undefined;
+  loading?: boolean | undefined;
+  disabled?: boolean | undefined;
+  fullWidth?: boolean | undefined;
+  style?: StyleProp<ViewStyle> | undefined;
 }
 
 export function Button({
