@@ -87,10 +87,10 @@ test('LLM planner requests strict JSON and normalizes a validated plan', async (
   });
 
   assert.equal(result.plan.steps.length, 2);
-  assert.equal(result.plan.steps[1].dependsOn[0], 'step-1');
-  assert.equal(result.plan.steps[0].toolId, 'code.analyze');
-  assert.equal(provider.requests[0].responseFormat?.jsonSchema.name, 'semo0o_agent_plan');
-  assert.equal(provider.requests[0].responseFormat?.jsonSchema.strict, true);
+  assert.equal(result.plan.steps[1]?.dependsOn[0], 'step-1');
+  assert.equal(result.plan.steps[0]?.toolId, 'code.analyze');
+  assert.equal(provider.requests[0]?.responseFormat?.jsonSchema.name, 'semo0o_agent_plan');
+  assert.equal(provider.requests[0]?.responseFormat?.jsonSchema.strict, true);
 });
 
 test('LLM planner falls back to the next provider and records the failed attempt', async () => {
@@ -104,7 +104,7 @@ test('LLM planner falls back to the next provider and records the failed attempt
 
   assert.equal(result.providerId, 'openai');
   assert.equal(result.attempts.length, 2);
-  assert.match(result.attempts[0].error ?? '', /PROVIDER_UNAVAILABLE/);
+  assert.match(result.attempts[0]?.error ?? '', /PROVIDER_UNAVAILABLE/);
 });
 
 test('orchestrator never reports verified success for unavailable tools', async () => {
@@ -119,8 +119,8 @@ test('orchestrator never reports verified success for unavailable tools', async 
 
   assert.equal(result.status, 'failed');
   assert.equal(result.outputs.length, 1);
-  assert.equal(result.outputs[0].ok, false);
-  assert.match(result.outputs[0].error ?? '', /لا يوجد تنفيذ للأداة/);
+  assert.equal(result.outputs[0]?.ok, false);
+  assert.match(result.outputs[0]?.error ?? '', /لا يوجد تنفيذ للأداة/);
   assert.ok(result.errors.some((error) => /لا يوجد تنفيذ للأداة/.test(error)));
 });
 
@@ -270,8 +270,8 @@ test('simulated tool output cannot produce production verification evidence', as
   try {
     const result = await new AgentOrchestrator().run({ goal: 'لا تعتمد المحاكاة', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, requestPermission: async () => true });
     assert.equal(result.status, 'failed');
-    assert.equal(result.evidence[0].simulated, true);
-    assert.equal(result.verifications[0].status, 'FAILED');
+    assert.equal(result.evidence[0]?.simulated, true);
+    assert.equal(result.verifications[0]?.status, 'FAILED');
   } finally {
     unregisterTool('code.run');
   }

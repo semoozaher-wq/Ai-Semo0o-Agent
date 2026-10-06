@@ -87,8 +87,12 @@ class ScriptedProvider implements LLMProvider {
   constructor(private readonly script: ChatCompletionResult[]) {}
 
   private next(): ChatCompletionResult {
-    const result = this.script[Math.min(this.calls, this.script.length - 1)];
+    const result =
+      this.script[Math.min(this.calls, this.script.length - 1)] ?? this.script[0];
     this.calls += 1;
+    if (!result) {
+      throw new Error('ScriptedProvider has no scripted responses');
+    }
     return result;
   }
 
@@ -124,24 +128,24 @@ function testToolSchema(): void {
   check('strict defaults to true', schema.function.strict === true);
   check('description prefers Arabic + return contract', /Returns:/.test(schema.function.description));
   const props = schema.function.parameters.properties!;
-  check('numeric default forwarded', props.times.default === 1);
-  check('minimum forwarded', props.times.minimum === 1);
+  check('numeric default forwarded', props.times?.default === 1);
+  check('minimum forwarded', props.times?.minimum === 1);
   check(
     'enum forwarded',
-    JSON.stringify(props.mode.enum) === JSON.stringify(['plain', 'loud']),
+    JSON.stringify(props.mode?.enum) === JSON.stringify(['plain', 'loud']),
   );
-  check('array items typed', props.tags.items?.type === 'string');
+  check('array items typed', props.tags?.items?.type === 'string');
 
   const gemini = toGeminiTools([sampleTool]);
-  check('gemini returns functionDeclarations', gemini.length === 1 && gemini[0].functionDeclarations.length === 1);
+  check('gemini returns functionDeclarations', gemini.length === 1 && gemini[0]?.functionDeclarations.length === 1);
   check(
     'gemini types are uppercase',
-    gemini[0].functionDeclarations[0].parameters.properties!.text.type === 'STRING',
+    gemini[0]?.functionDeclarations[0]?.parameters.properties?.text?.type === 'STRING',
   );
 
   const anthropic = toAnthropicTools([sampleTool]);
-  check('anthropic exposes input_schema', anthropic[0].input_schema.type === 'object');
-  check('anthropic name matches', anthropic[0].name === 'demo.echo');
+  check('anthropic exposes input_schema', anthropic[0]?.input_schema.type === 'object');
+  check('anthropic name matches', anthropic[0]?.name === 'demo.echo');
 
   check('toolChoice auto', normalizeToolChoice('auto').openai === 'auto');
   check('toolChoice none → gemini NONE', normalizeToolChoice('none').gemini === 'NONE');
@@ -225,8 +229,8 @@ async function testToolLoop(): Promise<void> {
   check('final content returned', loop.content === 'Final: hello hello');
   check('two steps executed', loop.steps === 2);
   check('stopped on final', loop.stopped === 'final');
-  check('tool executed exactly once', executed.length === 1 && executed[0].toolId === 'demo.echo');
-  check('tool received validated args', executed[0].args.text === 'hello');
+  check('tool executed exactly once', executed.length === 1 && executed[0]?.toolId === 'demo.echo');
+  check('tool received validated args', executed[0]?.args.text === 'hello');
   check('usage accumulated across steps', loop.usage.totalTokens === 30);
   check(
     'tool result fed back as role:tool',
@@ -420,7 +424,7 @@ async function testWorkspace(): Promise<void> {
   check('origin updated', ws.current.origin.kind === 'github');
 
   const scoped = ws.toZipInputs(['lib/util.ts']);
-  check('toZipInputs scopes by path', scoped.length === 1 && scoped[0].path === 'lib/util.ts');
+  check('toZipInputs scopes by path', scoped.length === 1 && scoped[0]?.path === 'lib/util.ts');
 }
 
 /* -------------------------------------------------------------------------- */
