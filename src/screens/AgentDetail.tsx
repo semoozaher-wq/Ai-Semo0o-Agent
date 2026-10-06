@@ -315,7 +315,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
                           <Text variant="body" weight="semibold">
                             {spec.labelAr}
                           </Text>
-                          <Badge label={RISK_LABEL[spec.risk]} tone={RISK_TONE[spec.risk]} />
+                          <Badge label={RISK_LABEL[spec.risk] ?? spec.risk} tone={RISK_TONE[spec.risk]} />
                         </View>
                         <Text variant="caption" tone="muted" style={{ marginTop: 4 }}>
                           {spec.descriptionAr}

@@ -235,11 +235,11 @@ export function Analytics() {
                   <View style={styles.statusHead}>
                     <Badge label={STATUS_META[s].label} tone={STATUS_META[s].tone} />
                     <Text variant="caption" tone="muted">
-                      {formatNumber(statusCounts[s])}
+                      {formatNumber(statusCounts[s] ?? 0)}
                     </Text>
                   </View>
                   <Progress
-                    value={statusCounts[s] / maxStatus}
+                    value={(statusCounts[s] ?? 0) / maxStatus}
                     color={theme.colors.primary}
                     height={6}
                     style={{ marginTop: 6 }}
