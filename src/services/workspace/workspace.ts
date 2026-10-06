@@ -178,7 +178,7 @@ export class WorkspaceService {
     for (const input of inputs) {
       const file = makeWorkspaceFile(input);
       const idx = this.workspace.files.findIndex((f) => f.path === file.path);
-      if (idx >= 0) this.workspace.files[idx] = { ...file, createdAt: this.workspace.files[idx].createdAt };
+      if (idx >= 0) this.workspace.files[idx] = { ...file, createdAt: this.workspace.files[idx]?.createdAt ?? file.createdAt };
       else this.workspace.files.push(file);
       added.push(file);
     }

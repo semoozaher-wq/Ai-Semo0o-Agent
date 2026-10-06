@@ -44,6 +44,7 @@ export async function extractZip(
 
   for (const rawPath of paths) {
     const entry = zip.files[rawPath];
+    if (!entry) continue;
     const path = stripPrefix(rawPath, rootDir);
     if (!path) continue;
 
@@ -166,7 +167,7 @@ function decodeUtf8(bytes: Uint8Array): string {
     return new TextDecoder('utf-8').decode(bytes);
   }
   let out = '';
-  for (let i = 0; i < bytes.length; i += 1) out += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.length; i += 1) out += String.fromCharCode(bytes[i] ?? 0);
   return out;
 }
 

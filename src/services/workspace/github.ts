@@ -18,9 +18,9 @@ import type {
 const API = 'https://api.github.com';
 
 export interface GitHubOptions {
-  token?: string;
-  signal?: AbortSignal;
-  timeoutMs?: number;
+  token?: string | undefined;
+  signal?: AbortSignal | undefined;
+  timeoutMs?: number | undefined;
 }
 
 function headers(token?: string): Record<string, string> {
@@ -56,10 +56,12 @@ export function parseGitHubUrl(input: string): GitHubRepoRef | null {
   // SSH form: git@github.com:owner/repo.git
   const ssh = raw.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
   if (ssh) {
+    const owner = ssh[1] ?? '';
+    const repo = (ssh[2] ?? '').replace(/\.git$/i, '');
     return {
-      owner: ssh[1],
-      repo: ssh[2].replace(/\.git$/i, ''),
-      url: `https://github.com/${ssh[1]}/${ssh[2].replace(/\.git$/i, '')}`,
+      owner,
+      repo,
+      url: `https://github.com/${owner}/${repo}`,
     };
   }
 
@@ -75,7 +77,7 @@ export function parseGitHubUrl(input: string): GitHubRepoRef | null {
   const parts = rest.split('/').filter(Boolean);
   if (parts.length < 2) return null;
 
-  const [owner, repo, kind, ...tail] = parts;
+  const [owner = '', repo = '', kind, ...tail] = parts;
   const ref: GitHubRepoRef = {
     owner,
     repo,
@@ -83,7 +85,8 @@ export function parseGitHubUrl(input: string): GitHubRepoRef | null {
   };
 
   if ((kind === 'tree' || kind === 'blob') && tail.length > 0) {
-    ref.ref = tail[0];
+    const first = tail[0];
+    if (first !== undefined) ref.ref = first;
     const sub = tail.slice(1).join('/');
     if (kind === 'tree' && sub) ref.path = sub;
     if (kind === 'blob' && sub) ref.path = sub;
@@ -224,13 +227,13 @@ export interface GitHubImportResult {
 
 export interface GitHubImportOptions extends GitHubOptions {
   /** Branch, tag, or commit SHA to import (overrides the ref parsed from the URL). */
-  ref?: string;
+  ref?: string | undefined;
   /** Max files to pull content for (default 80). */
-  maxFiles?: number;
+  maxFiles?: number | undefined;
   /** Only import files under this sub-path. */
-  pathPrefix?: string;
+  pathPrefix?: string | undefined;
   /** Skip files larger than this (default 512 KB). */
-  maxFileBytes?: number;
+  maxFileBytes?: number | undefined;
 }
 
 /**
