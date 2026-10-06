@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,6 +42,12 @@ const MINIMAL_PDF = [
   '',
 ].join('\n');
 
+// `pdf.extract` shells out to poppler's `pdftotext`. CI installs poppler-utils,
+// but the binary is optional in other environments, so this regression test
+// (which targets the missing-`await` bug, not poppler itself) skips cleanly when
+// the binary is unavailable instead of failing the whole suite.
+const PDFTOTEXT_AVAILABLE = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error;
+
 async function fixture() {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-tools-await-'));
   const db = new Database(path.join(dir, 'agent.sqlite'));
@@ -78,7 +85,7 @@ test('data.profile resolves its path and profiles a CSV (regression: missing awa
   } finally { await fx.close(); }
 });
 
-test('pdf.extract resolves its path and extracts text (regression: missing await)', async () => {
+test('pdf.extract resolves its path and extracts text (regression: missing await)', { skip: PDFTOTEXT_AVAILABLE ? false : 'pdftotext (poppler-utils) not installed' }, async () => {
   const fx = await fixture();
   try {
     const result = await fx.tools.run('pdf.extract', { path: 'mini.pdf' }, { workspaceRoot: fx.dir });
