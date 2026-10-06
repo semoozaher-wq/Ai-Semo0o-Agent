@@ -2,17 +2,10 @@
 # .gitignore
 # =============================================================================
 # This repository tracks BOTH the Expo frontend AND the Node backend, because
-# the backend is deployed from git (see render.yaml -> startCommand:
-#   node --experimental-sqlite backend/server.mjs).
+# the backend is deployed from git.
 #
-# Vercel only builds the Expo web frontend (npm run build -> expo export) and
-# never bundles backend/ (the frontend does not import it), so SOURCE trees are
-# intentionally NOT ignored here. Only local / runtime artifacts are ignored.
-#
-# (The previous revision ignored whole source trees such as `backend/`, `data/`
-#  and `test/`. That silently dropped every newly added backend module and test
-#  from version control — which would have broken the Render deploy, since the
-#  backend server imports those modules at boot. Fixed.)
+# The frontend is not allowed to bundle backend/ directly, so source trees are
+# intentionally NOT ignored. Only runtime artifacts are ignored.
 # =============================================================================
 
 # --- Dependencies & tooling caches -------------------------------------------
@@ -22,7 +15,7 @@ node_modules/
 coverage/
 *.tsbuildinfo
 
-# --- Runtime data (SQLite database + agent workspace) — never commit ---------
+# --- Runtime data (SQLite database + agent workspace) -----------------------
 *.sqlite
 *.sqlite-*
 backend/data/
@@ -30,7 +23,7 @@ backend/data/
 # --- Archives (never shipped in git) -----------------------------------------
 *.zip
 
-# --- Local secrets (defence in depth — real values are never committed) ------
+# --- Local secrets -----------------------------------------------------------
 .env
 .env.*
 !.env.example
