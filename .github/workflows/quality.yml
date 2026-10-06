@@ -51,6 +51,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # `pdf.extract` shells out to poppler's `pdftotext`; install it so the
+      # pdf.extract regression test runs for real (it self-skips when absent).
+      - name: Install poppler-utils (pdftotext for the pdf.extract tool test)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Tests (unit + integration + backend + pain-map)
         run: npm test
 

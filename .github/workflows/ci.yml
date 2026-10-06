@@ -30,6 +30,11 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      # `pdf.extract` shells out to poppler's `pdftotext`; install it so the
+      # pdf.extract regression test runs for real (it self-skips when absent).
+      - name: Install poppler-utils (pdftotext for the pdf.extract tool test)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Run project tests
         run: npm test
 
