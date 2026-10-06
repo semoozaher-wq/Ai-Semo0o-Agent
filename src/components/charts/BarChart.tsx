@@ -5,11 +5,11 @@ import { Text } from '../ui/Text';
 
 export interface BarChartProps {
   data: number[];
-  labels?: string[];
-  height?: number;
-  color?: string;
-  highlightIndex?: number;
-  showValues?: boolean;
+  labels?: string[] | undefined;
+  height?: number | undefined;
+  color?: string | undefined;
+  highlightIndex?: number | undefined;
+  showValues?: boolean | undefined;
 }
 
 export function BarChart({

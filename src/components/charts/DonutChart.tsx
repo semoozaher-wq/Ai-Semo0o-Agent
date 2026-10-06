@@ -31,12 +31,15 @@ export function DonutChart({
   const total = segments.reduce((acc, s) => acc + s.value, 0) || 1;
 
   const dashes = segments.map((s) => (s.value / total) * circumference);
-  const arcs = segments.map((segment, index) => ({
-    segment,
-    dash: dashes[index],
-    gap: circumference - dashes[index],
-    offset: dashes.slice(0, index).reduce((a, b) => a + b, 0),
-  }));
+  const arcs = segments.map((segment, index) => {
+    const dash = dashes[index] ?? 0;
+    return {
+      segment,
+      dash,
+      gap: circumference - dash,
+      offset: dashes.slice(0, index).reduce((a, b) => a + b, 0),
+    };
+  });
 
   return (
     <View style={{ width: size, height: size }}>
