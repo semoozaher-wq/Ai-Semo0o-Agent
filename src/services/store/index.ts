@@ -11,12 +11,12 @@ import { sleep } from '../../utils/async';
 import { clamp } from '../../utils/array';
 
 export interface StoreQuery {
-  category?: StoreCategory['id'];
-  search?: string;
-  pricing?: AgentManifest['pricing'] | 'all';
-  minRating?: number;
-  sort?: 'relevance' | 'rating' | 'installs' | 'recent' | 'name';
-  installedOnly?: boolean;
+  category?: StoreCategory['id'] | undefined;
+  search?: string | undefined;
+  pricing?: AgentManifest['pricing'] | 'all' | undefined;
+  minRating?: number | undefined;
+  sort?: 'relevance' | 'rating' | 'installs' | 'recent' | 'name' | undefined;
+  installedOnly?: boolean | undefined;
 }
 
 export interface StoreStats {
