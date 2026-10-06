@@ -6,10 +6,10 @@
 
 export interface HttpInit {
   method?: 'GET' | 'POST';
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
   body?: unknown;
-  signal?: AbortSignal;
-  timeoutMs?: number;
+  signal?: AbortSignal | undefined;
+  timeoutMs?: number | undefined;
 }
 
 export class HttpError extends Error {
@@ -70,8 +70,8 @@ export async function postJson<T>(url: string, init: HttpInit = {}): Promise<T> 
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
       },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal,
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) throw await parseError(response);
     return (await response.json()) as T;
@@ -90,7 +90,7 @@ export async function getJson<T>(
     const response = await fetch(url, {
       method: 'GET',
       headers: { ...(init.headers ?? {}) },
-      signal,
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) throw await parseError(response);
     return (await response.json()) as T;
@@ -109,7 +109,7 @@ export async function getBytes(
     const response = await fetch(url, {
       method: 'GET',
       headers: { ...(init.headers ?? {}) },
-      signal,
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) throw await parseError(response);
     const buffer = await response.arrayBuffer();
@@ -120,7 +120,7 @@ export async function getBytes(
 }
 
 export interface SseEvent {
-  event?: string;
+  event?: string | undefined;
   data: string;
 }
 
@@ -151,8 +151,8 @@ export async function* streamSse(
         Accept: 'text/event-stream',
         ...(init.headers ?? {}),
       },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal,
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) throw await parseError(response);
 

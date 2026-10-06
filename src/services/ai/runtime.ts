@@ -109,7 +109,7 @@ export class AIService {
       for (let i = 0; i < token.length; i += 1) {
         h = (h * 31 + token.charCodeAt(i)) >>> 0;
       }
-      vec[h % dims] += 1;
+      vec[h % dims] = (vec[h % dims] ?? 0) + 1;
     }
     const norm = Math.sqrt(vec.reduce((a, b) => a + b * b, 0)) || 1;
     return vec.map((v) => v / norm);

@@ -122,7 +122,7 @@ interface GeminiSchema {
 
 /** Recursively translate a JSON schema node into Gemini's OpenAPI subset. */
 function toGeminiSchema(node: JSONSchema): GeminiSchema {
-  const rawType = Array.isArray(node.type) ? node.type[0] : node.type ?? 'string';
+  const rawType = Array.isArray(node.type) ? node.type[0] ?? 'string' : node.type ?? 'string';
   const out: GeminiSchema = {
     type: GEMINI_TYPE_MAP[rawType] ?? 'STRING',
   };

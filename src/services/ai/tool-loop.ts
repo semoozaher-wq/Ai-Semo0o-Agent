@@ -25,8 +25,8 @@ import { LLMProvider } from './provider';
 export interface ToolRunOutcome {
   ok: boolean;
   output: unknown;
-  error?: string;
-  logs?: string[];
+  error?: string | undefined;
+  logs?: string[] | undefined;
   durationMs: number;
 }
 
