@@ -6,7 +6,7 @@ import { createCodeRunHandler } from '../runners/code-runner.mjs';
 import { BrowserPool } from '../browser/pool.mjs';
 import { runBrowserTask } from '../browser/runner.mjs';
 import { assertSafeUrlResolved, assertWorkspacePath } from '../security/validators.mjs';
-import { DANGEROUS_TOOLS, TOOL_BY_ID } from '../agent/catalog.mjs';
+import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -138,8 +138,29 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
       return tool(args, context);
     },
     status() {
-      const unwired = ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send', ...(process.env.BROWSER_CDP_URL ? [] : ['browser.run'])];
-      return { live: [...tools.keys()].filter((id) => !unwired.includes(id)), catalogOnly: [], simulated: [], unwired, dangerous: [...DANGEROUS_TOOLS] };
+      // Every catalog tool is reported with an explicit, honest state so an
+      // operator can never mistake an unavailable capability for a ready one:
+      //   live     — fully wired and usable now
+      //   partial  — wired but depends on an optional server capability
+      //   unwired  — fail-closed until a server-side connector is configured
+      //   failed   — registered but its runtime dependency is missing
+      const states = new Map();
+      const mark = (toolId, state, reason = null) => states.set(toolId, { id: toolId, state, reason });
+      const connectorGated = new Set(['image.generate', 'image.analyze', 'calendar.schedule', 'email.send']);
+      for (const toolId of tools.keys()) {
+        if (connectorGated.has(toolId)) mark(toolId, 'unwired', 'connector_not_configured');
+        else if (toolId === 'browser.run' && !process.env.BROWSER_CDP_URL) mark(toolId, 'unwired', 'browser_cdp_not_configured');
+        else if ((toolId === 'doc.summarize' || toolId === 'translate') && !llm) mark(toolId, 'partial', 'server_llm_optional');
+        else mark(toolId, 'live');
+      }
+      // Catalog tools that were never registered (e.g. web.search without a key).
+      for (const tool of TOOL_CATALOG) {
+        if (states.has(tool.id)) continue;
+        mark(tool.id, 'unwired', tool.id === 'web.search' ? 'search_provider_not_configured' : 'connector_not_configured');
+      }
+      const details = [...states.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const byState = (state) => details.filter((detail) => detail.state === state).map((detail) => detail.id);
+      return { live: byState('live'), partial: byState('partial'), unwired: byState('unwired'), failed: byState('failed'), catalogOnly: [], simulated: [], dangerous: [...DANGEROUS_TOOLS], tools: details };
     },
   };
 }
