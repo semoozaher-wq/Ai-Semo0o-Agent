@@ -1,6 +1,115 @@
+# Production Readiness — Semo0o AI
 
+This document is the honest release-gate record. It states what was actually
+implemented and verified, and what remains blocked on external infrastructure,
+credentials, legal review, or device/signing environments. Nothing is marked
+`PASS` without command-level evidence.
 
-# P3 Final Addendum — 2026-10-04
+---
+
+## Phase 3 Addendum — 2026-10-06
+
+Focus: remaining vulnerabilities, account/data deletion, external integrations,
+monitoring & alerting, backup, Chat/Recovery stability, and security & performance.
+Every item below was implemented and covered by an automated test that was run.
+
+### Implemented and verified this phase
+
+- **Account & data deletion (data rights).** `backend/account/deletion.mjs`
+  implements member self-deletion and tenant deletion with last-owner protection.
+  `DELETE /me` (`scope=self|tenant`) and `GET /me/export` expose it. A last owner
+  with other members is refused (`ORG_OWNER_TRANSFER_REQUIRED`, HTTP 409); a sole
+  member purges the tenant; otherwise projects are reassigned and the user removed.
+  Covered by `backend/test/account-deletion.test.mjs` (6 tests).
+- **Monitoring & alerting.** `backend/observability/alerts.mjs` defines 9 alert
+  rules (run/tool SLO breaches, queue backlog, email delivery failures, memory
+  pressure, self-improvement regression) with warning/critical thresholds and
+  minimum-sample gating. `GET /ops/alerts` (owner/admin) returns the report and
+  `renderAlertMetrics` emits Prometheus series for an external Alertmanager.
+  Covered by `backend/test/alerts.test.mjs` (8 tests).
+- **Encrypted backup & restore drill.** `backend/ops/backup.mjs` writes an
+  AES-256-GCM streaming envelope (magic + version + salt + IV + tag +
+  plaintext-SHA256), verifies integrity, and runs a restore drill; `pruneBackups`
+  enforces retention. A real bug was found and fixed here: `restoreDrill` reported
+  `operation: 'verify'` because of object-spread ordering; it now reports
+  `operation: 'restore-drill'`. Covered by `backend/test/backup.test.mjs` (8 tests:
+  round-trip, tamper detection, truncation, wrong key, permissions, prune, CLI).
+- **Chat / Recovery stability.** Durable `conversations` + `chat_messages` tables
+  and `backend/chat/store.mjs` (CRUD, ownership enforcement, `recoverInterrupted`,
+  `listRecoverable`) back the chat endpoints. `POST /chat` and `POST /chat/stream`
+  persist every turn; a crash leaves a message `streaming`, which the recovery
+  sweep flips to `interrupted` so the UI can offer a retry instead of spinning.
+  Covered by `backend/test/chat.test.mjs` (7 tests).
+- **Frontend chat streaming + recovery.** `src/services/api/sse.ts` is a
+  dependency-free SSE parser shared by the run-events and chat streams;
+  `BackendApiClient.chatStream` delegates to it. `src/store/useChatStore.ts`
+  streams replies with a graceful fallback to single-shot completion and adds
+  `recoverInterrupted()`. Covered by `test/chat-stream.test.ts` (7 tests), run via
+  the new `npm run test:frontend`.
+- **Security headers (verified).** `backend/security/http.mjs` already sets
+  `content-security-policy`, `permissions-policy`, `cross-origin-opener/resource-policy`,
+  `x-frame-options`, `referrer-policy`, `cache-control`, `vary: Origin`, and
+  production-only HSTS. A new test asserts each header and that HSTS/CORS are not
+  pinned on a plain-HTTP dev host.
+- **Performance (verified fix).** Login/registration/password-reset queried
+  `users WHERE lower(email)=lower(?)`, which cannot use `UNIQUE(tenant_id, email)`
+  and therefore did a **full table scan** on every auth call. Added functional
+  indexes `idx_users_email_lower` and `idx_email_outbox_recipient` (in
+  `schema.sql` and the idempotent `migrate()`). A test asserts via
+  `EXPLAIN QUERY PLAN` that both lookups now `SEARCH ... USING INDEX` instead of
+  `SCAN`.
+
+### Verified evidence (commands actually run this phase)
+
+| Command / area | Result | Evidence |
+|---|---|---|
+| `npm run test:backend` | PASS | 141/141 tests (29 new: account-deletion 6, alerts 8, backup 8, chat 7) |
+| `npm run test:frontend` | PASS | 13/13 (backend-url 6, chat-stream 7) |
+| `node --test test/*.test.mjs` (execution) | PASS | 38/38 (includes 5 hardening tests) |
+| `npm run test:phase1` | PASS | 14/14 |
+| `npm run test:phase2` | PASS | 11/11 |
+| `npm run test:legacy-harness` | PASS | 80/80 |
+| `npm run typecheck` | PASS | `tsc --noEmit`, 0 errors |
+| `npm run lint` | PASS | `expo lint`, exit 0 |
+| `npm run security:scan` | PASS | 255 files checked, no findings |
+| `npm run doctor` | PASS | 21/21 checks passed |
+| `npm run build` | PASS | Expo web export (20 static routes) |
+| `node scripts/verify-imports.mjs backend` | PASS | 164 relative imports, 0 broken |
+| `npm run smoke:backend` | PASS | boot → /health → /ready → register → /tools/status |
+| `npm run validate:pain-map` | PASS | 317-part map validated |
+| `npm audit` | FAIL | Expo dependency graph still reports high/moderate advisories (unchanged) |
+
+### Remaining blockers (require external infrastructure / credentials / legal / devices)
+
+1. **Dependency advisories.** `npm audit` is non-zero (Expo dependency graph);
+   remediation needs upstream upgrades and is not force-applied.
+2. **External integrations.** Image, calendar, email, browser, and GitHub
+   OAuth/actions remain **fail-closed** (`TOOL_CONNECTOR_NOT_CONFIGURED:*`) until
+   real provider credentials/adapters are supplied. This is correct behavior, not
+   a missing guard.
+3. **Off-site backups & alert delivery.** The encrypted backup, restore drill, and
+   alert rules are implemented and tested, but no off-site storage target,
+   schedule, on-call routing, or measured uptime exists yet.
+4. **Mobile release.** Android/iOS E2E and signed production builds are not
+   verified (no device/simulator/signing environment).
+5. **Legal/safety.** Privacy Policy and Terms are drafts pending qualified review;
+   BodyMap/anatomy safety review is not complete.
+6. **Managed vector store.** Embeddings remain local hash vectors; no managed
+   vector service is configured.
+
+### Final decision (Phase 3)
+
+**Improved but still NOT PRODUCTION READY / NOT SELLABLE AS A GENERAL COMMERCIAL SaaS.**
+
+Phase 3 closes the previously-open *software* blockers — account/tenant deletion,
+export, alerting, encrypted backup + drill, chat persistence/recovery, streaming,
+security-header coverage, and an auth-path performance fix — all with passing
+tests. The remaining blockers are external (credentials, off-site storage, mobile
+signing, legal review) or dependency-level, and are not falsely marked `PASS`.
+
+---
+
+## Archived: P3 Addendum — 2026-10-04
 
 ## P3 changes completed on the P2 baseline
 
