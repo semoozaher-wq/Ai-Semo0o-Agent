@@ -66,5 +66,8 @@
     "expo-doctor": "^1.20.4",
     "tsx": "^4.20.6",
     "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "shell-quote": "^1.12.0"
   }
 }
