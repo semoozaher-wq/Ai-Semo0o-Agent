@@ -13,6 +13,7 @@ import { AppHeader } from '../components/composite/AppHeader';
 import { SectionHeader } from '../components/composite/SectionHeader';
 import { ListRow } from '../components/composite/ListRow';
 import { SystemStatusCard } from '../components/composite/SystemStatusCard';
+import { IntegrationsCard } from '../components/composite/IntegrationsCard';
 import { Card } from '../components/ui/Card';
 import { Text } from '../components/ui/Text';
 import { Chip } from '../components/ui/Chip';
@@ -162,6 +163,15 @@ export function Settings() {
           style={{ marginTop: theme.spacing.xl }}
         />
         <SystemStatusCard />
+
+        {/* Integrations / connectors — GitHub, billing, embeddings, tracking, browser */}
+        <SectionHeader
+          title="التكاملات والموصلات"
+          subtitle="GitHub · الفوترة · مخزن المتجهات · تتبّع الأخطاء · المتصفح — تُقرأ مباشرة من الخادم بحالتها الفعلية"
+          icon="git-network-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <IntegrationsCard />
 
         {/* Operations console — self-improvement + tool availability */}
         <SectionHeader

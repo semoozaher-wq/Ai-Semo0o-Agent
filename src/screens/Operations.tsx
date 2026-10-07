@@ -17,6 +17,7 @@ import { Divider } from '../components/ui/Divider';
 import { Icon } from '../components/ui/Icon';
 import type { IconName } from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
+import { IntegrationsCard } from '../components/composite/IntegrationsCard';
 import { backendApi } from '../services/api/client';
 import type { ApiToolDetail } from '../services/api/client';
 import { useSystemStatusStore } from '../store/useSystemStatusStore';
@@ -417,6 +418,15 @@ export function Operations() {
             })}
           </Card>
         )}
+
+        {/* Integrations / connectors — honest live state + GitHub actions */}
+        <SectionHeader
+          title="التكاملات والموصلات"
+          subtitle="GitHub · الفوترة · مخزن المتجهات · تتبّع الأخطاء · المتصفح — تُقرأ مباشرة من الخادم"
+          icon="git-network-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <IntegrationsCard />
 
         {/* History / audit trail */}
         <SectionHeader
