@@ -50,6 +50,35 @@ export interface ApiToolsStatus {
 export interface ApiModelProvider { id?: string; name?: string; configured: boolean; healthy?: boolean; [key: string]: unknown }
 export interface ApiModelsStatus { providers: ApiModelProvider[] }
 export interface ApiBillingStatus { plan?: string; provider?: string; configured?: boolean; [key: string]: unknown }
+export interface ApiConnectorStatus {
+  configured: boolean;
+  provider?: string | null;
+  model?: string | null;
+  host?: string | null;
+  reason?: string | null;
+  error?: string | null;
+  [key: string]: unknown;
+}
+export interface ApiGitHubConnection {
+  id: string;
+  login: string | null;
+  scope: string | null;
+  provider: string;
+  updated_at: string;
+}
+export interface ApiGitHubStatus extends ApiConnectorStatus {
+  tokenConfigured: boolean;
+  oauthConfigured: boolean;
+  connection: ApiGitHubConnection | null;
+}
+export interface ApiIntegrationsStatus {
+  tools: { live: string[]; partial: string[]; unwired: string[]; failed: string[] };
+  billing: ApiConnectorStatus;
+  github: ApiGitHubStatus;
+  embeddings: ApiConnectorStatus;
+  errorTracking: ApiConnectorStatus;
+  browser: { cdpConfigured: boolean; localLaunch: boolean };
+}
 export interface ApiReadinessCheck { ok: boolean; configured?: boolean; [key: string]: unknown }
 export interface ApiReadyReport {
   ok: boolean;
@@ -208,6 +237,17 @@ class BackendApiClient {
   async getToolsStatus(): Promise<ApiToolsStatus> { return this.request<ApiToolsStatus>('/tools/status'); }
   async getModelsStatus(): Promise<ApiModelsStatus> { return this.request<ApiModelsStatus>('/models/status'); }
   async getBillingStatus(): Promise<ApiBillingStatus> { return this.request<ApiBillingStatus>('/billing/status'); }
+  // Honest connector state from the backend: every optional integration
+  // (GitHub, billing, embeddings, error tracking, browser) with its real
+  // configured/unwired state — never a fabricated success.
+  async getIntegrationsStatus(): Promise<ApiIntegrationsStatus> { return this.request<ApiIntegrationsStatus>('/integrations/status'); }
+  // GitHub OAuth connect flow. `start` returns the authorize URL + single-use
+  // state; `complete` exchanges the pasted code for a stored (encrypted) token;
+  // `disconnect` removes the tenant's stored connection. All three surface the
+  // exact backend error (e.g. GITHUB_OAUTH_NOT_CONFIGURED) when unavailable.
+  async startGitHubOAuth(): Promise<{ url: string; state: string }> { return this.request<{ url: string; state: string }>('/github/oauth/start', { method: 'POST' }); }
+  async completeGitHubOAuth(input: { state: string; code: string }): Promise<{ connected: boolean; login: string; scope: string | null }> { return this.request<{ connected: boolean; login: string; scope: string | null }>('/github/oauth/complete', { method: 'POST', body: JSON.stringify(input) }); }
+  async disconnectGitHub(): Promise<{ disconnected: boolean; removed: number }> { return this.request<{ disconnected: boolean; removed: number }>('/github/connection', { method: 'DELETE' }); }
   async getHealth(): Promise<ApiHealth> { return this.request<ApiHealth>('/health'); }
   async getReady(): Promise<{ status: number; report: ApiReadyReport }> { const { status, body } = await this.requestTolerant<ApiReadyReport>('/ready'); return { status, report: body }; }
   async getSelfImproveSignals(windowHours = 168): Promise<{ signals: ApiSelfImproveSignal[]; windowHours: number }> { return this.request(`/self-improve/signals?windowHours=${encodeURIComponent(String(windowHours))}`); }
