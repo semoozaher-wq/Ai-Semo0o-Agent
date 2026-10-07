@@ -144,7 +144,18 @@ export class Database {
     this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)").run(now());
   }
   run(sql, ...params) { return this.db.prepare(sql).run(...params); }
-  get(sql, ...params) { return this.db.prepare(sql).get(...params) ?? null; }
+  // `node:sqlite` first shipped in Node 22.5.0 and, in that release only,
+  // `StatementSync.get()` returned a *phantom* all-null row object
+  // (e.g. `{ id: null, tenant_id: null, ... }`) when NO row matched instead of
+  // `undefined` (fixed in later 22.x). That silently turned every "does this row
+  // exist?" probe into a false positive — breaking idempotency, session
+  // revocation and billing. Reading the first row of `all()` (which returns `[]`
+  // on every version) keeps the single-row `get()` contract correct on the whole
+  // supported Node range.
+  get(sql, ...params) {
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.length > 0 ? rows[0] : null;
+  }
   all(sql, ...params) { return this.db.prepare(sql).all(...params); }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
