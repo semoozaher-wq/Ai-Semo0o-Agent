@@ -2,6 +2,7 @@ import { readFile, writeFile, readdir, stat, mkdir, realpath } from 'node:fs/pro
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createTavilySearchTool } from '../../execution-core/tavily-search.mjs';
+import { createEngineToolHandlers } from '../../execution-core/engine-tools.mjs';
 import { createCodeRunHandler } from '../runners/code-runner.mjs';
 import { BrowserPool } from '../browser/pool.mjs';
 import { runBrowserTask } from '../browser/runner.mjs';
@@ -93,8 +94,19 @@ function profile(content, file) {
   return { format: 'json', rows: rows.length, columns: keys.map((key) => ({ name: key, nonEmpty: rows.filter((row) => row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '').length })) };
 }
 
-export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || (() => { throw new Error('WORKSPACE_ROOT_REQUIRED'); })() } = {}) {
+export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, engineAvailable = false, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || (() => { throw new Error('WORKSPACE_ROOT_REQUIRED'); })() } = {}) {
   const tools = new Map();
+  // Engine-backed handlers compose the EXISTING AgentExecutionEngine. When a
+  // per-task engine is present in the tool context, file edits / scans /
+  // commands / transactional applies run through it (permissions + evidence +
+  // atomic writes). Engine-only tools fail closed when no engine is supplied.
+  const engineTools = createEngineToolHandlers();
+  const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply']);
+  const withEngine = (toolId, fallback) => async (args, context = {}) => {
+    if (context.engine) return engineTools[toolId](args, context);
+    if (fallback) return fallback(args, context);
+    return engineTools[toolId](args, context); // throws ENGINE_REQUIRED (fail closed)
+  };
   if (tavily) tools.set('web.search', async (args) => await tavily(args));
   tools.set('web.scrape', async (args) => ({ output: await fetchText(args) }));
   const browserPool = new BrowserPool({ maxConcurrent: Number(process.env.BROWSER_POOL_CONCURRENCY || 2), timeoutMs: Number(process.env.BROWSER_TIMEOUT_MS || 30000) });
@@ -108,10 +120,13 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     return { output: { ok: result.ok, verification: result.verification, screenshot: result.screenshot, results: result.results }, ok: result.ok !== false };
   });
   if (db) tools.set('code.run', async (args, context) => { const result = await createCodeRunHandler(db, { runner: codeRunner })({ run: context.run, payload: args }); return { output: result, ok: result.status === 'completed' }; });
-  tools.set('files.read', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, content: content.slice(0, Number(args.maxChars ?? 200000)) } }; });
-  tools.set('files.write', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); await mkdir(path.dirname(resolved), { recursive: true }); await writeFile(resolved, bounded(args.content, 200000, 'CONTENT'), 'utf8'); return { output: { path: safe, bytes: Buffer.byteLength(args.content) } }; });
-  tools.set('files.scan', async (args, context) => ({ output: { files: await listFiles(context.workspaceRoot, args.scope, Number(args.maxFiles ?? 500)) } }));
-  tools.set('data.profile', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, profile: profile(content.slice(0, 2_000_000), safe) } }; });
+  tools.set('files.read', withEngine('files.read', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, content: content.slice(0, Number(args.maxChars ?? 200000)) } }; }));
+  tools.set('files.write', withEngine('files.write', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); await mkdir(path.dirname(resolved), { recursive: true }); await writeFile(resolved, bounded(args.content, 200000, 'CONTENT'), 'utf8'); return { output: { path: safe, bytes: Buffer.byteLength(args.content) } }; }));
+  tools.set('files.patch', withEngine('files.patch'));
+  tools.set('files.scan', withEngine('files.scan', async (args, context) => ({ output: { files: await listFiles(context.workspaceRoot, args.scope, Number(args.maxFiles ?? 500)) } })));
+  tools.set('terminal.run', withEngine('terminal.run'));
+  tools.set('workspace.apply', withEngine('workspace.apply'));
+  tools.set('data.profile', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, profile: profile(content.slice(0, 2_000_000), safe) } }; });
   tools.set('data.chart', async (args) => {
     const allowed = new Set(['bar', 'line', 'donut', 'scatter']);
     if (!allowed.has(args.type)) throw new Error('CHART_TYPE_NOT_SUPPORTED');
@@ -123,10 +138,10 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     if (!series.length) throw new Error('CHART_DATA_EMPTY');
     return { output: { type: args.type, title: typeof args.title === 'string' ? args.title.slice(0, 200) : undefined, series, points: Math.max(...series.map((item) => item.values.length)) } };
   });
-  tools.set('pdf.extract', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); return { output: { path: safe, text: await runPdfText(resolved, Number(args.maxChars ?? 200000)) } }; });
-  tools.set('code.analyze', async (args, context) => { const { resolved, safe } = workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); const issues = []; for (const [pattern, rule] of [[/TODO|FIXME|XXX/g, 'todo-comment'], [/\beval\s*\(/g, 'eval-usage'], [/console\.(log|debug)\s*\(/g, 'no-console'], [/api[_-]?key\s*[:=]\s*['"]/ig, 'hardcoded-secret']]) { const matches = content.match(pattern); if (matches?.length) issues.push({ rule, count: matches.length }); } return { output: { path: safe, issues, healthy: issues.length === 0 } }; });
-  tools.set('doc.summarize', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
-  tools.set('translate', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Translate accurately and return only the translation.' }, { role: 'user', content: `Target language: ${args.target}\nText:\n${args.text}` }], signal: context.signal }); return { output: { translation: response.text, usage: response.usage } }; });
+  tools.set('pdf.extract', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); return { output: { path: safe, text: await runPdfText(resolved, Number(args.maxChars ?? 200000)) } }; });
+  tools.set('code.analyze', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); const issues = []; for (const [pattern, rule] of [[/TODO|FIXME|XXX/g, 'todo-comment'], [/\beval\s*\(/g, 'eval-usage'], [/console\.(log|debug)\s*\(/g, 'no-console'], [/api[_-]?key\s*[:=]\s*['"]/ig, 'hardcoded-secret']]) { const matches = content.match(pattern); if (matches?.length) issues.push({ rule, count: matches.length }); } return { output: { path: safe, issues, healthy: issues.length === 0 } }; });
+  tools.set('doc.summarize', async (args, context) => { const client = context.llm || llm; if (!client) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await client.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
+  tools.set('translate', async (args, context) => { const client = context.llm || llm; if (!client) throw new Error('SERVER_LLM_REQUIRED'); const response = await client.complete({ model: context.model, messages: [{ role: 'system', content: 'Translate accurately and return only the translation.' }, { role: 'user', content: `Target language: ${args.target}\nText:\n${args.text}` }], signal: context.signal }); return { output: { translation: response.text, usage: response.usage } }; });
   for (const unavailable of ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send']) tools.set(unavailable, async () => { throw new Error(`TOOL_CONNECTOR_NOT_CONFIGURED:${unavailable}`); });
   return {
     has(toolId) { return tools.has(toolId); },
@@ -150,6 +165,7 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
       for (const toolId of tools.keys()) {
         if (connectorGated.has(toolId)) mark(toolId, 'unwired', 'connector_not_configured');
         else if (toolId === 'browser.run' && !process.env.BROWSER_CDP_URL) mark(toolId, 'unwired', 'browser_cdp_not_configured');
+        else if (engineGated.has(toolId) && !engineAvailable) mark(toolId, 'partial', 'engine_required');
         else if ((toolId === 'doc.summarize' || toolId === 'translate') && !llm) mark(toolId, 'partial', 'server_llm_optional');
         else mark(toolId, 'live');
       }
