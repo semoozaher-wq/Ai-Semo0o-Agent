@@ -1,1 +1,32 @@
-
+{
+  "version": 1,
+  "description": "Single source of truth for the Maestro failure taxonomy, recovery actions and event names. Imported by the Node backend (backend/agent/recovery.mjs) and the React Native frontend (src/services/agent-engine/verification.ts) so both sides recover identically without a second architecture.",
+  "failureKinds": [
+    "TOOL_FAILURE",
+    "EXECUTION_FAILURE",
+    "TEST_FAILURE",
+    "VALIDATION_FAILURE",
+    "PERMISSION_FAILURE",
+    "ENVIRONMENT_FAILURE",
+    "PLANNING_FAILURE",
+    "UNKNOWN_FAILURE"
+  ],
+  "recoveryActions": ["retry", "repair", "replan", "block"],
+  "events": {
+    "routingDecision": "routing_decision",
+    "planningFailed": "planning_failed",
+    "selfHealing": "self_healing",
+    "selfHealingFailed": "self_healing_failed",
+    "rerouteFailed": "reroute_failed"
+  },
+  "maxAttempts": 3,
+  "classifiers": [
+    { "kind": "PERMISSION_FAILURE", "patterns": ["permission", "denied"] },
+    { "kind": "EXECUTION_FAILURE", "patterns": ["timeout", "spawn", "execution"] },
+    { "kind": "VALIDATION_FAILURE", "patterns": ["invalid", "validation"] },
+    { "kind": "TEST_FAILURE", "patterns": ["test", "assert"] },
+    { "kind": "TOOL_FAILURE", "patterns": ["tool"] },
+    { "kind": "PLANNING_FAILURE", "patterns": ["plan", "planner"] },
+    { "kind": "ENVIRONMENT_FAILURE", "patterns": ["environment", "not found"] }
+  ]
+}
