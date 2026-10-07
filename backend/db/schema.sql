@@ -424,3 +424,20 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_status ON chat_messages(tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_tenant_user ON messages(tenant_id, user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
+
+-- GitHub connections: per-tenant OAuth/installation credentials. The access
+-- token is stored encrypted (AES-256-GCM via the secrets vault); only the
+-- non-sensitive login/scope metadata is stored in the clear for display.
+CREATE TABLE IF NOT EXISTS github_connections (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  provider TEXT NOT NULL DEFAULT 'oauth',
+  login TEXT,
+  scope TEXT,
+  token_encrypted TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_github_connections_tenant ON github_connections(tenant_id, updated_at);
