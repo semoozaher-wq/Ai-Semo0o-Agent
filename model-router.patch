@@ -1,0 +1,945 @@
+diff --git a/backend/models/router.mjs b/backend/models/router.mjs
+index 06b6b16..79defa6 100644
+--- a/backend/models/router.mjs
++++ b/backend/models/router.mjs
+@@ -1,9 +1,18 @@
+ export class ModelRouter {
+   constructor(providers = []) { this.providers = providers.map((provider) => ({ ...provider, healthy: provider.healthy !== false })); }
+   updateHealth(id, healthy, details = {}) { const provider = this.providers.find((item) => item.id === id); if (provider) Object.assign(provider, { healthy, ...details, checkedAt: new Date().toISOString() }); }
+-  choose({ taskType = 'general', needsVision = false, contextTokens = 0, maxLatencyMs = Infinity, maxCost = Infinity } = {}) {
+-    const candidates = this.providers.filter((provider) => provider.healthy && (!needsVision || provider.vision) && (!provider.taskTypes || provider.taskTypes.includes(taskType)) && (provider.contextTokens ?? 0) >= contextTokens && (provider.latencyMs ?? Infinity) <= maxLatencyMs && (provider.costPer1k ?? Infinity) <= maxCost);
+-    candidates.sort((a, b) => ((a.latencyMs ?? 0) + (a.costPer1k ?? 0) * 100) - ((b.latencyMs ?? 0) + (b.costPer1k ?? 0) * 100));
++  eligible({ taskType = 'general', needsVision = false, contextTokens = 0, maxLatencyMs = Infinity, maxCost = Infinity } = {}) {
++    return this.providers.filter((provider) => provider.healthy && (!needsVision || provider.vision) && (!provider.taskTypes || provider.taskTypes.includes(taskType)) && (provider.contextTokens ?? 0) >= contextTokens && (provider.latencyMs ?? Infinity) <= maxLatencyMs && (provider.costPer1k ?? Infinity) <= maxCost);
++  }
++  // Ordered eligible providers: explicit `priority` first (higher wins, optional and
++  // therefore backward compatible), then the original cost/latency heuristic.
++  rank(criteria = {}) {
++    const candidates = this.eligible(criteria);
++    candidates.sort((a, b) => ((b.priority ?? 0) - (a.priority ?? 0)) || (((a.latencyMs ?? 0) + (a.costPer1k ?? 0) * 100) - ((b.latencyMs ?? 0) + (b.costPer1k ?? 0) * 100)));
++    return candidates;
++  }
++  choose(criteria = {}) {
++    const candidates = this.rank(criteria);
+     if (!candidates[0]) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
+     return candidates[0];
+   }
+diff --git a/backend/models/task-router.mjs b/backend/models/task-router.mjs
+new file mode 100644
+index 0000000..6cf262e
+--- /dev/null
++++ b/backend/models/task-router.mjs
+@@ -0,0 +1,206 @@
++// AI Model Router for the Maestro orchestrator.
++//
++// Picks a model (Claude / GPT / Gemini) from the *type* of the task and returns a
++// cross-provider fallback chain used when a model call fails. It reuses the
++// existing building blocks instead of rebuilding anything:
++//
++//   * `ModelRouter`            -> health tracking, eligibility filtering, ranking
++//   * `backend/models/catalog` -> the single source of truth for model IDs/providers
++//
++// The router is delivered to the existing Maestro (`createAgentRunHandler`) as a
++// drop-in `llm` decorator (`createRoutedLLM`), so the Agent/Core is never edited.
++import { ModelRouter } from './router.mjs';
++import { SUPPORTED_MODELS, normalizeModelId, modelProvider } from './catalog.mjs';
++
++/** The task taxonomy the router understands. */
++export const TASK_TYPES = Object.freeze(['code', 'reasoning', 'vision', 'long_context', 'fast', 'general']);
++
++/**
++ * Task type -> ordered model preference (best first).
++ *
++ * Every chain deliberately spans all three families (Anthropic / OpenAI / Google)
++ * so that a failure in one family falls through to a different provider instead
++ * of retrying the same one. Order encodes the routing policy; the actual model
++ * IDs are validated against the catalog at construction time.
++ */
++export const TASK_TYPE_MODELS = Object.freeze({
++  code: ['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview', 'claude-haiku-4-5', 'gpt-5-mini', 'gemini-3-flash-preview'],
++  reasoning: ['gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gpt-5-mini', 'claude-haiku-4-5', 'gemini-3-flash-preview'],
++  vision: ['gemini-3.1-pro-preview', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3-flash-preview', 'gpt-5-mini', 'claude-haiku-4-5'],
++  long_context: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gpt-5-mini', 'claude-haiku-4-5'],
++  fast: ['gpt-5-mini', 'gemini-2.5-flash-lite', 'claude-haiku-4-5', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6'],
++  general: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-2.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'],
++});
++
++// Non-catalog hints (latency, vision) used only for tie-breaking inside a tier.
++// Cost and context come straight from the catalog so they can never drift.
++const MODEL_META = Object.freeze({
++  'gpt-5-mini': { vision: true, latencyMs: 120 },
++  'gpt-5': { vision: true, latencyMs: 220 },
++  'gemini-2.5-flash-lite': { vision: true, latencyMs: 90 },
++  'gemini-3-flash-preview': { vision: true, latencyMs: 100 },
++  'gemini-3.1-pro-preview': { vision: true, latencyMs: 200 },
++  'claude-haiku-4-5': { vision: true, latencyMs: 140 },
++  'claude-sonnet-4-6': { vision: true, latencyMs: 260 },
++});
++
++// Deterministic, dependency-free goal classification. Ordered most-specific first.
++const TASK_HINTS = Object.freeze({
++  vision: /(image|photo|picture|screenshot|diagram|chart|vision|multimodal|صورة|صور|لقطة|رسم|مخطط)/i,
++  code: /(code|bug|refactor|function|class|compile|debug|test|script|typescript|javascript|python|كود|برمج|خطأ|اختبار|دالة|دوال|إصلاح)/i,
++  long_context: /(summar|document|docs|pdf|long|entire|whole|codebase|book|report|لخّص|لخص|مستند|ملف|طويل|كامل|تقرير)/i,
++  reasoning: /(reason|prove|proof|math|logic|analy|plan|strategy|design|استدلال|منطق|تحليل|خطة|تصميم|رياض|برهن|فكر)/i,
++  fast: /(quick|fast|simple|short|trivial|سريع|بسيط|مختصر)/i,
++});
++
++/**
++ * Classify a goal/request into one of {@link TASK_TYPES}.
++ * Accepts a plain string goal or a criteria object. Explicit `taskType`,
++ * `needsVision` and `contextTokens` hints always win over keyword heuristics.
++ */
++export function classifyTask(input = {}) {
++  const source = typeof input === 'string' ? { goal: input } : (input ?? {});
++  const explicit = String(source.taskType || '').trim().toLowerCase();
++  if (TASK_TYPES.includes(explicit)) return explicit;
++  if (source.needsVision === true) return 'vision';
++  const contextTokens = Number(source.contextTokens);
++  if (Number.isFinite(contextTokens) && contextTokens >= 200_000) return 'long_context';
++  const text = String(source.goal ?? source.text ?? source.task ?? source.prompt ?? '');
++  for (const taskType of ['vision', 'code', 'long_context', 'reasoning', 'fast']) {
++    if (TASK_HINTS[taskType].test(text)) return taskType;
++  }
++  return 'general';
++}
++
++function descriptorFor(id, priority) {
++  const spec = SUPPORTED_MODELS[id];
++  if (!spec) throw new Error(`UNKNOWN_ROUTER_MODEL:${id}`);
++  const meta = MODEL_META[id] ?? {};
++  return {
++    id,
++    provider: spec.provider,
++    priority,
++    healthy: true,
++    vision: meta.vision !== false,
++    contextTokens: spec.context,
++    costPer1k: meta.costPer1k ?? (spec.input + spec.output) / 2,
++    latencyMs: meta.latencyMs ?? 150,
++  };
++}
++
++/**
++ * Task-type aware, health-aware, fallback-capable model router.
++ *
++ * One internal {@link ModelRouter} is built per task type, with the preference
++ * order encoded as `priority`, so the existing router does the eligibility
++ * filtering and ranking and this class only adds the routing policy + fallback.
++ */
++export class MaestroModelRouter {
++  constructor({ taskTypes = TASK_TYPE_MODELS } = {}) {
++    this.routers = new Map();
++    for (const [taskType, chain] of Object.entries(taskTypes)) {
++      const descriptors = chain.map((id, index) => descriptorFor(id, chain.length - index));
++      this.routers.set(taskType, new ModelRouter(descriptors));
++    }
++    if (!this.routers.has('general')) {
++      const descriptors = Object.keys(SUPPORTED_MODELS).map((id) => descriptorFor(id, 0));
++      this.routers.set('general', new ModelRouter(descriptors));
++    }
++  }
++
++  routerFor(taskType) {
++    return this.routers.get(taskType) ?? this.routers.get('general');
++  }
++
++  /** Mark a model healthy/unhealthy across every task-type router. */
++  updateHealth(id, healthy, details = {}) {
++    for (const router of this.routers.values()) router.updateHealth(id, healthy, details);
++  }
++
++  /** Ordered eligible model IDs for a task type (the fallback chain). */
++  chain(taskType, criteria = {}) {
++    const resolved = TASK_TYPES.includes(taskType) ? taskType : classifyTask({ ...criteria, taskType });
++    return this.routerFor(resolved).rank({ ...criteria, taskType: resolved }).map((item) => item.id);
++  }
++
++  /** Full routing decision for a request. */
++  route(criteria = {}) {
++    const taskType = TASK_TYPES.includes(criteria.taskType) ? criteria.taskType : classifyTask(criteria);
++    const ranked = this.routerFor(taskType).rank({ ...criteria, taskType });
++    if (!ranked.length) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
++    const chain = ranked.map((item) => item.id);
++    return {
++      taskType,
++      model: chain[0],
++      provider: ranked[0].provider,
++      chain,
++      reason: `task_type=${taskType}`,
++    };
++  }
++
++  /**
++   * Run `run(model)` over a chain until one succeeds, marking health as it goes.
++   * Throws `MAESTRO_ALL_MODELS_FAILED` (with `.attempts`) when every model fails.
++   */
++  async runWithFallback(chain, run) {
++    if (typeof run !== 'function') throw new Error('ROUTER_RUN_REQUIRED');
++    const attempts = [];
++    let lastError;
++    for (const model of chain) {
++      try {
++        const result = await run(model);
++        this.updateHealth(model, true);
++        attempts.push({ model, provider: modelProvider(model), ok: true });
++        return { ok: true, model, provider: modelProvider(model), result, attempts };
++      } catch (error) {
++        lastError = error;
++        this.updateHealth(model, false);
++        attempts.push({ model, provider: modelProvider(model), ok: false, error: error instanceof Error ? error.message : String(error) });
++      }
++    }
++    const error = new Error(`MAESTRO_ALL_MODELS_FAILED:${attempts.map((attempt) => `${attempt.model}:${attempt.error}`).join('|')}`);
++    error.attempts = attempts;
++    error.cause = lastError;
++    throw error;
++  }
++
++  /**
++   * Wrap an existing `llm` (e.g. `createLLMRouter()`) so the Maestro picks the
++   * model by task type and falls back across providers on failure. The returned
++   * object keeps the exact `{ complete, stream, status }` contract the agent
++   * runtime already consumes, so it is a drop-in replacement.
++   */
++  createRoutedLLM({ llm, taskType, goal, criteria = {}, honorRequestedModel = false } = {}) {
++    if (!llm || typeof llm.complete !== 'function') throw new Error('ROUTED_LLM_REQUIRES_COMPLETE');
++    const router = this;
++    const wrapper = {
++      async complete(input = {}) {
++        const resolvedTaskType = TASK_TYPES.includes(taskType) ? taskType : classifyTask({ ...criteria, goal: goal ?? input.goal });
++        const decision = router.route({ ...criteria, taskType: resolvedTaskType });
++        let chain = decision.chain;
++        if (honorRequestedModel && input.model) {
++          try {
++            const requested = normalizeModelId(input.model);
++            if (chain[0] !== requested) chain = [requested, ...chain.filter((id) => id !== requested)];
++          } catch { /* ignore an invalid requested model and keep the routed chain */ }
++        }
++        const outcome = await router.runWithFallback(chain, (candidate) => llm.complete({ ...input, model: candidate }));
++        return {
++          ...outcome.result,
++          model: outcome.result?.model ?? outcome.model,
++          requestedModel: input.model ?? outcome.model,
++          routedModel: outcome.model,
++          routedProvider: outcome.provider,
++          routeTaskType: decision.taskType,
++          routeChain: chain,
++          routeAttempts: outcome.attempts,
++        };
++      },
++    };
++    if (typeof llm.status === 'function') wrapper.status = (...args) => llm.status(...args);
++    if (typeof llm.stream === 'function') wrapper.stream = (...args) => llm.stream(...args);
++    return wrapper;
++  }
++}
++
++export const maestroModelRouter = new MaestroModelRouter();
+diff --git a/backend/test/task-router-integration.test.mjs b/backend/test/task-router-integration.test.mjs
+new file mode 100644
+index 0000000..3c3e1ba
+--- /dev/null
++++ b/backend/test/task-router-integration.test.mjs
+@@ -0,0 +1,86 @@
++import assert from 'node:assert/strict';
++import { mkdtemp, writeFile, rm } from 'node:fs/promises';
++import os from 'node:os';
++import path from 'node:path';
++import test from 'node:test';
++import { Database } from '../db/client.mjs';
++import { createApp } from '../server.mjs';
++import { RunQueue } from '../queue/queue.mjs';
++import { createLiveToolRegistry } from '../tools/registry.mjs';
++import { MaestroModelRouter } from '../models/task-router.mjs';
++
++// A fake base llm that records the model the router selected for every call.
++// When `failFirst` is set the very first call fails, which forces the router to
++// fall back to the next model in the chain (inside a real agent run).
++function recordingLLM(record, { failFirst = false } = {}) {
++  let calls = 0;
++  const plan = JSON.stringify({ reasoning: 'scan', steps: [{ id: 'step_1', title: 'Scan workspace', toolId: 'files.scan', args: { scope: '.', maxFiles: 20 } }] });
++  return {
++    status: () => [{ id: 'test', configured: true }],
++    async complete({ model }) {
++      calls += 1;
++      record.models.push(model);
++      if (failFirst && calls === 1) throw new Error(`PROVIDER_DOWN:${model}`);
++      const planningCall = calls === 1 || (failFirst && calls === 2);
++      const stepCall = calls === 2 || (failFirst && calls === 3);
++      if (planningCall) return { provider: 'test', model, text: plan, toolCalls: [], usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } };
++      if (stepCall) return { provider: 'test', model, text: '', toolCalls: [], usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } };
++      return { provider: 'test', model, text: 'done', toolCalls: [], usage: { promptTokens: 20, completionTokens: 12, totalTokens: 32 } };
++    },
++  };
++}
++
++async function readSse(response) {
++  const reader = response.body.getReader();
++  const decoder = new TextDecoder();
++  let text = '';
++  while (true) { const next = await reader.read(); if (next.done) break; text += decoder.decode(next.value, { stream: true }); if (text.includes('event: close')) break; }
++  return text;
++}
++
++async function runAgent({ goal, failFirst }) {
++  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-router-maestro-'));
++  await writeFile(path.join(dir, 'input.txt'), 'real workspace evidence');
++  const db = new Database(path.join(dir, 'router.sqlite'));
++  const queue = new RunQueue(db, { pollMs: 5 });
++  const record = { models: [] };
++  const router = new MaestroModelRouter();
++  const routed = router.createRoutedLLM({ llm: recordingLLM(record, { failFirst }), goal });
++  const tools = createLiveToolRegistry({ db, llm: routed, getWorkspaceRoot: () => dir });
++  const app = createApp({ db, queue, llm: routed, liveTools: tools });
++  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
++  const base = `http://127.0.0.1:${app.server.address().port}`;
++  const request = async (route, options = {}) => { const response = await fetch(`${base}${route}`, { headers: { 'content-type': 'application/json', ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) }, ...options, body: options.body ? JSON.stringify(options.body) : undefined }); return { status: response.status, body: await response.json() }; };
++  try {
++    const registered = await request('/auth/register', { method: 'POST', body: { email: 'router@example.test', password: 'correct horse battery staple', tenantName: 'Router' } });
++    const token = registered.body.session.token;
++    const project = await request('/projects', { method: 'POST', token, body: { name: 'Router Project', rootPath: dir } });
++    const created = await request('/runs', { method: 'POST', token, body: { kind: 'agent.run', projectId: project.body.projectId, workspaceId: project.body.workspaceId, goal, model: 'test' } });
++    assert.equal(created.status, 202);
++    queue.start();
++    const eventsResponse = await fetch(`${base}/runs/${created.body.runId}/events`, { headers: { authorization: `Bearer ${token}` } });
++    await readSse(eventsResponse);
++    const finished = await request(`/runs/${created.body.runId}`, { token });
++    return { status: finished.body.status, record };
++  } finally {
++    queue.stop();
++    await new Promise((resolve) => app.server.close(resolve));
++    db.close();
++    await rm(dir, { recursive: true, force: true });
++  }
++}
++
++test('the Maestro routes a coding task to Claude and completes through the routed llm', async () => {
++  const { status, record } = await runAgent({ goal: 'Fix the bug in this function', failFirst: false });
++  assert.equal(status, 'completed');
++  assert.ok(record.models.length >= 3);
++  assert.ok(record.models.every((model) => model === 'claude-sonnet-4-6'), `expected every call to use Claude, got ${record.models.join(',')}`);
++});
++
++test('the Maestro falls back to the next provider when the preferred model fails', async () => {
++  const { status, record } = await runAgent({ goal: 'Fix the bug in this function', failFirst: true });
++  assert.equal(status, 'completed');
++  assert.equal(record.models[0], 'claude-sonnet-4-6');
++  assert.equal(record.models[1], 'gpt-5');
++  assert.ok(record.models.includes('gpt-5'), 'the run must continue on the fallback model');
++});
+diff --git a/backend/test/task-router.test.mjs b/backend/test/task-router.test.mjs
+new file mode 100644
+index 0000000..54612a0
+--- /dev/null
++++ b/backend/test/task-router.test.mjs
+@@ -0,0 +1,180 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { ModelRouter } from '../models/router.mjs';
++import { MaestroModelRouter, TASK_TYPES, TASK_TYPE_MODELS, classifyTask } from '../models/task-router.mjs';
++import { SUPPORTED_MODELS, modelProvider } from '../models/catalog.mjs';
++
++/* -------------------------------------------------------------------------- */
++/*  Task classification                                                       */
++/* -------------------------------------------------------------------------- */
++
++test('classifyTask maps goals to the right task type', () => {
++  assert.equal(classifyTask('Fix the bug in this function and add a test'), 'code');
++  assert.equal(classifyTask('Summarize this long PDF document'), 'long_context');
++  assert.equal(classifyTask({ goal: 'Describe this image', needsVision: true }), 'vision');
++  assert.equal(classifyTask('Prove the theorem using logic'), 'reasoning');
++  assert.equal(classifyTask('Quick simple greeting'), 'fast');
++  assert.equal(classifyTask('Hello there'), 'general');
++});
++
++test('explicit hints win over keyword heuristics', () => {
++  assert.equal(classifyTask({ goal: 'do the thing', taskType: 'code' }), 'code');
++  assert.equal(classifyTask({ goal: 'fix the bug', needsVision: true }), 'vision');
++  assert.equal(classifyTask({ goal: 'say hi', contextTokens: 400_000 }), 'long_context');
++});
++
++/* -------------------------------------------------------------------------- */
++/*  Routing                                                                   */
++/* -------------------------------------------------------------------------- */
++
++test('every task type routes to a real supported model and a cross-family chain', () => {
++  const router = new MaestroModelRouter();
++  for (const taskType of TASK_TYPES) {
++    const decision = router.route({ taskType });
++    assert.ok(SUPPORTED_MODELS[decision.model], `${taskType} -> ${decision.model} must be in the catalog`);
++    assert.equal(decision.provider, modelProvider(decision.model));
++    assert.ok(decision.chain.length >= 3, `${taskType} chain must offer real fallbacks`);
++    assert.ok(new Set(decision.chain.map((id) => modelProvider(id))).size >= 2, `${taskType} chain must span providers`);
++  }
++});
++
++test('each task type picks its preferred family (Claude / GPT / Gemini)', () => {
++  const router = new MaestroModelRouter();
++  assert.equal(router.route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
++  assert.equal(router.route({ taskType: 'reasoning' }).model, 'gpt-5');
++  assert.equal(router.route({ taskType: 'vision' }).model, 'gemini-3.1-pro-preview');
++  assert.equal(router.route({ taskType: 'long_context' }).model, 'gemini-3.1-pro-preview');
++  assert.equal(router.route({ taskType: 'fast' }).model, 'gpt-5-mini');
++  assert.equal(router.route({ taskType: 'general' }).model, 'gpt-5-mini');
++});
++
++test('classification drives routing end to end', () => {
++  const router = new MaestroModelRouter();
++  assert.equal(router.route({ goal: 'refactor this function' }).taskType, 'code');
++  assert.equal(router.route({ goal: 'refactor this function' }).model, 'claude-sonnet-4-6');
++  assert.equal(router.route({ goal: 'summarize the whole document' }).taskType, 'long_context');
++});
++
++test('a large context requirement filters the chain to long-context models', () => {
++  const router = new MaestroModelRouter();
++  const decision = router.route({ taskType: 'general', contextTokens: 500_000 });
++  assert.ok(decision.chain.length >= 1);
++  for (const id of decision.chain) assert.ok(SUPPORTED_MODELS[id].context >= 500_000, `${id} must fit the context`);
++  assert.equal(decision.model, 'gemini-2.5-flash-lite');
++});
++
++test('a maxCost budget filters the chain by blended price', () => {
++  const router = new MaestroModelRouter();
++  const decision = router.route({ taskType: 'reasoning', maxCost: 3 });
++  assert.ok(decision.chain.length >= 1);
++  for (const id of decision.chain) {
++    const spec = SUPPORTED_MODELS[id];
++    assert.ok((spec.input + spec.output) / 2 <= 3, `${id} must fit the budget`);
++  }
++});
++
++test('an unhealthy model drops out of the chain and the next one is used', () => {
++  const router = new MaestroModelRouter();
++  assert.equal(router.route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
++  router.updateHealth('claude-sonnet-4-6', false);
++  const next = router.route({ taskType: 'code' });
++  assert.equal(next.model, 'gpt-5');
++  assert.ok(!next.chain.includes('claude-sonnet-4-6'));
++});
++
++test('fails closed when no model satisfies the requirements', () => {
++  const router = new MaestroModelRouter();
++  assert.throws(() => router.route({ taskType: 'general', contextTokens: 5_000_000 }), /NO_HEALTHY_MODEL_FOR_REQUIREMENTS/);
++});
++
++/* -------------------------------------------------------------------------- */
++/*  Fallback                                                                  */
++/* -------------------------------------------------------------------------- */
++
++test('runWithFallback tries models in order until one succeeds', async () => {
++  const router = new MaestroModelRouter();
++  const tried = [];
++  const outcome = await router.runWithFallback(['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview'], async (model) => {
++    tried.push(model);
++    if (model !== 'gemini-3.1-pro-preview') throw new Error(`DOWN:${model}`);
++    return { text: 'ok', model };
++  });
++  assert.deepEqual(tried, ['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview']);
++  assert.equal(outcome.model, 'gemini-3.1-pro-preview');
++  assert.equal(outcome.provider, 'gemini');
++  assert.equal(outcome.attempts.length, 3);
++  assert.equal(outcome.attempts[2].ok, true);
++});
++
++test('runWithFallback throws MAESTRO_ALL_MODELS_FAILED when every model fails', async () => {
++  const router = new MaestroModelRouter();
++  await assert.rejects(
++    () => router.runWithFallback(['gpt-5', 'claude-sonnet-4-6'], async (model) => { throw new Error(`DOWN:${model}`); }),
++    /MAESTRO_ALL_MODELS_FAILED/,
++  );
++});
++
++test('createRoutedLLM is a drop-in llm that routes by task type and falls back', async () => {
++  const router = new MaestroModelRouter();
++  const calls = [];
++  const base = {
++    status: () => [{ id: 'base', configured: true }],
++    async complete({ model }) {
++      calls.push(model);
++      if (model === 'claude-sonnet-4-6') throw new Error('PRIMARY_DOWN');
++      return { provider: 'openai', model, text: 'planned', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, toolCalls: [] };
++    },
++  };
++  const routed = router.createRoutedLLM({ llm: base, taskType: 'code' });
++  assert.equal(typeof routed.complete, 'function');
++  assert.equal(typeof routed.status, 'function');
++  const result = await routed.complete({ model: 'ignored', messages: [] });
++  assert.deepEqual(calls, ['claude-sonnet-4-6', 'gpt-5']);
++  assert.equal(result.routedModel, 'gpt-5');
++  assert.equal(result.routeTaskType, 'code');
++  assert.equal(result.routeAttempts.length, 2);
++  assert.equal(result.text, 'planned');
++});
++
++test('createRoutedLLM can honour an explicitly requested model first', async () => {
++  const router = new MaestroModelRouter();
++  const calls = [];
++  const base = { async complete({ model }) { calls.push(model); return { model, text: 'ok', usage: {}, toolCalls: [] }; } };
++  const routed = router.createRoutedLLM({ llm: base, taskType: 'general', honorRequestedModel: true });
++  await routed.complete({ model: 'claude-sonnet-4-6', messages: [] });
++  assert.equal(calls[0], 'claude-sonnet-4-6');
++});
++
++test('createRoutedLLM requires a real llm', () => {
++  const router = new MaestroModelRouter();
++  assert.throws(() => router.createRoutedLLM({ llm: {} }), /ROUTED_LLM_REQUIRES_COMPLETE/);
++});
++
++/* -------------------------------------------------------------------------- */
++/*  Backward compatibility of the extended ModelRouter                        */
++/* -------------------------------------------------------------------------- */
++
++test('ModelRouter keeps its original behaviour and adds optional priority/rank', () => {
++  const router = new ModelRouter([
++    { id: 'cheap', taskTypes: ['general'], contextTokens: 1000, costPer1k: 0.1, latencyMs: 100 },
++    { id: 'vision', vision: true, contextTokens: 5000, costPer1k: 1, latencyMs: 200 },
++  ]);
++  assert.equal(router.choose({ taskType: 'general' }).id, 'cheap');
++  assert.equal(router.choose({ needsVision: true }).id, 'vision');
++  router.updateHealth('vision', false);
++  assert.throws(() => router.choose({ needsVision: true }), /NO_HEALTHY_MODEL/);
++
++  const prioritized = new ModelRouter([
++    { id: 'low', costPer1k: 0, latencyMs: 1 },
++    { id: 'high', priority: 5, costPer1k: 9, latencyMs: 500 },
++  ]);
++  assert.equal(prioritized.choose({}).id, 'high');
++  assert.deepEqual(prioritized.rank({}).map((item) => item.id), ['high', 'low']);
++});
++
++test('TASK_TYPE_MODELS only references supported models', () => {
++  for (const [taskType, chain] of Object.entries(TASK_TYPE_MODELS)) {
++    assert.ok(TASK_TYPES.includes(taskType), `unknown task type ${taskType}`);
++    for (const id of chain) assert.ok(SUPPORTED_MODELS[id], `${taskType} references unsupported ${id}`);
++  }
++});
+diff --git a/src/services/agent-engine/index.ts b/src/services/agent-engine/index.ts
+index d47ec7c..997914a 100644
+--- a/src/services/agent-engine/index.ts
++++ b/src/services/agent-engine/index.ts
+@@ -4,3 +4,4 @@ export * from './memory';
+ export * from './executor';
+ export * from './llm-planner';
+ export * from './orchestrator';
++export * from './model-router';
+diff --git a/src/services/agent-engine/model-router.ts b/src/services/agent-engine/model-router.ts
+new file mode 100644
+index 0000000..6d27d16
+--- /dev/null
++++ b/src/services/agent-engine/model-router.ts
+@@ -0,0 +1,251 @@
++import { MODELS, getModel } from '../../data/models';
++import type { ChatCompletionRequest, ChatCompletionResult, ProviderId } from '../../types/model';
++import type { LLMProvider } from '../ai/provider';
++
++/* -------------------------------------------------------------------------- */
++/*  AI Model Router for the Maestro (AgentOrchestrator)                       */
++/* -------------------------------------------------------------------------- */
++/*
++ * Picks a model (Claude / GPT / Gemini) from the *type* of the task and returns
++ * a cross-provider fallback chain used when a model call fails. It reuses the
++ * existing app model catalog (`src/data/models`) and the existing `LLMProvider`
++ * contract, and is delivered to the existing `AgentOrchestrator`/`LLMPlanner`
++ * as an ordered provider list or a drop-in provider — the orchestrator itself
++ * is never rebuilt or modified.
++ */
++
++/** The task taxonomy the router understands. */
++export type MaestroTaskType = 'code' | 'reasoning' | 'vision' | 'long_context' | 'fast' | 'general';
++
++export const TASK_TYPES: MaestroTaskType[] = ['code', 'reasoning', 'vision', 'long_context', 'fast', 'general'];
++
++/**
++ * Task type -> ordered model preference (best first). Every chain spans all
++ * three families (Anthropic / OpenAI / Google) so a failure in one family falls
++ * through to a different provider. IDs must exist in `MODELS`.
++ */
++export const TASK_TYPE_MODELS: Record<MaestroTaskType, string[]> = {
++  code: ['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview', 'claude-haiku-4-5', 'gpt-5-mini', 'gemini-3-flash-preview'],
++  reasoning: ['gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gpt-5-mini', 'claude-haiku-4-5', 'gemini-3-flash-preview'],
++  vision: ['gemini-3.1-pro-preview', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3-flash-preview', 'gpt-5-mini', 'claude-haiku-4-5'],
++  long_context: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6', 'gpt-5-mini', 'claude-haiku-4-5'],
++  fast: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6'],
++  general: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'],
++};
++
++const TASK_HINTS: { taskType: MaestroTaskType; pattern: RegExp }[] = [
++  { taskType: 'vision', pattern: /(image|photo|picture|screenshot|diagram|chart|vision|multimodal|صورة|صور|لقطة|رسم|مخطط)/i },
++  { taskType: 'code', pattern: /(code|bug|refactor|function|class|compile|debug|test|script|typescript|javascript|python|كود|برمج|خطأ|اختبار|دالة|دوال|إصلاح)/i },
++  { taskType: 'long_context', pattern: /(summar|document|docs|pdf|long|entire|whole|codebase|book|report|لخّص|لخص|مستند|ملف|طويل|كامل|تقرير)/i },
++  { taskType: 'reasoning', pattern: /(reason|prove|proof|math|logic|analy|plan|strategy|design|استدلال|منطق|تحليل|خطة|تصميم|رياض|برهن|فكر)/i },
++  { taskType: 'fast', pattern: /(quick|fast|simple|short|trivial|سريع|بسيط|مختصر)/i },
++];
++
++export interface MaestroRoutingInput {
++  goal?: string;
++  taskType?: MaestroTaskType;
++  needsVision?: boolean;
++  contextTokens?: number;
++  maxCostPerMTokens?: number;
++}
++
++export interface RouteDecision {
++  taskType: MaestroTaskType;
++  model: string;
++  provider: ProviderId;
++  chain: string[];
++}
++
++export interface RouteAttempt {
++  model: string;
++  provider: ProviderId;
++  ok: boolean;
++  error?: string;
++}
++
++export interface FallbackOutcome<T> {
++  ok: true;
++  model: string;
++  provider: ProviderId;
++  result: T;
++  attempts: RouteAttempt[];
++}
++
++/** Classify a goal/request into a {@link MaestroTaskType}. Explicit hints win. */
++export function classifyTask(input: MaestroRoutingInput | string = {}): MaestroTaskType {
++  const source: MaestroRoutingInput = typeof input === 'string' ? { goal: input } : input;
++  const explicit = String(source.taskType ?? '').trim().toLowerCase() as MaestroTaskType;
++  if (TASK_TYPES.includes(explicit)) return explicit;
++  if (source.needsVision === true) return 'vision';
++  const contextTokens = Number(source.contextTokens);
++  if (Number.isFinite(contextTokens) && contextTokens >= 200_000) return 'long_context';
++  const text = String(source.goal ?? '');
++  for (const hint of TASK_HINTS) {
++    if (hint.pattern.test(text)) return hint.taskType;
++  }
++  return 'general';
++}
++
++function providerOf(model: string): ProviderId {
++  return getModel(model)?.provider ?? 'openai';
++}
++
++function blendedCost(model: string): number {
++  const spec = getModel(model);
++  if (!spec) return Infinity;
++  return (spec.inputPricePerMTokens + spec.outputPricePerMTokens) / 2;
++}
++
++/**
++ * Task-type aware, health-aware, fallback-capable model router for the Maestro.
++ */
++export class MaestroModelRouter {
++  private readonly health = new Map<string, boolean>();
++
++  /** Ordered eligible model IDs for a task type (the fallback chain). */
++  chain(taskType: MaestroTaskType, criteria: MaestroRoutingInput = {}): string[] {
++    const resolved = TASK_TYPES.includes(taskType) ? taskType : classifyTask({ ...criteria, taskType });
++    const preference = TASK_TYPE_MODELS[resolved] ?? TASK_TYPE_MODELS.general;
++    const needsVision = criteria.needsVision === true;
++    const contextTokens = Number(criteria.contextTokens ?? 0);
++    const maxCost = Number(criteria.maxCostPerMTokens ?? Infinity);
++    return preference.filter((id) => {
++      if (this.health.get(id) === false) return false;
++      const spec = getModel(id);
++      if (!spec) return false;
++      if (needsVision && !spec.capabilities.includes('vision')) return false;
++      if (spec.contextWindow < contextTokens) return false;
++      if (blendedCost(id) > maxCost) return false;
++      return true;
++    });
++  }
++
++  /** Full routing decision for a request. */
++  route(criteria: MaestroRoutingInput = {}): RouteDecision {
++    const taskType = TASK_TYPES.includes(criteria.taskType as MaestroTaskType)
++      ? (criteria.taskType as MaestroTaskType)
++      : classifyTask(criteria);
++    const chain = this.chain(taskType, criteria);
++    if (chain.length === 0) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
++    return { taskType, model: chain[0] as string, provider: providerOf(chain[0] as string), chain };
++  }
++
++  /** Mark a model healthy/unhealthy. */
++  updateHealth(model: string, healthy: boolean): void {
++    this.health.set(model, healthy);
++  }
++
++  /** Ordered, de-duplicated providers for a chain (only configured providers). */
++  orderProviders(chain: string[], providers: LLMProvider[]): LLMProvider[] {
++    const byId = new Map<ProviderId, LLMProvider>(providers.map((provider) => [provider.id, provider]));
++    const ordered: LLMProvider[] = [];
++    const seen = new Set<ProviderId>();
++    for (const model of chain) {
++      const providerId = providerOf(model);
++      const provider = byId.get(providerId);
++      if (provider && !seen.has(providerId)) {
++        ordered.push(provider);
++        seen.add(providerId);
++      }
++    }
++    return ordered;
++  }
++
++  /**
++   * Ready-to-use input for `AgentOrchestrator.run`: the chosen model plus the
++   * providers ordered by the fallback chain. `LLMPlanner` already retries the
++   * provider list in order, so this is the whole Maestro wiring.
++   */
++  routeForOrchestrator(input: MaestroRoutingInput & { providers: LLMProvider[] }): RouteDecision & { providers: LLMProvider[] } {
++    const decision = this.route(input);
++    return { ...decision, providers: this.orderProviders(decision.chain, input.providers) };
++  }
++
++  /**
++   * Run `run(model)` over a chain until one succeeds, marking health as it goes.
++   * Throws `MAESTRO_ALL_MODELS_FAILED` (with `.attempts`) when every model fails.
++   */
++  async runWithFallback<T>(chain: string[], run: (model: string) => Promise<T>): Promise<FallbackOutcome<T>> {
++    const attempts: RouteAttempt[] = [];
++    let lastError: unknown;
++    for (const model of chain) {
++      try {
++        const result = await run(model);
++        this.updateHealth(model, true);
++        attempts.push({ model, provider: providerOf(model), ok: true });
++        return { ok: true, model, provider: providerOf(model), result, attempts };
++      } catch (error) {
++        lastError = error;
++        this.updateHealth(model, false);
++        attempts.push({ model, provider: providerOf(model), ok: false, error: error instanceof Error ? error.message : String(error) });
++      }
++    }
++    const error = new Error(`MAESTRO_ALL_MODELS_FAILED:${attempts.map((attempt) => `${attempt.model}:${attempt.error}`).join('|')}`) as Error & { attempts?: RouteAttempt[]; cause?: unknown };
++    error.attempts = attempts;
++    error.cause = lastError;
++    throw error;
++  }
++
++  /**
++   * Wrap the configured providers so the Maestro routes by task type and falls
++   * back across providers on failure. The result satisfies `LLMProvider`, so it
++   * is a drop-in replacement inside `AgentOrchestrator`.
++   */
++  createRoutedProvider(options: MaestroRoutingInput & { providers: LLMProvider[] }): LLMProvider {
++    const { providers, taskType, goal, ...criteria } = options;
++    if (!providers || providers.length === 0) throw new Error('ROUTED_PROVIDER_REQUIRES_PROVIDERS');
++    const router = this;
++    const byId = new Map<ProviderId, LLMProvider>(providers.map((provider) => [provider.id, provider]));
++    const primary = providers[0] as LLMProvider;
++    const resolveTaskType = (): MaestroTaskType => {
++      if (TASK_TYPES.includes(taskType as MaestroTaskType)) return taskType as MaestroTaskType;
++      return classifyTask(goal === undefined ? criteria : { ...criteria, goal });
++    };
++
++    return {
++      id: primary.id,
++      live: primary.live,
++      async complete(req: ChatCompletionRequest): Promise<ChatCompletionResult> {
++        const chain = router.chain(resolveTaskType(), criteria);
++        const outcome = await router.runWithFallback(chain, async (model) => {
++          const provider = byId.get(providerOf(model));
++          if (!provider) throw new Error(`NO_PROVIDER_FOR_MODEL:${model}`);
++          return provider.complete({ ...req, model });
++        });
++        return { ...outcome.result, model: outcome.result.model ?? outcome.model };
++      },
++      async *stream(req: ChatCompletionRequest) {
++        const chain = router.chain(resolveTaskType(), criteria);
++        let lastError: unknown;
++        for (const model of chain) {
++          const provider = byId.get(providerOf(model));
++          if (!provider) {
++            lastError = new Error(`NO_PROVIDER_FOR_MODEL:${model}`);
++            continue;
++          }
++          try {
++            yield* provider.stream({ ...req, model });
++            router.updateHealth(model, true);
++            return;
++          } catch (error) {
++            router.updateHealth(model, false);
++            lastError = error;
++          }
++        }
++        throw lastError ?? new Error('MAESTRO_ALL_MODELS_FAILED');
++      },
++    };
++  }
++}
++
++export const maestroModelRouter = new MaestroModelRouter();
++
++/** All model IDs referenced by the router must exist in the catalog. */
++export function validateTaskTypeModels(): string[] {
++  const missing: string[] = [];
++  const known = new Set(MODELS.map((model) => model.id));
++  for (const chain of Object.values(TASK_TYPE_MODELS)) {
++    for (const id of chain) if (!known.has(id)) missing.push(id);
++  }
++  return missing;
++}
+diff --git a/test/model-router.test.ts b/test/model-router.test.ts
+new file mode 100644
+index 0000000..a3ff794
+--- /dev/null
++++ b/test/model-router.test.ts
+@@ -0,0 +1,157 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { getModel } from '../src/data/models';
++import type { ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResult, ProviderId } from '../src/types/model';
++import type { LLMProvider } from '../src/services/ai/provider';
++import {
++  MaestroModelRouter,
++  TASK_TYPES,
++  TASK_TYPE_MODELS,
++  classifyTask,
++  validateTaskTypeModels,
++} from '../src/services/agent-engine/model-router';
++
++const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
++
++class FakeProvider implements LLMProvider {
++  readonly live = true;
++  requests: ChatCompletionRequest[] = [];
++
++  constructor(
++    readonly id: ProviderId,
++    private readonly fail = false,
++  ) {}
++
++  async complete(request: ChatCompletionRequest): Promise<ChatCompletionResult> {
++    this.requests.push(request);
++    if (this.fail) throw new Error(`PROVIDER_DOWN:${this.id}`);
++    return { id: 'cmpl', model: request.model, content: 'ok', usage, finishReason: 'stop' };
++  }
++
++  async *stream(request: ChatCompletionRequest): AsyncGenerator<ChatCompletionChunk> {
++    this.requests.push(request);
++    if (this.fail) throw new Error(`PROVIDER_DOWN:${this.id}`);
++    yield { id: 'cmpl', delta: 'ok', done: false };
++    yield { id: 'cmpl', delta: '', done: true, finishReason: 'stop' };
++  }
++}
++
++/* -------------------------------------------------------------------------- */
++/*  Classification + routing                                                  */
++/* -------------------------------------------------------------------------- */
++
++test('classifyTask maps goals to the right task type', () => {
++  assert.equal(classifyTask('Fix the bug in this function and add a test'), 'code');
++  assert.equal(classifyTask('Summarize this long PDF document'), 'long_context');
++  assert.equal(classifyTask({ goal: 'Describe this image', needsVision: true }), 'vision');
++  assert.equal(classifyTask('Prove the theorem using logic'), 'reasoning');
++  assert.equal(classifyTask('Quick simple greeting'), 'fast');
++  assert.equal(classifyTask('Hello there'), 'general');
++});
++
++test('every task type routes to a real model and a cross-family chain', () => {
++  const router = new MaestroModelRouter();
++  for (const taskType of TASK_TYPES) {
++    const decision = router.route({ taskType });
++    assert.ok(getModel(decision.model), `${taskType} -> ${decision.model} must exist in the catalog`);
++    assert.equal(decision.provider, getModel(decision.model)?.provider);
++    assert.ok(decision.chain.length >= 3, `${taskType} chain must offer fallbacks`);
++    assert.ok(new Set(decision.chain.map((id) => getModel(id)?.provider)).size >= 2, `${taskType} chain must span providers`);
++  }
++});
++
++test('each task type picks its preferred family (Claude / GPT / Gemini)', () => {
++  const router = new MaestroModelRouter();
++  assert.equal(router.route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
++  assert.equal(router.route({ taskType: 'reasoning' }).model, 'gpt-5');
++  assert.equal(router.route({ taskType: 'vision' }).model, 'gemini-3.1-pro-preview');
++  assert.equal(router.route({ taskType: 'fast' }).model, 'gpt-5-mini');
++  assert.equal(router.route({ taskType: 'general' }).model, 'gpt-5-mini');
++});
++
++test('a large context requirement filters the chain', () => {
++  const router = new MaestroModelRouter();
++  const decision = router.route({ taskType: 'general', contextTokens: 500_000 });
++  assert.ok(decision.chain.length >= 1);
++  for (const id of decision.chain) assert.ok((getModel(id)?.contextWindow ?? 0) >= 500_000, id);
++});
++
++test('an unhealthy model drops out and the next one is used', () => {
++  const router = new MaestroModelRouter();
++  assert.equal(router.route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
++  router.updateHealth('claude-sonnet-4-6', false);
++  const next = router.route({ taskType: 'code' });
++  assert.equal(next.model, 'gpt-5');
++  assert.ok(!next.chain.includes('claude-sonnet-4-6'));
++});
++
++test('fails closed when nothing satisfies the requirements', () => {
++  const router = new MaestroModelRouter();
++  assert.throws(() => router.route({ taskType: 'general', contextTokens: 5_000_000 }), /NO_HEALTHY_MODEL_FOR_REQUIREMENTS/);
++});
++
++/* -------------------------------------------------------------------------- */
++/*  Fallback                                                                  */
++/* -------------------------------------------------------------------------- */
++
++test('runWithFallback tries models in order until one succeeds', async () => {
++  const router = new MaestroModelRouter();
++  const tried: string[] = [];
++  const outcome = await router.runWithFallback(['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview'], async (model) => {
++    tried.push(model);
++    if (model !== 'gemini-3.1-pro-preview') throw new Error(`DOWN:${model}`);
++    return model;
++  });
++  assert.deepEqual(tried, ['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview']);
++  assert.equal(outcome.model, 'gemini-3.1-pro-preview');
++  assert.equal(outcome.provider, 'google');
++  assert.equal(outcome.attempts.length, 3);
++});
++
++test('runWithFallback throws MAESTRO_ALL_MODELS_FAILED when every model fails', async () => {
++  const router = new MaestroModelRouter();
++  await assert.rejects(() => router.runWithFallback(['gpt-5', 'claude-sonnet-4-6'], async (model) => { throw new Error(`DOWN:${model}`); }), /MAESTRO_ALL_MODELS_FAILED/);
++});
++
++/* -------------------------------------------------------------------------- */
++/*  Maestro wiring                                                            */
++/* -------------------------------------------------------------------------- */
++
++test('orderProviders returns configured providers in chain order', () => {
++  const router = new MaestroModelRouter();
++  const providers = [new FakeProvider('openai'), new FakeProvider('anthropic'), new FakeProvider('google')];
++  const ordered = router.orderProviders(router.chain('code'), providers);
++  assert.deepEqual(ordered.map((provider) => provider.id), ['anthropic', 'openai', 'google']);
++});
++
++test('routeForOrchestrator hands the Maestro a model plus ordered providers', () => {
++  const router = new MaestroModelRouter();
++  const providers = [new FakeProvider('google'), new FakeProvider('openai'), new FakeProvider('anthropic')];
++  const routed = router.routeForOrchestrator({ goal: 'Fix the bug in this function', providers });
++  assert.equal(routed.taskType, 'code');
++  assert.equal(routed.model, 'claude-sonnet-4-6');
++  assert.equal(routed.providers[0]?.id, 'anthropic');
++});
++
++test('createRoutedProvider routes by task type and falls back across providers', async () => {
++  const router = new MaestroModelRouter();
++  const anthropic = new FakeProvider('anthropic', true);
++  const openai = new FakeProvider('openai');
++  const google = new FakeProvider('google');
++  const routed = router.createRoutedProvider({ providers: [anthropic, openai, google], taskType: 'code' });
++  const result = await routed.complete({ model: 'ignored', messages: [{ role: 'user', content: 'hi' }] });
++  assert.equal(anthropic.requests[0]?.model, 'claude-sonnet-4-6');
++  assert.equal(openai.requests[0]?.model, 'gpt-5');
++  assert.equal(result.model, 'gpt-5');
++  assert.equal(google.requests.length, 0);
++});
++
++test('createRoutedProvider requires providers', () => {
++  const router = new MaestroModelRouter();
++  assert.throws(() => router.createRoutedProvider({ providers: [] }), /ROUTED_PROVIDER_REQUIRES_PROVIDERS/);
++});
++
++test('every router model id exists in the catalog', () => {
++  assert.deepEqual(validateTaskTypeModels(), []);
++  for (const chain of Object.values(TASK_TYPE_MODELS)) assert.ok(chain.length >= 3);
++});
