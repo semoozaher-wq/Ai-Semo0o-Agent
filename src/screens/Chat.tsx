@@ -38,6 +38,7 @@ export function Chat() {
   const deleteConversation = useChatStore((s) => s.deleteConversation);
   const send = useChatStore((s) => s.send);
   const stop = useChatStore((s) => s.stop);
+  const retryInterrupted = useChatStore((s) => s.retryInterrupted);
 
   const settings = useAppStore((s) => s.settings);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
@@ -118,7 +119,13 @@ export function Chat() {
               </View>
             </View>
           ) : (
-            list.map((message) => <ChatBubble key={message.id} message={message} />)
+            list.map((message) => (
+              <ChatBubble
+                key={message.id}
+                message={message}
+                onRetry={message.status === 'interrupted' && activeId ? () => void retryInterrupted(activeId) : undefined}
+              />
+            ))
           )}
         </ScrollView>
 
