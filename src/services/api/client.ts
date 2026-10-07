@@ -92,6 +92,72 @@ export interface ApiReadyReport {
 }
 export interface ApiHealth { ok: boolean; service: string; version?: string; uptimeSeconds?: number; time: string }
 
+// --- Code intelligence & capability benchmarking -----------------------------
+// Read-only views over the project index. Shapes mirror the backend routes
+// (`/codebase/*`, `/capabilities/scorecard`, `/benchmark/agent`) exactly.
+export interface ApiCodeIntelligenceSummary {
+  generatedAt: string;
+  root: string;
+  parser: string;
+  truncated: boolean;
+  counts: { files: number; symbols: number; imports: number; edges: number; tests: number };
+  sample?: { files: string[]; symbols: unknown[]; edges: unknown[] };
+  intelligence?: unknown;
+}
+export interface ApiRiskFactor { name: string; value: number; weight: number }
+export interface ApiImpactAnalysis {
+  changedFiles: string[];
+  directDependents: string[];
+  blastRadius: string[];
+  affectedFiles: string[];
+  affectedTests: string[];
+  affectedSymbols: unknown[];
+  depth: Record<string, number>;
+  risk: { score: number; level: string; factors: ApiRiskFactor[] };
+  truncated: boolean;
+  description: string;
+}
+export interface ApiChangeSet {
+  id: string;
+  generatedAt: string;
+  goal: string | null;
+  summary: { files: number; additions: number; deletions: number; [key: string]: unknown };
+  changes: unknown[];
+  impact: ApiImpactAnalysis | null;
+  verification: unknown;
+  risk: { score: number; level: string; factors: ApiRiskFactor[] };
+  description: string;
+}
+export interface ApiCapabilityEntry { id: string; name: string; weight: number; status: string; score: number; evidence: string[] }
+export interface ApiCapabilityScorecard {
+  generatedAt: string;
+  score: number;
+  level: string;
+  models: { configured: number; healthy: number; total: number };
+  integrations: { configured: string[]; total: number };
+  capabilities: ApiCapabilityEntry[];
+  summary: { total: number; live: number; partial: number; unwired: number; failed: number };
+  description: string;
+}
+export interface ApiBenchmarkTask {
+  id: string;
+  name: string;
+  ok: boolean;
+  score: number;
+  durationMs: number;
+  evaluators: { id: string; passed: boolean; detail: string | null }[];
+}
+export interface ApiBenchmarkReport {
+  name: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  tasks: ApiBenchmarkTask[];
+  summary: { total: number; passed: number; failed: number; passRate: number; score: number; byEvaluator: Record<string, { passed: number; failed: number; rate: number }> };
+  workspace?: { root: string | null; files: number; symbols: number };
+}
+export interface ApiReasoningResult { mode?: string; [key: string]: unknown }
+
 export interface ApiMember { userId: string; email: string; role: string; status: string; joinedAt: string }
 export interface ApiInvitation { invitationId: string; email: string; role: string; expiresAt: string; acceptedAt: string | null; createdAt: string; invitedByEmail?: string | null }
 export interface ApiSelfImproveSample { toolId?: string; error?: string; runId?: string; at?: string }
@@ -241,6 +307,19 @@ class BackendApiClient {
   // (GitHub, billing, embeddings, error tracking, browser) with its real
   // configured/unwired state — never a fabricated success.
   async getIntegrationsStatus(): Promise<ApiIntegrationsStatus> { return this.request<ApiIntegrationsStatus>('/integrations/status'); }
+  // --- Code intelligence (read-only views over the project index) ----------
+  async getCodebaseIntelligence(projectId: string, options: { maxFiles?: number; full?: boolean } = {}): Promise<ApiCodeIntelligenceSummary> {
+    const params = new URLSearchParams({ projectId });
+    if (options.maxFiles) params.set('maxFiles', String(options.maxFiles));
+    if (options.full) params.set('full', '1');
+    return this.request<ApiCodeIntelligenceSummary>(`/codebase/intelligence?${params.toString()}`);
+  }
+  async analyzeImpact(input: { projectId: string; changedFiles: string[]; maxDepth?: number }): Promise<ApiImpactAnalysis> { return this.request<ApiImpactAnalysis>('/codebase/impact', { method: 'POST', body: JSON.stringify(input) }); }
+  async reasonCodebase(input: { projectId: string; question: string; mode?: 'auto' | 'definition' | 'references' | 'trace' | 'explain' | 'search'; target?: string; from?: string; to?: string }): Promise<ApiReasoningResult> { return this.request<ApiReasoningResult>('/codebase/reason', { method: 'POST', body: JSON.stringify(input) }); }
+  async buildChangeSet(input: { projectId: string; goal?: string }): Promise<ApiChangeSet> { return this.request<ApiChangeSet>('/codebase/changeset', { method: 'POST', body: JSON.stringify(input) }); }
+  // --- Capability benchmarking ---------------------------------------------
+  async getCapabilityScorecard(): Promise<ApiCapabilityScorecard> { return this.request<ApiCapabilityScorecard>('/capabilities/scorecard'); }
+  async runAgentBenchmark(projectId: string): Promise<ApiBenchmarkReport> { return this.request<ApiBenchmarkReport>('/benchmark/agent', { method: 'POST', body: JSON.stringify({ projectId }) }); }
   // GitHub OAuth connect flow. `start` returns the authorize URL + single-use
   // state; `complete` exchanges the pasted code for a stored (encrypted) token;
   // `disconnect` removes the tenant's stored connection. All three surface the
