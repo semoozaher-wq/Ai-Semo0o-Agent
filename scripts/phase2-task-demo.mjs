@@ -120,7 +120,7 @@ async function main() {
   const queue = new RunQueue(db, { pollMs: 5 });
   const app = createApp({ db, queue, llm: demoLLM() });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const base = `http://127.0.0.1:${app.server.address().port}`; // security-scan:allow private-url-literal (local loopback bind, not a hardcoded host)
   const request = async (route, options = {}) => {
     const response = await fetch(`${base}${route}`, {
       headers: { 'content-type': 'application/json', ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) },

@@ -14,7 +14,7 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const dump = await new Promise((resolve, reject) => {
-  const child = spawn(process.env.CHROMIUM_BIN || 'chromium', ['--headless', '--no-sandbox', '--disable-gpu', '--dump-dom', `http://127.0.0.1:${port}/chat`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.env.CHROMIUM_BIN || 'chromium', ['--headless', '--no-sandbox', '--disable-gpu', '--dump-dom', `http://127.0.0.1:${port}/chat`], { stdio: ['ignore', 'pipe', 'pipe'] }); // security-scan:allow private-url-literal (local loopback bind, not a hardcoded host)
   let stdout = ''; let stderr = ''; child.stdout.on('data', (chunk) => { stdout += chunk; }); child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('error', reject); child.on('close', (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`CHROMIUM_EXIT_${code}:${stderr.slice(0, 500)}`)));
 });

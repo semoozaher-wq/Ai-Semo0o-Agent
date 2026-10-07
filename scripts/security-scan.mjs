@@ -36,16 +36,15 @@ const rules = [
 const FILE_ALLOW = /security-scan:allow-file/;
 const LINE_ALLOW = /security-scan:allow(?!-file)(?:\s+([a-z][a-z-]*))?/;
 
-// Test fixtures and build output legitimately contain these patterns.
+// Directory-level skips only: test trees are fixtures and `dist/` is generated
+// build output. Individual source files are deliberately NOT skipped — a
+// legitimate occurrence of a pattern is annotated inline with
+// `security-scan:allow <rule>` (see the file header) so the rules stay strict
+// for the whole codebase and every exception is visible in code review.
 const SKIP = (file) =>
   file.startsWith('test/') ||
   file.startsWith('backend/test/') ||
-  file.startsWith('dist/') ||
-  [
-    'scripts/browser-smoke.mjs',
-    'scripts/production-trial.mjs',
-    'src/store/useFilesStore.ts',
-  ].includes(file);
+  file.startsWith('dist/');
 
 for (const file of files) {
   if (SKIP(file)) continue;
