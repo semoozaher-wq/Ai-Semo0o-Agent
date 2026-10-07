@@ -52,7 +52,7 @@ export const DEFAULT_RUNTIME_FLAGS = Object.freeze({
   longRunning: true, // ContinuationSupervisor is wired into the worker
   selfHealing: true, // recovery.mjs + runtime replan/repair loop
   multiStepVerification: true, // per-step verify() + evidence verification rows
-  multiAgent: true, // phase2-core TaskGraph / executeTaskGraph
+  multiAgent: true, // backend/agent/multi-agent.mjs over phase2-core TaskGraph / executeTaskGraph
   agentEvaluation: true, // phase2-core/eval.mjs
   capabilityBenchmarking: true, // this module + the benchmark scripts
 });
