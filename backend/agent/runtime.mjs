@@ -35,7 +35,7 @@ function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys())) {
 }
 function verify(result) { return result && result.ok !== false && result.output !== undefined && result.output !== null; }
 
-export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}) {
+export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resolveEngine } = {}) {
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   return async ({ run, payload, signal }) => {
     // Hard caps are never exceeded, even when a self-improvement override asks for
@@ -92,6 +92,18 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
     db.run('UPDATE runs SET checkpoint_json=?, updated_at=? WHERE id=?', JSON.stringify({ plan, stepIndex: resumeFrom }), now(), run.id);
     emit('planning_completed', { provider: planner.provider, model: planner.model, requestedModel: planner.requestedModel, substituted: planner.substituted === true, steps: plan.steps.length, usage: planner.usage });
     const toolSchemas = openAITools();
+    // Link the agent to the Phase 1 task workspace: resolve the per-task
+    // AgentExecutionEngine once per run and hand it to every tool call. When no
+    // resolver is configured (or it fails), tools fall back to their plain,
+    // workspace-confined behaviour and engine-only tools fail closed.
+    let engine;
+    if (typeof resolveEngine === 'function') {
+      try {
+        engine = await resolveEngine({ task, run });
+      } catch (error) {
+        emit('engine_unavailable', { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
     for (let index = resumeFrom; index < plan.steps.length; index += 1) {
       guard();
       const step = plan.steps[index];
@@ -124,7 +136,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0 } = {}
       let evidenceId;
       for (let attempt = 1; attempt <= toolRetries; attempt += 1) {
         guard();
-        try { toolResult = await tools.run(step.toolId, args, { run, task, workspaceRoot, model: payload.model, signal, llm }); }
+        try { toolResult = await tools.run(step.toolId, args, { run, task, workspaceRoot, engine, model: payload.model, signal, llm }); }
         catch (error) { toolResult = { ok: false, output: null, error: error instanceof Error ? error.message : String(error) }; }
         evidenceId = writeEvidence(db, run, step.toolId, args, toolResult);
         outputs.push({ stepId: step.id, toolId: step.toolId, attempt, result: toolResult, evidenceId });
