@@ -10,6 +10,7 @@ import type { LLMProvider } from '../src/services/ai/provider';
 import { LLMPlanner } from '../src/services/agent-engine/llm-planner';
 import { AgentOrchestrator } from '../src/services/agent-engine/orchestrator';
 import { registerTool, unregisterTool } from '../src/services/agent-engine/tools';
+import { RECOVERY_EVENTS } from '../src/services/agent-engine/verification';
 
 const usage = { promptTokens: 40, completionTokens: 30, totalTokens: 70 };
 
@@ -234,6 +235,47 @@ test('execution failure invokes self-healing and succeeds on a bounded retry', a
     assert.equal(result.status, 'completed_with_warnings');
     assert.ok(result.warnings.some((warning) => warning.startsWith('SELF_HEALED:')));
     assert.equal(calls, 2);
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('self-healing emits the unified recovery event with {action, failureKind, attempt}', async () => {
+  let calls = 0;
+  registerTool('code.run', async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('execution timeout');
+    return { output: { fixed: true } };
+  });
+  try {
+    const result = await new AgentOrchestrator().run({
+      goal: 'أصلح ثم تحقق', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools,
+      requestPermission: async () => true,
+      selfHeal: async () => ({ action: 'retry' }),
+    });
+    const healed = result.events.find((entry) => entry.type === RECOVERY_EVENTS.selfHealing);
+    assert.ok(healed, 'a self_healing event must be emitted');
+    assert.equal(healed?.type, 'self_healing');
+    assert.deepEqual(healed?.details, { action: 'retry', failureKind: 'EXECUTION_FAILURE', attempt: 1 });
+  } finally {
+    unregisterTool('code.run');
+  }
+});
+
+test('exhausted self-healing emits self_healing_failed with the bounded decision', async () => {
+  let calls = 0;
+  registerTool('code.run', async () => { calls += 1; throw new Error('tool unavailable'); });
+  try {
+    const result = await new AgentOrchestrator().run({
+      goal: 'أعد المحاولة بحد', model: 'gpt-5', providers: [new DeterministicProvider(singleVerificationPlan())], tools, maxAttempts: 2,
+      requestPermission: async () => true,
+      selfHeal: async () => ({ action: 'retry' }),
+    });
+    const failed = result.events.find((entry) => entry.type === RECOVERY_EVENTS.selfHealingFailed);
+    assert.ok(failed, 'a self_healing_failed event must be emitted when attempts are exhausted');
+    assert.equal(failed?.details?.failureKind, 'TOOL_FAILURE');
+    assert.equal(failed?.details?.attempt, 2);
+    assert.equal(failed?.details?.reason, 'attempts_exhausted');
   } finally {
     unregisterTool('code.run');
   }
