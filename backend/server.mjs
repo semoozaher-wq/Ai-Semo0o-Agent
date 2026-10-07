@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { access, mkdir } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
@@ -27,6 +28,8 @@ import { runRetention } from './ops/retention.mjs';
 import { deleteTenantAccount, deleteUserAccount } from './account/deletion.mjs';
 import { evaluateAlerts, renderAlertMetrics } from './observability/alerts.mjs';
 import { ChatStore } from './chat/store.mjs';
+import { Capability, createExecutionEngine } from '../execution-core/engine.mjs';
+import { provisionTaskWorkspace, createTaskEngineResolver } from '../execution-core/task-workspace.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -133,6 +136,26 @@ function assertRunAccess(db, run, user) {
   assertProjectAccess(project, user);
   return task;
 }
+// Read-only Git state for a task's workspace, reusing the Phase 1 execution
+// runtime. Evidence is written to a temp directory so the checkout stays clean.
+async function taskGitRead(db, user, taskId, action) {
+  const task = db.get('SELECT * FROM tasks WHERE id=? AND tenant_id=?', taskId, user.tenantId);
+  if (!task) throw new Error('NOT_FOUND');
+  const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', task.project_id, user.tenantId);
+  assertProjectAccess(project, user);
+  const workspace = db.get('SELECT * FROM workspaces WHERE id=?', task.workspace_id);
+  const workspaceRoot = workspace?.root_path || process.env.WORKSPACE_ROOT;
+  if (!workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+  const engine = await createExecutionEngine({
+    workspacePath: workspaceRoot,
+    evidenceDirectory: path.join(os.tmpdir(), 'semo0o-git-read', task.id),
+    grants: [Capability.GIT_READ],
+    limits: { timeoutMs: 30_000, maxOutputBytes: 2_000_000, memoryLimitMb: 2_048, cpuLimitSeconds: 30 },
+  });
+  if (action === 'diff') return engine.git.diff();
+  if (action === 'branch') return engine.git.branch();
+  return engine.git.status();
+}
 
 function usageSummary(db, tenantId, days = 30) {
   const safeDays = Math.max(1, Math.min(90, Number.isFinite(days) ? Math.floor(days) : 30));
@@ -214,10 +237,12 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   rateLimiter ??= new DistributedRateLimiter(db, { max: Number(process.env.RATE_LIMIT_MAX || 120) });
   const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1) });
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
-  const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm });
+  const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
   const memory = new MemoryStore(db);
   const chat = new ChatStore(db);
-  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost }));
+  // Link every agent run to its isolated per-task workspace engine.
+  const resolveEngine = createTaskEngineResolver({ db });
+  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost, resolveEngine }));
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
     response.setHeader('x-request-id', requestId);
@@ -629,6 +654,45 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         }) : runQueue.enqueue({ taskId, tenantId: user.tenantId, payload: input, kind, idempotencyKey });
         return send(response, 202, { runId: run.id, taskId, status: run.status });
       }
+      if (parts[0] === 'tasks' && parts[1] && parts[2] === 'git' && method === 'GET') {
+        const action = parts[3] || 'status';
+        if (!['status', 'diff', 'branch'].includes(action)) throw new Error('NOT_FOUND');
+        return send(response, 200, await taskGitRead(db, user, parts[1], action));
+      }
+      if (method === 'POST' && parts[0] === 'tasks' && parts[1] && parts[2] === 'workspace' && parts.length === 3) {
+        const input = await body(request);
+        const task = db.get('SELECT * FROM tasks WHERE id=? AND tenant_id=?', parts[1], user.tenantId);
+        if (!task) throw new Error('NOT_FOUND');
+        const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', task.project_id, user.tenantId);
+        assertProjectAccess(project, user);
+        if (task.created_by !== user.id) requireRole(user, ['owner', 'admin']);
+        const baseWorkspace = db.get('SELECT root_path FROM workspaces WHERE project_id=? ORDER BY created_at LIMIT 1', project.id);
+        const baseRoot = typeof input.baseRoot === 'string'
+          ? path.resolve(validateText(input.baseRoot, 'BASE_ROOT', 1024))
+          : (baseWorkspace?.root_path || process.env.WORKSPACE_ROOT);
+        if (!baseRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+        let handle;
+        try {
+          handle = await provisionTaskWorkspace({
+            taskId: task.id,
+            repo: typeof input.repo === 'string' ? input.repo : undefined,
+            ref: typeof input.ref === 'string' ? input.ref : undefined,
+            branch: typeof input.branch === 'string' ? input.branch : undefined,
+            baseRoot,
+            allowExisting: input.allowExisting === true,
+          });
+        } catch (error) {
+          const code = typeof error?.code === 'string' ? error.code : String(error?.message || 'WORKSPACE_PROVISION_FAILED');
+          throw new Error(code.split(':')[0]);
+        }
+        const workspaceId = id('workspace');
+        db.transaction(() => {
+          db.run('INSERT INTO workspaces(id,project_id,root_path,created_at) VALUES(?,?,?,?)', workspaceId, project.id, handle.workspacePath, now());
+          db.run('UPDATE tasks SET workspace_id=?, updated_at=? WHERE id=?', workspaceId, now(), task.id);
+          db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'task.workspace.provisioned', 'task', task.id, JSON.stringify({ workspaceId, branch: handle.branch, repo: handle.clone?.url ?? null }), now());
+        });
+        return send(response, 201, { taskId: task.id, workspaceId, workspacePath: handle.workspacePath, branch: handle.branch, branchCreated: handle.branchCreated, clone: handle.clone });
+      }
       if (parts[0] === 'runs' && parts[1]) {
         const run = runQueue.get(parts[1], user.tenantId);
         if (!run) throw new Error('NOT_FOUND');
@@ -662,7 +726,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       send(response, status, { error: status >= 500 ? "INTERNAL_ERROR" : message });
     }
   });
@@ -680,7 +744,7 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   applyRuntimeDefaults();
   assertEnv();
   const db = new Database();
-  const app = createApp({ db, liveTools: createLiveToolRegistry({ db }) });
+  const app = createApp({ db, liveTools: createLiveToolRegistry({ db, engineAvailable: true }) });
   if (process.env.DISABLE_WORKER !== '1') app.queue.start();
   const port = Number(process.env.PORT || 8787);
   // Render (and every other container host) injects PORT and requires the process
