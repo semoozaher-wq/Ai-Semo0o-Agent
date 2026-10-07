@@ -1,0 +1,149 @@
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createConnection } from 'node:net';
+
+// Candidate browser binaries, in priority order. Operators can override with
+// CHROME_BIN / BROWSER_BIN. We only ever launch a real, locally installed
+// browser; when none is found the launcher fails closed so browser.run stays
+// honestly reported as unwired instead of pretending to work.
+const CANDIDATES = [
+  process.env.CHROME_BIN,
+  process.env.BROWSER_BIN,
+  'chromium',
+  'chromium-browser',
+  'google-chrome',
+  'google-chrome-stable',
+  'chrome',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
+  '/snap/bin/chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+];
+
+function firstExistingBinary() {
+  for (const candidate of CANDIDATES) {
+    if (!candidate) continue;
+    if (candidate.includes(path.sep)) {
+      if (existsSync(candidate)) return candidate;
+    } else {
+      return candidate; // resolved via PATH by spawn
+    }
+  }
+  return null;
+}
+
+export function browserBinaryAvailable() {
+  return Boolean(firstExistingBinary());
+}
+
+function waitForPort(port, timeoutMs) {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const socket = createConnection({ host: '127.0.0.1', port }); // security-scan:allow private-url-literal
+      socket.once('connect', () => { socket.destroy(); resolve(); });
+      socket.once('error', () => {
+        socket.destroy();
+        if (Date.now() - start > timeoutMs) reject(new Error('BROWSER_LAUNCH_TIMEOUT'));
+        else setTimeout(attempt, 100);
+      });
+    };
+    attempt();
+  });
+}
+
+async function readDevtoolsUrl(port, timeoutMs) {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) }); // security-scan:allow private-url-literal
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.webSocketDebuggerUrl) return data.webSocketDebuggerUrl;
+      }
+    } catch { /* retry until timeout */ }
+    if (Date.now() - start > timeoutMs) throw new Error('BROWSER_DEVTOOLS_URL_TIMEOUT');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
+/**
+ * Launch a local headless Chromium and resolve its CDP websocket URL.
+ * Returns a handle with `webSocketUrl`, `close()` and the spawned pid. The
+ * caller is responsible for calling close() to release the process + temp dir.
+ */
+export async function launchLocalChromium({ port = 0, timeoutMs = 20000, extraArgs = [], headless = true } = {}) {
+  const binary = firstExistingBinary();
+  if (!binary) throw new Error('BROWSER_BINARY_NOT_FOUND');
+  const userDataDir = await mkdtemp(path.join(tmpdir(), 'semo0o-browser-'));
+  const args = [
+    '--remote-debugging-port=' + port,
+    '--remote-debugging-address=127.0.0.1', // security-scan:allow private-url-literal
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-extensions',
+    '--disable-sync',
+    '--mute-audio',
+    '--user-data-dir=' + userDataDir,
+    ...(headless ? ['--headless=new'] : []),
+    ...extraArgs,
+    'about:blank',
+  ];
+  const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false });
+  let stderr = '';
+  let actualPort = port;
+  const portFromStderr = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('BROWSER_LAUNCH_TIMEOUT')), timeoutMs);
+    const onData = (chunk) => {
+      stderr += chunk.toString();
+      const match = stderr.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//);
+      if (match) { clearTimeout(timer); resolve(Number(match[1])); }
+    };
+    child.stderr.on('data', onData);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`BROWSER_EXITED_EARLY:${code}`)); });
+  });
+
+  const cleanup = async () => {
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    try { await rm(userDataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  };
+
+  try {
+    actualPort = await portFromStderr;
+    await waitForPort(actualPort, timeoutMs);
+    const webSocketUrl = await readDevtoolsUrl(actualPort, timeoutMs);
+    return {
+      webSocketUrl,
+      port: actualPort,
+      pid: child.pid,
+      binary,
+      close: cleanup,
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+/**
+ * Resolve the CDP websocket URL for a run. Prefers an externally managed
+ * BROWSER_CDP_URL; otherwise, when BROWSER_LAUNCH_LOCAL=true, launches a local
+ * browser. Returns { webSocketUrl, launcher } where launcher is non-null only
+ * for locally launched browsers and must be closed by the caller.
+ */
+export async function resolveCdpEndpoint(env = process.env, options = {}) {
+  if (env.BROWSER_CDP_URL) return { webSocketUrl: env.BROWSER_CDP_URL, launcher: null };
+  if (env.BROWSER_LAUNCH_LOCAL === 'true') {
+    const launcher = await launchLocalChromium({ timeoutMs: Number(env.BROWSER_LAUNCH_TIMEOUT_MS || options.timeoutMs || 20000) });
+    return { webSocketUrl: launcher.webSocketUrl, launcher };
+  }
+  throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:browser.run');
+}
