@@ -2,16 +2,25 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createExecutionEngine, defaultEvidenceDirectory } from '../execution-core/engine.mjs';
+import { provisionTaskWorkspace } from '../execution-core/task-workspace.mjs';
 
 function usage() {
   return `
 Semo0o Phase 1 execution runtime
 
 Usage:
+  node scripts/agent-runtime.mjs --provision <taskId> --root <baseRoot> [--repo <url>] [--ref <ref>] [--branch <name>] [--allow <capabilities>]
   node scripts/agent-runtime.mjs --workspace <directory> --plan <plan.json> --allow <capabilities>
   node scripts/agent-runtime.mjs --workspace <directory> --git <status|diff|branch> --allow git.read
   node scripts/agent-runtime.mjs --workspace <directory> --checkpoint <message> --allow git.read,git.write
   node scripts/agent-runtime.mjs --workspace <directory> --rollback <revision> --allow git.write
+
+Provisioning (Sandbox + Git lifecycle):
+  Creates an isolated workspace per task at <baseRoot>/<taskId>/workspace, clones
+  <repo> when given (otherwise initialises a repository), and checks out an
+  independent task branch (default semo0o/task/<taskId>). Evidence is written to
+  <baseRoot>/<taskId>/evidence, OUTSIDE the Git tree. The protected default
+  branch (master/main) is never created or modified, and nothing is pushed.
 
 Capabilities:
   workspace.read, workspace.write, terminal.execute, git.read, git.write, network.access
@@ -64,6 +73,31 @@ async function main() {
     process.stdout.write(usage());
     return;
   }
+
+  if (values.provision) {
+    if (!values.root) throw new Error('--root is required with --provision.');
+    const grants = parseGrants(values.allow);
+    const handle = await provisionTaskWorkspace({
+      taskId: values.provision,
+      repo: values.repo,
+      ref: values.ref,
+      baseRoot: values.root,
+      branch: values.branch,
+      grants: grants.length > 0 ? grants : undefined,
+      evidenceDirectory: values.evidence ? path.resolve(values.evidence) : undefined,
+    });
+    process.stdout.write(`${JSON.stringify({
+      taskId: handle.taskId,
+      taskRoot: handle.taskRoot,
+      workspacePath: handle.workspacePath,
+      evidenceDirectory: handle.evidenceDirectory,
+      branch: handle.branch,
+      branchCreated: handle.branchCreated,
+      clone: handle.clone,
+    }, null, 2)}\n`);
+    return;
+  }
+
   if (!values.workspace) throw new Error('--workspace is required.');
 
   const workspacePath = path.resolve(values.workspace);
