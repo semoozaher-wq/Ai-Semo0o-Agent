@@ -24,13 +24,28 @@ const CANDIDATES = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ];
 
+function onPath(name) {
+  const extensions = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const extension of extensions) {
+      const candidate = path.join(dir, name + extension);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
 function firstExistingBinary() {
   for (const candidate of CANDIDATES) {
     if (!candidate) continue;
     if (candidate.includes(path.sep)) {
       if (existsSync(candidate)) return candidate;
     } else {
-      return candidate; // resolved via PATH by spawn
+      // A bare name must actually resolve on PATH; otherwise the launcher would
+      // claim a browser is available and then fail to spawn it.
+      const resolved = onPath(candidate);
+      if (resolved) return resolved;
     }
   }
   return null;
@@ -71,10 +86,32 @@ async function readDevtoolsUrl(port, timeoutMs) {
   }
 }
 
+// `BrowserAgent` drives a PAGE target: `Runtime.*` / `Page.*` / `Network.*` are
+// only routable on a page session, not on the browser-level endpoint returned by
+// `/json/version`. Resolve the page target's own websocket so the agent can
+// actually navigate and evaluate instead of failing with "method not found".
+async function readPageTargetUrl(port, timeoutMs) {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) }); // security-scan:allow private-url-literal
+      if (response.ok) {
+        const targets = await response.json();
+        const page = Array.isArray(targets) ? targets.find((target) => target.type === 'page' && target.webSocketDebuggerUrl) : null;
+        if (page) return page.webSocketDebuggerUrl;
+      }
+    } catch { /* retry until timeout */ }
+    if (Date.now() - start > timeoutMs) throw new Error('BROWSER_PAGE_TARGET_TIMEOUT');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
 /**
  * Launch a local headless Chromium and resolve its CDP websocket URL.
- * Returns a handle with `webSocketUrl`, `close()` and the spawned pid. The
- * caller is responsible for calling close() to release the process + temp dir.
+ * Returns a handle with `webSocketUrl` (a PAGE target the agent can drive),
+ * `browserWebSocketUrl` (the browser-level endpoint), `close()` and the spawned
+ * pid. The caller is responsible for calling close() to release the process +
+ * temp dir.
  */
 export async function launchLocalChromium({ port = 0, timeoutMs = 20000, extraArgs = [], headless = true } = {}) {
   const binary = firstExistingBinary();
@@ -92,6 +129,9 @@ export async function launchLocalChromium({ port = 0, timeoutMs = 20000, extraAr
     '--disable-sync',
     '--mute-audio',
     '--user-data-dir=' + userDataDir,
+    // Opt-in only: root/container environments cannot use the Chromium sandbox,
+    // so operators explicitly enable this instead of us weakening it by default.
+    ...(process.env.BROWSER_NO_SANDBOX === 'true' ? ['--no-sandbox'] : []),
     ...(headless ? ['--headless=new'] : []),
     ...extraArgs,
     'about:blank',
@@ -119,9 +159,11 @@ export async function launchLocalChromium({ port = 0, timeoutMs = 20000, extraAr
   try {
     actualPort = await portFromStderr;
     await waitForPort(actualPort, timeoutMs);
-    const webSocketUrl = await readDevtoolsUrl(actualPort, timeoutMs);
+    const browserWebSocketUrl = await readDevtoolsUrl(actualPort, timeoutMs);
+    const webSocketUrl = await readPageTargetUrl(actualPort, timeoutMs);
     return {
       webSocketUrl,
+      browserWebSocketUrl,
       port: actualPort,
       pid: child.pid,
       binary,
