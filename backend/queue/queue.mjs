@@ -1,6 +1,9 @@
 import { id, now } from '../db/client.mjs';
 
-export const RUN_STATES = Object.freeze(['queued','running','waiting_approval','blocked','paused','completed','completed_with_warnings','failed','cancelled','unverified']);
+// `continuation` is a transient, non-terminal state: the run stopped at a
+// bounded limit (time/step budget) and a continuation run resuming from its
+// checkpoint has been scheduled. It is not a failure and not a completion.
+export const RUN_STATES = Object.freeze(['queued','running','waiting_approval','blocked','paused','completed','completed_with_warnings','failed','cancelled','unverified','continuation']);
 
 export class RunQueue {
   constructor(db, { pollMs = 100, workerId = id('worker'), leaseMs = 15 * 60_000, maxAttempts = 3, concurrency = 1, redact = (value) => value } = {}) {
@@ -60,7 +63,11 @@ export class RunQueue {
     const timestamp = now(); this.db.transaction(() => {
       const changed = this.db.run("UPDATE runs SET status=?, result_json=?, worker_id=NULL, lease_until=NULL, updated_at=? WHERE id=? AND status='running' AND worker_id=?", status, JSON.stringify(this.redact(result ?? {})), timestamp, run.id, this.workerId);
       if (changed.changes !== 1) return;
-      this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=?', status, timestamp, run.task_id);
+      // A run that handed off to a scheduled continuation leaves the TASK queued
+      // (the continuation run is pending), not terminal, so the task status never
+      // flickers to a terminal state while work is still outstanding.
+      const taskStatus = result?.continuation?.scheduled === true ? 'queued' : status;
+      this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=?', taskStatus, timestamp, run.task_id);
       this.db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), run.tenant_id, `run.${status}`, 'run', run.id, JSON.stringify({ attempts: run.attempts }), timestamp);
     });
   }
