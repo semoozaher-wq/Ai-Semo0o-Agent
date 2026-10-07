@@ -49,8 +49,15 @@ export function createWorkerRuntime({ db, llm = createLLMRouter(), codeRunner, s
   });
   queue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const tools = createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
+  // Long-running autonomy — SAME wiring as the in-process server worker
+  // (`createApp`): the continuation supervisor wraps the agent handler so a
+  // bounded wall-clock stop (checkpointed mid-plan) is transparently resumed on
+  // a fresh run instead of being reported as a failure, bounded by
+  // AGENT_MAX_CONTINUATIONS. Without this the worker would diverge from the
+  // server: a long run that hit the time cap would fail instead of continuing.
+  const continuation = createContinuationSupervisor({ db, queue, maxContinuations: Number(process.env.AGENT_MAX_CONTINUATIONS || 5) });
   // Link every agent run to its isolated per-task workspace engine.
-  queue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost, resolveEngine: createTaskEngineResolver({ db }), secrets: knownSecrets }));
+  queue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor: modelCost, resolveEngine: createTaskEngineResolver({ db }), secrets: knownSecrets, longRunning: true })));
   return { queue, tools, llm, knownSecrets };
 }
 
