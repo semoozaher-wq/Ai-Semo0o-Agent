@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { access, mkdir } from 'node:fs/promises';
+import { access, mkdir, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -37,6 +37,12 @@ import { createErrorTracker, errorTrackerStatus } from './observability/error-tr
 import { ChatStore } from './chat/store.mjs';
 import { Capability, createExecutionEngine } from '../execution-core/engine.mjs';
 import { provisionTaskWorkspace, createTaskEngineResolver } from '../execution-core/task-workspace.mjs';
+import { createContinuationSupervisor } from './agent/long-running.mjs';
+import { buildProjectIntelligence } from '../phase2-core/platform.mjs';
+import { analyzeImpact, describeImpact } from '../phase2-core/impact.mjs';
+import { buildChangeSet, describeChangeSet } from '../phase2-core/changeset.mjs';
+import { CodebaseReasoner } from '../phase2-core/reasoning.mjs';
+import { buildCapabilityScorecard, collectCapabilitySignals, describeScorecard, runAgentBenchmark } from './ops/capability-benchmark.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -164,6 +170,43 @@ async function taskGitRead(db, user, taskId, action) {
   return engine.git.status();
 }
 
+// One honest view of every optional connector, shared by `/integrations/status`
+// and the capability scorecard so the two can never disagree.
+function integrationStatusView({ db, user, tools }) {
+  const toolStatus = tools.status?.() ?? { live: [], partial: [], unwired: [], failed: [], tools: [] };
+  return {
+    tools: { live: toolStatus.live ?? [], partial: toolStatus.partial ?? [], unwired: toolStatus.unwired ?? [], failed: toolStatus.failed ?? [] },
+    billing: billingProviderStatus(process.env),
+    github: { ...githubStatus(process.env), connection: getGitHubConnection(db, user.tenantId) },
+    embeddings: embeddingStatus(process.env),
+    errorTracking: errorTrackerStatus(process.env),
+    browser: { cdpConfigured: Boolean(process.env.BROWSER_CDP_URL), localLaunch: process.env.BROWSER_LAUNCH_LOCAL === 'true' },
+  };
+}
+
+// Resolve the on-disk root of a project's workspace (the code-intelligence
+// endpoints reason over the real files, never a synthetic copy). Falls back to
+// the configured WORKSPACE_ROOT, and fails closed when neither exists.
+function projectWorkspaceRoot(db, user, projectId) {
+  const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', projectId, user.tenantId);
+  assertProjectAccess(project, user);
+  const workspace = db.get('SELECT root_path FROM workspaces WHERE project_id=? ORDER BY created_at LIMIT 1', project.id);
+  const root = workspace?.root_path || process.env.WORKSPACE_ROOT;
+  if (!root) throw new Error('WORKSPACE_ROOT_REQUIRED');
+  return path.resolve(root);
+}
+
+// A reader for the deep reasoner that can only read files INSIDE the workspace
+// root, so lexical reference scanning can never escape the project.
+function workspaceReader(root) {
+  const base = path.resolve(root);
+  return async (relative) => {
+    const resolved = path.resolve(base, String(relative));
+    if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) throw new Error('PATH_OUTSIDE_WORKSPACE');
+    return readFile(resolved, 'utf8');
+  };
+}
+
 function usageSummary(db, tenantId, days = 30) {
   const safeDays = Math.max(1, Math.min(90, Number.isFinite(days) ? Math.floor(days) : 30));
   const period = new Date().toISOString().slice(0, 7);
@@ -258,7 +301,11 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   try { errorTracker = createErrorTracker(process.env); } catch { errorTracker = null; }
   // Link every agent run to its isolated per-task workspace engine.
   const resolveEngine = createTaskEngineResolver({ db });
-  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, ...(modelRouter ? { modelRouter } : {}) }));
+  // Long-running autonomy: the supervisor wraps the agent handler so a bounded
+  // wall-clock stop (checkpointed mid-plan) is transparently resumed on a fresh
+  // run instead of being reported as a failure. Bounded by AGENT_MAX_CONTINUATIONS.
+  const continuation = createContinuationSupervisor({ db, queue: runQueue, maxContinuations: Number(process.env.AGENT_MAX_CONTINUATIONS || 5) });
+  runQueue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, longRunning: true, ...(modelRouter ? { modelRouter } : {}) })));
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
     response.setHeader('x-request-id', requestId);
@@ -800,6 +847,85 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           });
           return send(response, 200, runQueue.get(run.id, user.tenantId));
         }
+      }
+      // --- Code intelligence ------------------------------------------------
+      // Read-only views over the project index. They never mutate the workspace
+      // and never fabricate data: an empty repository yields an empty (honest)
+      // index rather than a fake result.
+      if (method === 'GET' && parts.join('/') === 'codebase/intelligence') {
+        const url = new URL(request.url, 'http://localhost');
+        const projectId = validateText(url.searchParams.get('projectId'), 'PROJECT_ID', 128);
+        const root = projectWorkspaceRoot(db, user, projectId);
+        const maxFiles = Number(url.searchParams.get('maxFiles')) || undefined;
+        const intelligence = await buildProjectIntelligence(root, maxFiles ? { maxFiles } : {});
+        const summary = {
+          generatedAt: intelligence.generatedAt, root: intelligence.root, parser: intelligence.parser, truncated: intelligence.truncated,
+          counts: { files: intelligence.files.length, symbols: intelligence.symbols.length, imports: intelligence.imports.length, edges: intelligence.importGraph.length, tests: intelligence.testMapping.length },
+        };
+        if (url.searchParams.get('full') === '1') return send(response, 200, { ...summary, intelligence });
+        return send(response, 200, {
+          ...summary,
+          sample: { files: intelligence.files.slice(0, 200), symbols: intelligence.symbols.slice(0, 50), edges: intelligence.importGraph.slice(0, 50) },
+        });
+      }
+      if (method === 'POST' && parts.join('/') === 'codebase/impact') {
+        const input = await body(request);
+        const projectId = validateText(input.projectId, 'PROJECT_ID', 128);
+        const root = projectWorkspaceRoot(db, user, projectId);
+        const changedFiles = Array.isArray(input.changedFiles) ? input.changedFiles.filter((file) => typeof file === 'string') : [];
+        if (!changedFiles.length) throw new Error('INVALID_CHANGED_FILES');
+        const intelligence = await buildProjectIntelligence(root);
+        const impact = analyzeImpact(intelligence, { changedFiles, maxDepth: input.maxDepth });
+        return send(response, 200, { ...impact, description: describeImpact(impact) });
+      }
+      if (method === 'POST' && parts.join('/') === 'codebase/reason') {
+        const input = await body(request);
+        const projectId = validateText(input.projectId, 'PROJECT_ID', 128);
+        const root = projectWorkspaceRoot(db, user, projectId);
+        const question = validateText(input.question, 'QUESTION', 2000);
+        const intelligence = await buildProjectIntelligence(root);
+        const reasoner = new CodebaseReasoner(intelligence, { read: workspaceReader(root) });
+        const mode = String(input.mode || 'auto');
+        const target = input.target || question;
+        if (mode === 'definition') return send(response, 200, reasoner.definition(target));
+        if (mode === 'references') return send(response, 200, await reasoner.references(target));
+        if (mode === 'trace') return send(response, 200, reasoner.trace(input.from, input.to));
+        if (mode === 'explain') return send(response, 200, await reasoner.explain(target));
+        if (mode === 'search') return send(response, 200, { results: reasoner.search(question) });
+        return send(response, 200, await reasoner.answer(question));
+      }
+      if (method === 'POST' && parts.join('/') === 'codebase/changeset') {
+        const input = await body(request);
+        const projectId = validateText(input.projectId, 'PROJECT_ID', 128);
+        const root = projectWorkspaceRoot(db, user, projectId);
+        const intelligence = await buildProjectIntelligence(root);
+        let status = [];
+        let diff = '';
+        try {
+          const engine = await createExecutionEngine({
+            workspacePath: root,
+            evidenceDirectory: path.join(os.tmpdir(), 'semo0o-changeset', projectId),
+            grants: [Capability.GIT_READ],
+            limits: { timeoutMs: 30_000, maxOutputBytes: 2_000_000, memoryLimitMb: 2_048, cpuLimitSeconds: 30 },
+          });
+          status = (await engine.git.status()).entries ?? [];
+          diff = (await engine.git.diff()).stdout ?? '';
+        } catch { /* not a git repo / git unavailable -> honest empty change set */ }
+        const changeSet = buildChangeSet({ status, diff, intelligence, goal: typeof input.goal === 'string' ? input.goal.slice(0, 2000) : undefined });
+        return send(response, 200, { ...changeSet, description: describeChangeSet(changeSet) });
+      }
+      // --- Capability benchmarking -----------------------------------------
+      if (method === 'GET' && parts.join('/') === 'capabilities/scorecard') {
+        const signals = collectCapabilitySignals({ tools, llm, integrations: integrationStatusView({ db, user, tools }) });
+        const scorecard = buildCapabilityScorecard(signals);
+        return send(response, 200, { ...scorecard, description: describeScorecard(scorecard) });
+      }
+      if (method === 'POST' && parts.join('/') === 'benchmark/agent') {
+        const input = await body(request);
+        const projectId = validateText(input.projectId, 'PROJECT_ID', 128);
+        const root = projectWorkspaceRoot(db, user, projectId);
+        const { report, workspace } = await runAgentBenchmark({ tools, root });
+        return send(response, 200, { ...report, workspace });
       }
       throw new Error('NOT_FOUND');
     } catch (error) {

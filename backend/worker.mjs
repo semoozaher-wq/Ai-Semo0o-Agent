@@ -4,6 +4,7 @@ import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
+import { createContinuationSupervisor } from './agent/long-running.mjs';
 import { createTaskEngineResolver } from '../execution-core/task-workspace.mjs';
 import { modelCost } from './runtime-shared.mjs';
 import { assertEnv } from './config/env.mjs';
