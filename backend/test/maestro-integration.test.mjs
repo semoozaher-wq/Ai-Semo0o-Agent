@@ -179,6 +179,23 @@ function scriptedLLM(record, { plan, recoveryPlan, failAll = false, failModels =
   };
 }
 
+/**
+ * Wrap a base llm so its PLANNING turn outlives a run's wall-clock budget. The
+ * runtime computes `deadline = Date.now() + timeoutMs` before it plans, so a slow
+ * plan pushes the very next budget guard past the deadline — a deterministic,
+ * bounded, resumable stop (used by the long-running test below).
+ */
+function withSlowPlanner(base, delayMs) {
+  return {
+    status: base.status,
+    async complete(input) {
+      const system = (input.messages || []).find((message) => message.role === 'system')?.content ?? '';
+      if (system.includes('secure planner')) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return base.complete(input);
+    },
+  };
+}
+
 async function readSse(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -187,7 +204,7 @@ async function readSse(response) {
   return text;
 }
 
-async function withApp({ llm, goal, model = 'test', files = {}, maxAttempts = 3, costFor, timeoutMs }, fn) {
+async function withApp({ llm, goal, model = 'test', files = {}, maxAttempts = 3, costFor, timeoutMs, continuations }, fn) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-maestro-'));
   for (const [name, content] of Object.entries(files)) await writeFile(path.join(dir, name), content);
   const db = new Database(path.join(dir, 'maestro.sqlite'));
@@ -204,7 +221,7 @@ async function withApp({ llm, goal, model = 'test', files = {}, maxAttempts = 3,
     assert.equal(registered.status, 201, JSON.stringify(registered.body));
     const token = registered.body.session.token;
     const project = await request('/projects', { method: 'POST', token, body: { name: 'Maestro Project', rootPath: dir } });
-    const created = await request('/runs', { method: 'POST', token, body: { kind: 'agent.run', projectId: project.body.projectId, workspaceId: project.body.workspaceId, goal, model, ...(timeoutMs !== undefined ? { timeoutMs } : {}) } });
+    const created = await request('/runs', { method: 'POST', token, body: { kind: 'agent.run', projectId: project.body.projectId, workspaceId: project.body.workspaceId, goal, model, ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(continuations !== undefined ? { continuations } : {}) } });
     assert.equal(created.status, 202, JSON.stringify(created.body));
     queue.start();
     const eventsResponse = await fetch(`${base}/runs/${created.body.runId}/events`, { headers: { authorization: `Bearer ${token}` } });
@@ -348,15 +365,31 @@ test('a failing tool triggers self-healing repair (diagnosis) and then succeeds'
   });
 });
 
-test('a run that exceeds its time budget fails closed', async () => {
+test('a run that exceeds its time budget continues (bounded) instead of failing', async () => {
   const record = { models: [], messages: [] };
   await withApp({
-    llm: scriptedLLM(record, { plan: SCAN_PLAN }),
+    // A planner that outlives the (tiny) wall-clock budget guarantees the run
+    // stops mid-plan with a durable checkpoint — the exact bounded stop that
+    // long-running autonomy must turn into a continuation, not a failure.
+    llm: withSlowPlanner(scriptedLLM(record, { plan: SCAN_PLAN }), 600),
     goal: 'Fix the bug in this function',
     model: 'auto',
     maxAttempts: 1,
-    timeoutMs: 1,
+    timeoutMs: 150,
+    // Exhaust the continuation budget so the bounded stop is proven to be
+    // *bounded*: the run must terminate with warnings and never loop forever.
+    continuations: 5,
   }, async ({ finished }) => {
-    assert.equal(finished.status, 'failed');
+    // Long-running autonomy: a bounded wall-clock stop is NOT a failure. The run
+    // terminates as a retryable `completed_with_warnings` (never a non-terminal
+    // `continuation`, never a false `completed`).
+    assert.equal(finished.status, 'completed_with_warnings');
+    assert.notEqual(finished.status, 'completed');
+    assert.notEqual(finished.status, 'failed');
+    // The runtime produced a bounded continuation (checkpoint + hand-off signal)…
+    assert.ok(finished.events.some((event) => event.type === 'continuation_required'), 'a continuation_required event must be emitted');
+    // …and the supervisor bounded it (budget exhausted -> no runaway loop).
+    assert.equal(finished.result.continuation.scheduled, false);
+    assert.equal(finished.result.continuation.reason, 'continuation_limit_reached');
   });
 });
