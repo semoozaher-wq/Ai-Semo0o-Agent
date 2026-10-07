@@ -6,13 +6,36 @@ import { createEngineToolHandlers } from '../../execution-core/engine-tools.mjs'
 import { createCodeRunHandler } from '../runners/code-runner.mjs';
 import { BrowserPool } from '../browser/pool.mjs';
 import { runBrowserTask } from '../browser/runner.mjs';
+import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.mjs';
 import { assertSafeUrlResolved, assertWorkspacePath } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
+import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from './connectors.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
   if (!text || text.length > max) throw new Error(`${name}_OUT_OF_RANGE`);
   return text;
+}
+
+// Map a workspace file path to the image MIME type the vision provider needs.
+// Unknown extensions default to image/png so the provider still receives a
+// valid, non-empty type instead of a broken header.
+function mimeTypeFor(filePath) {
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+  switch (ext) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.gif':
+      return 'image/gif';
+    case '.webp':
+      return 'image/webp';
+    case '.bmp':
+      return 'image/bmp';
+    case '.png':
+    default:
+      return 'image/png';
+  }
 }
 // Resolve the real (symlink-free) path of the nearest existing ancestor and append
 // the not-yet-existing tail. Used to reject symlink escapes before any file I/O.
@@ -111,13 +134,19 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   tools.set('web.scrape', async (args) => ({ output: await fetchText(args) }));
   const browserPool = new BrowserPool({ maxConcurrent: Number(process.env.BROWSER_POOL_CONCURRENCY || 2), timeoutMs: Number(process.env.BROWSER_TIMEOUT_MS || 30000) });
   tools.set('browser.run', async (args) => {
-    const cdp = process.env.BROWSER_CDP_URL;
-    if (!cdp) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:browser.run');
-    const url = args.url ? (await assertSafeUrlResolved(args.url)).toString() : undefined;
-    const actions = Array.isArray(args.actions) ? args.actions.slice(0, 20) : [];
-    const checks = Array.isArray(args.checks) ? args.checks.slice(0, 20) : [];
-    const result = await runBrowserTask({ webSocketUrl: cdp, url, actions, checks, pool: browserPool });
-    return { output: { ok: result.ok, verification: result.verification, screenshot: result.screenshot, results: result.results }, ok: result.ok !== false };
+    // Prefer an operator-managed CDP endpoint; otherwise launch a local browser
+    // when explicitly enabled. resolveCdpEndpoint fails closed when neither is
+    // available so this tool never reports a fake success.
+    const { webSocketUrl, launcher } = await resolveCdpEndpoint();
+    try {
+      const url = args.url ? (await assertSafeUrlResolved(args.url)).toString() : undefined;
+      const actions = Array.isArray(args.actions) ? args.actions.slice(0, 20) : [];
+      const checks = Array.isArray(args.checks) ? args.checks.slice(0, 20) : [];
+      const result = await runBrowserTask({ webSocketUrl, url, actions, checks, pool: browserPool });
+      return { output: { ok: result.ok, verification: result.verification, screenshot: result.screenshot, results: result.results }, ok: result.ok !== false };
+    } finally {
+      if (launcher) { try { await launcher.close(); } catch { /* cleanup must not mask result */ } }
+    }
   });
   if (db) tools.set('code.run', async (args, context) => { const result = await createCodeRunHandler(db, { runner: codeRunner })({ run: context.run, payload: args }); return { output: result, ok: result.status === 'completed' }; });
   tools.set('files.read', withEngine('files.read', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); return { output: { path: safe, content: content.slice(0, Number(args.maxChars ?? 200000)) } }; }));
@@ -140,9 +169,47 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   });
   tools.set('pdf.extract', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); return { output: { path: safe, text: await runPdfText(resolved, Number(args.maxChars ?? 200000)) } }; });
   tools.set('code.analyze', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); const issues = []; for (const [pattern, rule] of [[/TODO|FIXME|XXX/g, 'todo-comment'], [/\beval\s*\(/g, 'eval-usage'], [/console\.(log|debug)\s*\(/g, 'no-console'], [/api[_-]?key\s*[:=]\s*['"]/ig, 'hardcoded-secret']]) { const matches = content.match(pattern); if (matches?.length) issues.push({ rule, count: matches.length }); } return { output: { path: safe, issues, healthy: issues.length === 0 } }; });
-  tools.set('doc.summarize', async (args, context) => { const client = context.llm || llm; if (!client) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await client.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
-  tools.set('translate', async (args, context) => { const client = context.llm || llm; if (!client) throw new Error('SERVER_LLM_REQUIRED'); const response = await client.complete({ model: context.model, messages: [{ role: 'system', content: 'Translate accurately and return only the translation.' }, { role: 'user', content: `Target language: ${args.target}\nText:\n${args.text}` }], signal: context.signal }); return { output: { translation: response.text, usage: response.usage } }; });
-  for (const unavailable of ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send']) tools.set(unavailable, async () => { throw new Error(`TOOL_CONNECTOR_NOT_CONFIGURED:${unavailable}`); });
+  tools.set('doc.summarize', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
+  tools.set('translate', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Translate accurately and return only the translation.' }, { role: 'user', content: `Target language: ${args.target}\nText:\n${args.text}` }], signal: context.signal }); return { output: { translation: response.text, usage: response.usage } }; });
+  // Connector-backed tools. Each handler resolves its provider from the
+  // environment and fails closed with TOOL_CONNECTOR_NOT_CONFIGURED:<id> when
+  // nothing is configured, so an operator can never mistake an unavailable
+  // capability for a ready one. When a provider IS configured the call is real.
+  tools.set('image.generate', async (args, context = {}) => {
+    const provider = createImageProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:image.generate');
+    const result = await provider.generate({ prompt: bounded(args.prompt, 10000, 'PROMPT'), size: args.size });
+    const bytes = Buffer.from(result.base64, 'base64');
+    if (context.workspaceRoot) {
+      const target = args.path || `generated/image-${Date.now()}.png`;
+      const { resolved, safe } = await workspacePath(context.workspaceRoot, target);
+      await mkdir(path.dirname(resolved), { recursive: true });
+      await writeFile(resolved, bytes);
+      return { output: { path: safe, bytes: bytes.length, provider: result.provider, model: result.model, revisedPrompt: result.revisedPrompt } };
+    }
+    return { output: { base64: result.base64, mimeType: result.mimeType, bytes: bytes.length, provider: result.provider, model: result.model, revisedPrompt: result.revisedPrompt } };
+  });
+  tools.set('image.analyze', async (args, context = {}) => {
+    const provider = createVisionProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:image.analyze');
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const bytes = await readFile(resolved);
+    if (bytes.length > 12 * 1024 * 1024) throw new Error('IMAGE_TOO_LARGE');
+    const result = await provider.analyze({ base64: bytes.toString('base64'), mimeType: mimeTypeFor(safe), prompt: args.prompt });
+    return { output: { path: safe, analysis: result.text, provider: result.provider, model: result.model, usage: result.usage } };
+  });
+  tools.set('calendar.schedule', async (args) => {
+    const provider = createCalendarProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:calendar.schedule');
+    const result = await provider.createEvent({ title: bounded(args.title, 500, 'TITLE'), when: args.when, durationMinutes: args.durationMinutes, description: typeof args.description === 'string' ? args.description.slice(0, 5000) : '' });
+    return { output: result };
+  });
+  tools.set('email.send', async (args) => {
+    const provider = createEmailSendProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:email.send');
+    const result = await provider.send({ to: args.to, subject: bounded(args.subject, 500, 'SUBJECT'), body: bounded(args.body, 100000, 'BODY') });
+    return { output: { delivered: true, provider: result.provider, messageId: result.messageId } };
+  });
   return {
     has(toolId) { return tools.has(toolId); },
     async run(toolId, args = {}, context = {}) {
@@ -161,10 +228,24 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
       //   failed   — registered but its runtime dependency is missing
       const states = new Map();
       const mark = (toolId, state, reason = null) => states.set(toolId, { id: toolId, state, reason });
-      const connectorGated = new Set(['image.generate', 'image.analyze', 'calendar.schedule', 'email.send']);
+      // Resolve which connectors are actually configured right now. A tool is
+      // only reported live when its provider exists; otherwise it stays
+      // unwired so the operator sees the truth instead of a fake success.
+      const connectors = connectorStatus();
+      const connectorGated = new Map([
+        ['image.generate', { ok: connectors.image, reason: 'image_provider_not_configured' }],
+        ['image.analyze', { ok: connectors.vision, reason: 'vision_provider_not_configured' }],
+        ['calendar.schedule', { ok: connectors.calendar, reason: 'calendar_provider_not_configured' }],
+        ['email.send', { ok: connectors.email, reason: 'email_provider_not_configured' }],
+      ]);
       for (const toolId of tools.keys()) {
-        if (connectorGated.has(toolId)) mark(toolId, 'unwired', 'connector_not_configured');
-        else if (toolId === 'browser.run' && !process.env.BROWSER_CDP_URL) mark(toolId, 'unwired', 'browser_cdp_not_configured');
+        const gate = connectorGated.get(toolId);
+        if (gate && !gate.ok) mark(toolId, 'unwired', gate.reason);
+        else if (toolId === 'browser.run' && !process.env.BROWSER_CDP_URL) {
+          if (process.env.BROWSER_LAUNCH_LOCAL === 'true' && browserBinaryAvailable()) mark(toolId, 'live');
+          else if (process.env.BROWSER_LAUNCH_LOCAL === 'true') mark(toolId, 'unwired', 'browser_binary_not_found');
+          else mark(toolId, 'unwired', 'browser_cdp_not_configured');
+        }
         else if (engineGated.has(toolId) && !engineAvailable) mark(toolId, 'partial', 'engine_required');
         else if ((toolId === 'doc.summarize' || toolId === 'translate') && !llm) mark(toolId, 'partial', 'server_llm_optional');
         else mark(toolId, 'live');
