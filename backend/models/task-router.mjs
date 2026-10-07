@@ -16,6 +16,19 @@ import { SUPPORTED_MODELS, normalizeModelId, modelProvider } from './catalog.mjs
 export const TASK_TYPES = Object.freeze(['code', 'reasoning', 'vision', 'long_context', 'fast', 'general']);
 
 /**
+ * Model names that are NOT an explicit user choice but a request for the router
+ * to pick the best model by task type. The server must pass these through
+ * untouched (instead of normalising them to a concrete default) so the Phase E
+ * router can actually make the decision inside the Maestro loop.
+ */
+const ROUTING_SENTINELS = new Set(['', 'auto', 'default', 'test']);
+
+/** True when `model` means "let the router decide by task type". */
+export function isRoutingSentinel(model) {
+  return ROUTING_SENTINELS.has(String(model ?? '').trim().toLowerCase());
+}
+
+/**
  * Task type -> ordered model preference (best first).
  *
  * Every chain deliberately spans all three families (Anthropic / OpenAI / Google)
@@ -96,36 +109,73 @@ function descriptorFor(id, priority) {
  * filtering and ranking and this class only adds the routing policy + fallback.
  */
 export class MaestroModelRouter {
-  constructor({ taskTypes = TASK_TYPE_MODELS } = {}) {
+  constructor({ taskTypes = TASK_TYPE_MODELS, health = null } = {}) {
+    this.taskTypes = taskTypes;
+    // The health map is the single mutable piece of state. It is injectable so a
+    // caller can share one circuit-breaker across runs, while the default is a
+    // private map that `fork()` can hand to an isolated per-run router.
+    this.health = health instanceof Map ? health : new Map();
     this.routers = new Map();
     for (const [taskType, chain] of Object.entries(taskTypes)) {
-      const descriptors = chain.map((id, index) => descriptorFor(id, chain.length - index));
+      const descriptors = chain.map((id, index) => this.descriptorFor(id, chain.length - index));
       this.routers.set(taskType, new ModelRouter(descriptors));
     }
     if (!this.routers.has('general')) {
-      const descriptors = Object.keys(SUPPORTED_MODELS).map((id) => descriptorFor(id, 0));
+      const descriptors = Object.keys(SUPPORTED_MODELS).map((id) => this.descriptorFor(id, 0));
       this.routers.set('general', new ModelRouter(descriptors));
     }
+  }
+
+  descriptorFor(id, priority) {
+    const descriptor = descriptorFor(id, priority);
+    if (this.health.has(id)) descriptor.healthy = this.health.get(id) !== false;
+    return descriptor;
   }
 
   routerFor(taskType) {
     return this.routers.get(taskType) ?? this.routers.get('general');
   }
 
+  /**
+   * Push the (possibly shared) health map into the internal per-task routers
+   * before a decision is made. This is what makes `fork({ shareHealth: true })`
+   * actually share a circuit breaker: the map is the single source of truth and
+   * every router re-reads it, so a health change made on one fork is visible to
+   * every other router that shares the same map. Cheap (a handful of models).
+   */
+  syncHealth() {
+    for (const [id, healthy] of this.health) {
+      for (const router of this.routers.values()) router.updateHealth(id, healthy);
+    }
+  }
+
+  /**
+   * Return an independent router with the SAME routing policy but a FRESH health
+   * state. Each agent run gets its own fork so one run's provider failures can
+   * never poison an unrelated run or tenant. Pass `shareHealth: true` to opt
+   * back into a cross-run circuit breaker.
+   */
+  fork({ shareHealth = false } = {}) {
+    return new MaestroModelRouter({ taskTypes: this.taskTypes, health: shareHealth ? this.health : new Map() });
+  }
+
   /** Mark a model healthy/unhealthy across every task-type router. */
   updateHealth(id, healthy, details = {}) {
+    this.health.set(id, healthy !== false);
     for (const router of this.routers.values()) router.updateHealth(id, healthy, details);
   }
 
   /** Ordered eligible model IDs for a task type (the fallback chain). */
   chain(taskType, criteria = {}) {
     const resolved = TASK_TYPES.includes(taskType) ? taskType : classifyTask({ ...criteria, taskType });
+    this.syncHealth();
     return this.routerFor(resolved).rank({ ...criteria, taskType: resolved }).map((item) => item.id);
   }
 
   /** Full routing decision for a request. */
   route(criteria = {}) {
     const taskType = TASK_TYPES.includes(criteria.taskType) ? criteria.taskType : classifyTask(criteria);
+    this.syncHealth();
     const ranked = this.routerFor(taskType).rank({ ...criteria, taskType });
     if (!ranked.length) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
     const chain = ranked.map((item) => item.id);
