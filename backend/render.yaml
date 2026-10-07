@@ -1,0 +1,131 @@
+# =============================================================================
+# render.yaml — Blueprint for the Ai-Semo0o-Agent BACKEND on Render.
+# =============================================================================
+
+services:
+  - type: web
+    name: ai-semo0o-backend
+    runtime: node
+    plan: free
+    region: frankfurt
+
+    # Reproducible install from package-lock.json
+    buildCommand: npm ci
+
+    # Canonical backend start command
+    startCommand: node --experimental-sqlite backend/server.mjs
+
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+
+      - key: NODE_ENV
+        value: production
+
+      # Structured production logs
+      - key: LOG_FORMAT
+        value: json
+
+      - key: BIND_HOST
+        value: 0.0.0.0
+
+      # Render injects PORT automatically.
+      - key: DISABLE_WORKER
+        value: "0"
+
+      # -----------------------------------------------------------------------
+      # STORAGE
+      # -----------------------------------------------------------------------
+      # On Render Free there is no persistent disk.
+      # The application automatically falls back to:
+      #   backend/data/agent.sqlite
+      #   backend/data/workspace
+      #
+      # Do NOT set DATABASE_FILE or WORKSPACE_ROOT to /var/data on Free.
+      #
+      # For a paid Render plan with Persistent Disk, configure:
+      #
+      # - key: DATABASE_FILE
+      #   value: /var/data/db/agent.sqlite
+      #
+      # - key: WORKSPACE_ROOT
+      #   value: /var/data/workspace
+
+      # -----------------------------------------------------------------------
+      # SECRETS
+      # -----------------------------------------------------------------------
+      # Add real secrets from the Render Dashboard.
+      # NEVER commit their values to GitHub.
+      #
+      # - key: SECRETS_MASTER_KEY
+      # - key: ALLOWED_ORIGIN
+      # - key: PUBLIC_APP_URL
+
+      # -----------------------------------------------------------------------
+      # LLM PROVIDERS
+      # -----------------------------------------------------------------------
+      # Configure at least one provider in Render Dashboard.
+      #
+      # - key: OPENAI_API_KEY
+      # - key: OPENAI_API_BASE
+      # - key: OPENAI_MODEL
+      #
+      # - key: GEMINI_API_KEY
+      # - key: GEMINI_MODEL
+      #
+      # - key: ANTHROPIC_API_KEY
+      # - key: ANTHROPIC_MODEL
+
+      # -----------------------------------------------------------------------
+      # OPTIONAL CONNECTORS (fail-closed when unset; set in Render Dashboard)
+      # -----------------------------------------------------------------------
+      # Each of these is optional. When unset the matching tool reports an
+      # honest "not configured" state and fails closed; it never fakes success.
+      #
+      # Error tracking (Sentry-compatible):
+      # - key: SENTRY_DSN
+      #
+      # GitHub automation (PAT) and/or OAuth app:
+      # - key: GITHUB_TOKEN
+      # - key: GITHUB_OAUTH_CLIENT_ID
+      # - key: GITHUB_OAUTH_CLIENT_SECRET
+      #
+      # Image generation / vision (image.generate, image.analyze):
+      # - key: IMAGE_PROVIDER        # openai | gemini | http
+      # - key: IMAGE_API_KEY
+      # - key: VISION_PROVIDER       # openai | gemini
+      # - key: VISION_API_KEY
+      #
+      # Transactional email (email.send):
+      # - key: EMAIL_PROVIDER        # resend | sendgrid | webhook
+      # - key: EMAIL_API_KEY
+      # - key: EMAIL_FROM
+      #
+      # Calendar (calendar.schedule):
+      # - key: CALENDAR_PROVIDER     # google | webhook
+      # - key: CALENDAR_ACCESS_TOKEN
+      #
+      # Managed embeddings (else the local hash embedder is used):
+      # - key: EMBEDDING_PROVIDER    # openai | gemini | http | ...
+      # - key: EMBEDDING_API_KEY
+      #
+      # Billing (Stripe):
+      # - key: BILLING_PROVIDER      # stripe
+      # - key: BILLING_WEBHOOK_SECRET
+      # - key: STRIPE_SECRET_KEY
+      #
+      # Browser automation (prefer a remote wss:// fleet in production):
+      # - key: BROWSER_CDP_URL
+
+    # -------------------------------------------------------------------------
+    # OPTIONAL PERSISTENT DISK
+    # -------------------------------------------------------------------------
+    # Only for PAID Render plans.
+    #
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
