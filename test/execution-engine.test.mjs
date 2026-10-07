@@ -112,6 +112,101 @@ test('terminal execution uses command allow-list, timeout, output cap, and permi
   }
 });
 
+test('sandboxed commands never inherit server secrets and pin HOME/TMPDIR', async () => {
+  const fx = await fixture('env');
+  process.env.SEMO0O_TEST_API_KEY = 'sk-server-secret';
+  try {
+    const engine = await engineFor(fx.root, [Capability.TERMINAL_EXECUTE], fx.evidence);
+    const result = await engine.terminal.run({
+      command: 'node',
+      args: [
+        '-e',
+        'console.log(JSON.stringify({ inherited: process.env.SEMO0O_TEST_API_KEY ?? null, denied: process.env.SEMO0O_REQUEST_SECRET ?? null, allowed: process.env.SEMO0O_SAFE ?? null, home: process.env.HOME, tmp: process.env.TMPDIR, nodeEnv: process.env.NODE_ENV }))',
+      ],
+      env: { SEMO0O_REQUEST_SECRET: 'leak', SEMO0O_SAFE: 'ok' },
+    });
+    assert.equal(result.ok, true);
+    const seen = JSON.parse(result.stdout.trim());
+    assert.equal(seen.inherited, null, 'an inherited server secret must not reach the sandbox');
+    assert.equal(seen.denied, null, 'a denied request env var must be dropped');
+    assert.equal(seen.allowed, 'ok');
+    assert.equal(seen.home, engine.files.root);
+    assert.equal(seen.tmp, path.join(engine.files.root, '.tmp'));
+    assert.equal(seen.nodeEnv, 'production');
+  } finally {
+    delete process.env.SEMO0O_TEST_API_KEY;
+    await fx.cleanup();
+  }
+});
+
+test('real Git engine creates an independent task branch and protects the default branch', async () => {
+  const fx = await fixture('branch');
+  try {
+    await initializeGit(fx.root);
+    const engine = await engineFor(fx.root, ALL_CAPABILITIES, fx.evidence);
+    const mainTip = git(fx.root, ['rev-parse', 'main']);
+
+    const created = await engine.git.createBranch('semo0o/task/abc');
+    assert.equal(created.created, true);
+    assert.equal((await engine.git.branch()).branch, 'semo0o/task/abc');
+    assert.ok((await engine.git.listBranches()).branches.includes('semo0o/task/abc'));
+
+    // Idempotent: re-creating the same branch just checks it out.
+    const again = await engine.git.createBranch('semo0o/task/abc');
+    assert.equal(again.created, false);
+
+    // The protected default branch is untouched.
+    assert.equal(git(fx.root, ['rev-parse', 'main']), mainTip);
+
+    await assert.rejects(() => engine.git.createBranch('main'), (error) => error.code === 'DEFAULT_BRANCH_FORBIDDEN');
+    await assert.rejects(() => engine.git.createBranch('master'), (error) => error.code === 'DEFAULT_BRANCH_FORBIDDEN');
+    await assert.rejects(() => engine.git.createBranch('bad name'), (error) => error.code === 'INVALID_BRANCH');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('checkpoint never stages run evidence or scratch files', async () => {
+  const fx = await fixture('evidence-exclude');
+  try {
+    await initializeGit(fx.root);
+    const engine = await engineFor(fx.root, ALL_CAPABILITIES, fx.evidence);
+    await engine.files.write('tracked.txt', 'changed\n');
+    const checkpoint = await engine.git.checkpoint('exclude evidence test');
+    assert.equal(checkpoint.created, true);
+    const committed = git(fx.root, ['show', '--name-only', '--pretty=format:', 'HEAD']);
+    assert.match(committed, /tracked\.txt/);
+    assert.doesNotMatch(committed, /\.test-evidence/);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('checkpoint excludes the whole evidence container, including earlier runs', async () => {
+  const fx = await fixture('evidence-container');
+  try {
+    await initializeGit(fx.root);
+    // Evidence left behind by an earlier run in the default container layout.
+    const staleRun = path.join(fx.root, '.semo0o-evidence', 'earlier-run');
+    await mkdir(staleRun, { recursive: true });
+    await writeFile(path.join(staleRun, 'manifest.json'), '{"stale":true}', 'utf8');
+
+    // A fresh run uses the default evidence directory (<root>/.semo0o-evidence/<uuid>).
+    const engine = await createExecutionEngine({ workspacePath: fx.root, grants: ALL_CAPABILITIES });
+    await engine.files.write('tracked.txt', 'changed\n');
+    const checkpoint = await engine.git.checkpoint('exclude whole evidence container');
+    assert.equal(checkpoint.created, true);
+
+    const committed = git(fx.root, ['show', '--name-only', '--pretty=format:', 'HEAD']);
+    assert.match(committed, /tracked\.txt/);
+    assert.doesNotMatch(committed, /\.semo0o-evidence/);
+    // The stale evidence stays on disk, it is just never committed.
+    assert.equal(await readFile(path.join(staleRun, 'manifest.json'), 'utf8'), '{"stale":true}');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
 test('real Git engine reports state, checkpoints changes, and rolls back a revision', async () => {
   const fx = await fixture('git');
   try {
