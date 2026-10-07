@@ -1,28 +1,18 @@
-# DELETE LIST — Ai-Semo0o-Agent — Cycle 2
+# Ai-Semo0o-Agent — Cycle 3 — DELETE LIST
+# الملفات/المجلدات التي يجب حذفها من الـrepo العام (GitHub).
+# ملاحظة: الحذف يتم من الـgit index فقط؛ الملفات محليًا تبقى في .gitignore.
+# نفّذ الأوامر من جذر الـrepo.
 
-احذف الملفات/المجلدات التالية من الـ repository (هي مكررة/ميتة/ناتجة عن البناء ولا يجب تتبعها في Git).
-
-## 1) مجلد البناء `dist/` (72 ملفًا) — ناتج بناء ثابت (static build artifacts)
-السبب: `dist/` ناتج عن `expo export`/البناء ويجب ألا يُرفع إلى Git. وهو مضاف أصلًا إلى `.gitignore` (سطر `dist/`)، لكنه كان متتبَّعًا بالخطأ.
-الإجراء:
-```
+# 1) مجلد dist/ — مخرجات بناء (72 ملفًا) تم تتبّعها بالخطأ. موجود بالفعل في .gitignore (السطر: dist/).
 git rm -r --cached dist
-```
-(تم تنفيذه بالفعل محليًا — احذف المجلد من Git فقط، لا تحذف الملفات من قرصك إن كنت تستخدمها محليًا.)
 
-## 2) ملف الجذر الميت `server.mjs`
-السبب: نسخة قديمة/مكررة من نقطة التشغيل الحقيقية `backend/server.mjs`. لا شيء يستورده. نقطة تشغيل Render الحقيقية هي `backend/server.mjs`، والـ shim المطلوب هو `server.js` (CommonJS) — **لا تحذف `server.js`**.
-الإجراء:
-```
+# 2) server.mjs في الجذر — نسخة ميتة مكررة من backend/server.mjs (لا تُستخدم ولا تُستورَد).
 git rm server.mjs
-```
 
-## 3) مجلد الجذر المكرر/المعزول `tools/`
-السبب: نسخة قديمة مكررة من `backend/tools/`. التنفيذ الفعلي يستورد من `backend/tools/registry.mjs` و`backend/tools/connectors.mjs`. النسخة الجذرية `tools/` غير مستوردة من أي مكان.
-الإجراء:
-```
+# 3) مجلد tools/ في الجذر — نسخة ميتة مكررة من backend/tools/ (connectors.mjs + registry.mjs).
 git rm -r tools
-```
 
----
-ملاحظة: بعد الحذف، تأكد من أن `.gitignore` يحتوي على `dist/` (موجود بالفعل) لمنع إعادة تتبعه.
+# بعد التنفيذ:
+#   git commit -m "chore: drop tracked build output and dead duplicate entrypoints"
+# التحقق:
+#   git ls-files dist server.mjs tools   # يجب أن يكون فارغًا
