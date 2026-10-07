@@ -705,12 +705,33 @@ export class RealGit {
     return { ...result, branch, from: base ?? 'HEAD', created: !exists.ok };
   }
 
+  /** True when a `git status --porcelain` entry points at an excluded path. */
+  #isExcludedEntry(entry) {
+    const raw = String(entry).slice(3).trim();
+    if (!raw) return false;
+    // Renames are reported as "old -> new"; the destination is what matters.
+    const target = raw.includes(' -> ') ? raw.split(' -> ').pop() : raw;
+    const normalized = target.replace(/^"|"$/g, '');
+    return this.exclude.some((ex) => normalized === ex || normalized.startsWith(`${ex}/`));
+  }
+
+  /** Real, committable changes only (excluded scratch/evidence never counts). */
+  #changedEntries(status) {
+    return (status?.entries ?? []).filter((entry) => !String(entry).startsWith('##') && !this.#isExcludedEntry(entry));
+  }
+
+  /** Public view of the real, committable changes (excludes scratch/evidence). */
+  async changedEntries() {
+    const status = await this.status();
+    return { status, entries: this.#changedEntries(status) };
+  }
+
   async checkpoint(message) {
     if (typeof message !== 'string' || message.trim().length < 3 || message.length > 240) {
       throw new ExecutionError('Checkpoint message must be between 3 and 240 characters.', 'INVALID_CHECKPOINT');
     }
     const before = await this.status();
-    const changed = before.entries.filter((entry) => !entry.startsWith('##'));
+    const changed = this.#changedEntries(before);
     if (changed.length === 0) return { created: false, reason: 'clean_worktree', status: before };
 
     const add = await this.#run(['add', '--all', '--', '.', ...this.exclude.map((entry) => `:(exclude)${entry}`)], Capability.GIT_WRITE);
