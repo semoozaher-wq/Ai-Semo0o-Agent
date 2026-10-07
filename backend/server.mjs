@@ -13,6 +13,8 @@ import { createLiveToolRegistry } from './tools/registry.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
+import { isRoutingSentinel } from './models/task-router.mjs';
+import { redactDeep, collectKnownSecrets } from './secrets/vault.mjs';
 import { MemoryStore } from './memory/store.mjs';
 import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
 import { assertEnv } from './config/env.mjs';
@@ -233,16 +235,21 @@ async function streamRunEvents(response, db, runId, tenantId, request) {
   }
 }
 
-export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter } = {}) {
+export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter, costFor = modelCost, modelRouter, secrets } = {}) {
   rateLimiter ??= new DistributedRateLimiter(db, { max: Number(process.env.RATE_LIMIT_MAX || 120) });
-  const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1) });
+  // Known secret values are resolved once and shared by the queue (result_json)
+  // and the agent runtime (evidence / events / checkpoint) so both persist
+  // redacted data. Tests may inject an explicit `secrets` list.
+  const knownSecrets = Array.isArray(secrets) ? secrets : collectKnownSecrets();
+  const redact = (value) => redactDeep(value, knownSecrets);
+  const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1), redact });
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
   const memory = new MemoryStore(db);
   const chat = new ChatStore(db);
   // Link every agent run to its isolated per-task workspace engine.
   const resolveEngine = createTaskEngineResolver({ db });
-  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor: modelCost, resolveEngine }));
+  runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, ...(modelRouter ? { modelRouter } : {}) }));
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
     response.setHeader('x-request-id', requestId);
@@ -631,7 +638,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const input = await body(request);
         const kind = typeof input.kind === 'string' ? input.kind : 'code.run';
         if (!['code.run', 'agent.run'].includes(kind)) throw new Error('UNSUPPORTED_RUN_KIND');
-        if (kind === 'agent.run' && input.model !== undefined && input.model !== 'test') input.model = normalizeModelId(input.model);
+        // Preserve routing sentinels ("auto"/"default"/"test"/empty): they are a
+        // request for the Phase E router to choose by task type, not a concrete
+        // model. Only explicit, real model IDs are normalised/validated here.
+        if (kind === 'agent.run' && input.model !== undefined && !isRoutingSentinel(input.model)) input.model = normalizeModelId(input.model);
         const goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
         const requestedIdempotencyKey = input.idempotencyKey ?? request.headers['idempotency-key'];
         const idempotencyKey = requestedIdempotencyKey ? validateText(requestedIdempotencyKey, 'IDEMPOTENCY_KEY', 128) : null;
