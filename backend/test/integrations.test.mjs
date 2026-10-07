@@ -264,3 +264,53 @@ test('integrations status route reports honest connector states', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// The fail-closed route test above proves the "honest when unconfigured" contract.
+// This is its mirror image: with every optional connector configured, the SAME
+// route must flip them to `live` (never leave a ready capability hidden) and must
+// never echo any configured secret back to the client.
+test('integrations status route reports configured connectors live and never leaks secrets', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-integrations-live-'));
+  const db = new Database(path.join(dir, 'agent.sqlite'));
+  const queue = new RunQueue(db, { pollMs: 5 });
+  const configured = {
+    IMAGE_PROVIDER: 'openai', IMAGE_API_KEY: 'sk-live-image-secret', IMAGE_API_BASE: 'https://api.example.test/v1',
+    VISION_PROVIDER: 'openai', VISION_API_KEY: 'sk-live-vision-secret', VISION_API_BASE: 'https://api.example.test/v1',
+    CALENDAR_PROVIDER: 'webhook', CALENDAR_WEBHOOK_URL: 'https://hooks.example.test/cal', CALENDAR_WEBHOOK_SECRET: 'cal-secret',
+    EMAIL_PROVIDER: 'webhook', EMAIL_WEBHOOK_URL: 'https://hooks.example.test/mail', EMAIL_WEBHOOK_SECRET: 'mail-secret',
+    TAVILY_API_KEY: 'tvly-live-secret',
+    BROWSER_CDP_URL: 'ws://127.0.0.1:9222',
+    GITHUB_TOKEN: 'ghp_live_secret',
+  };
+  const saved = {};
+  for (const [key, value] of Object.entries(configured)) { saved[key] = process.env[key]; process.env[key] = value; }
+  // web.search's provider is resolved when the registry is constructed, so the app
+  // must be created AFTER the environment is configured.
+  const app = createApp({ db, queue });
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  try {
+    const user = createUser(db, { email: 'int-live@example.test', password: 'correct horse battery staple', tenantName: 'IntLive' });
+    const token = createSession(db, user.id).token;
+    const response = await fetch(`${base}/integrations/status`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(response.status, 200);
+    const raw = await response.text();
+    const body = JSON.parse(raw);
+    for (const id of ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send', 'web.search', 'browser.run']) {
+      assert.ok(body.tools.live.includes(id), `${id} must be live when its provider is configured`);
+    }
+    assert.equal(body.tools.unwired.length, 0);
+    assert.equal(body.github.tokenConfigured, true);
+    assert.equal(body.browser.cdpConfigured, true);
+    // No configured secret may ever appear in the serialized response.
+    for (const secret of Object.values(configured).filter((value) => value.includes('secret') || value.startsWith('sk-') || value.startsWith('ghp_') || value.startsWith('tvly-'))) {
+      assert.ok(!raw.includes(secret), `configured secret leaked in /integrations/status: ${secret}`);
+    }
+  } finally {
+    queue.stop();
+    await new Promise((resolve) => app.server.close(resolve));
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
