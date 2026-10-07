@@ -25,7 +25,7 @@
     "test": "npm run test:legacy-harness && npm run test:execution && npm run test:phase1 && npm run test:frontend && npm run test:phase2 && npm run test:backend && npm run validate:pain-map",
     "test:legacy-harness": "tsx test/harness.ts",
     "test:execution": "node --experimental-sqlite --test test/*.test.mjs",
-    "test:phase2": "node --test test/phase2-core.test.mjs",
+    "test:phase2": "node --test test/phase2-core.test.mjs test/phase2-intelligence.test.mjs",
     "test:phase1": "tsx --test test/phase1-orchestrator.test.ts test/code-run-integration.test.ts test/model-router.test.ts test/recovery-contract.test.ts",
     "test:frontend": "tsx --test test/backend-url.test.ts test/chat-stream.test.ts test/chat-recovery.test.ts",
     "test:backend": "node --experimental-sqlite --test backend/test/*.test.mjs",
@@ -35,6 +35,8 @@
     "generate:anatomy": "node scripts/generate-317-pain-map.js data/anatomyPainMap.json",
     "validate:pain-map": "node scripts/validate-pain-map.js data/anatomyPainMap.json",
     "smoke:backend": "bash scripts/boot-smoke.sh",
+    "benchmark:agent": "node --experimental-sqlite scripts/agent-benchmark.mjs",
+    "benchmark:capabilities": "node --experimental-sqlite scripts/capability-benchmark.mjs",
     "trial:self-improve": "node --experimental-sqlite scripts/production-trial.mjs"
   },
   "dependencies": {
