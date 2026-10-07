@@ -17,6 +17,10 @@ import { isRoutingSentinel } from './models/task-router.mjs';
 import { redactDeep, collectKnownSecrets } from './secrets/vault.mjs';
 import { MemoryStore } from './memory/store.mjs';
 import { applyWebhookEvent, billingStatus, planById, requireBillingProvider, verifyWebhookSignature } from './billing/service.mjs';
+import { billingProviderStatus } from './billing/stripe.mjs';
+import { buildAuthorizeUrl, createGitHubClient, exchangeCodeForToken, getGitHubUser, githubStatus, parseRepoSlug } from './github/service.mjs';
+import { consumeOAuthState, deleteGitHubConnection, getGitHubConnection, issueOAuthState, resolveGitHubToken, saveGitHubConnection } from './github/connections.mjs';
+import { embeddingStatus } from './memory/embeddings.mjs';
 import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
 import { applyRuntimeDefaults, resolveWritableWorkspaceRoot } from './config/runtime-defaults.mjs';
@@ -29,6 +33,7 @@ import { listInvitations, listMembers, removeMember, revokeInvitation, updateMem
 import { runRetention } from './ops/retention.mjs';
 import { deleteTenantAccount, deleteUserAccount } from './account/deletion.mjs';
 import { evaluateAlerts, renderAlertMetrics } from './observability/alerts.mjs';
+import { createErrorTracker, errorTrackerStatus } from './observability/error-tracking.mjs';
 import { ChatStore } from './chat/store.mjs';
 import { Capability, createExecutionEngine } from '../execution-core/engine.mjs';
 import { provisionTaskWorkspace, createTaskEngineResolver } from '../execution-core/task-workspace.mjs';
@@ -247,6 +252,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
   const memory = new MemoryStore(db);
   const chat = new ChatStore(db);
+  // Optional Sentry-compatible error tracking. Null when unconfigured so we
+  // never report a fake "errors are tracked" state.
+  let errorTracker = null;
+  try { errorTracker = createErrorTracker(process.env); } catch { errorTracker = null; }
   // Link every agent run to its isolated per-task workspace engine.
   const resolveEngine = createTaskEngineResolver({ db });
   runQueue.register('agent.run', createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, ...(modelRouter ? { modelRouter } : {}) }));
@@ -375,6 +384,65 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const result = await adapter.cancelSubscription({ subscriptionId: sub.provider_subscription_id });
         db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'billing.subscription.canceled', 'billing', user.id, JSON.stringify({ provider: adapter.id, subscriptionId: sub.provider_subscription_id }), now());
         return send(response, 200, result);
+      }
+      if (method === 'GET' && parts.join('/') === 'integrations/status') {
+        // One honest view of every optional connector so the UI and operators can
+        // see exactly what is live versus fail-closed, never a fake success.
+        const toolStatus = tools.status?.() ?? { live: [], partial: [], unwired: [], failed: [], tools: [] };
+        return send(response, 200, {
+          tools: { live: toolStatus.live ?? [], partial: toolStatus.partial ?? [], unwired: toolStatus.unwired ?? [], failed: toolStatus.failed ?? [] },
+          billing: billingProviderStatus(process.env),
+          github: { ...githubStatus(process.env), connection: getGitHubConnection(db, user.tenantId) },
+          embeddings: embeddingStatus(process.env),
+          errorTracking: errorTrackerStatus(process.env),
+          browser: { cdpConfigured: Boolean(process.env.BROWSER_CDP_URL), localLaunch: process.env.BROWSER_LAUNCH_LOCAL === 'true' },
+        });
+      }
+      if (method === 'GET' && parts.join('/') === 'github/status') {
+        return send(response, 200, { ...githubStatus(process.env), connection: getGitHubConnection(db, user.tenantId) });
+      }
+      if (method === 'POST' && parts.join('/') === 'github/oauth/start') {
+        requireRole(user, ['owner', 'admin']);
+        const status = githubStatus(process.env);
+        if (!status.oauthConfigured) throw new Error('GITHUB_OAUTH_NOT_CONFIGURED');
+        const state = issueOAuthState(db, user.id);
+        const redirectUri = process.env.GITHUB_OAUTH_REDIRECT_URI || `${process.env.PUBLIC_APP_URL || 'http://localhost:8081'}/github/callback`;
+        return send(response, 200, { url: buildAuthorizeUrl({ clientId: process.env.GITHUB_OAUTH_CLIENT_ID, redirectUri, state }), state });
+      }
+      if (method === 'POST' && parts.join('/') === 'github/oauth/complete') {
+        requireRole(user, ['owner', 'admin']);
+        const input = await body(request);
+        consumeOAuthState(db, user.id, validateText(input.state, 'STATE', 512));
+        const redirectUri = process.env.GITHUB_OAUTH_REDIRECT_URI || `${process.env.PUBLIC_APP_URL || 'http://localhost:8081'}/github/callback`;
+        const token = await exchangeCodeForToken({ clientId: process.env.GITHUB_OAUTH_CLIENT_ID, clientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET, code: validateText(input.code, 'CODE', 512), redirectUri });
+        const ghUser = await getGitHubUser({ token: token.token });
+        const connection = saveGitHubConnection(db, { tenantId: user.tenantId, userId: user.id, login: ghUser.login, scope: token.scope, token: token.token });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'github.oauth.connected', 'github', user.id, JSON.stringify({ login: ghUser.login, scope: token.scope }), now());
+        return send(response, 200, { connected: true, login: connection.login, scope: connection.scope });
+      }
+      if (method === 'DELETE' && parts.join('/') === 'github/connection') {
+        requireRole(user, ['owner', 'admin']);
+        const removed = deleteGitHubConnection(db, user.tenantId);
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'github.oauth.disconnected', 'github', user.id, '{}', now());
+        return send(response, 200, { disconnected: true, removed: removed.changes });
+      }
+      if (parts[0] === 'github' && parts[1] === 'repos' && parts[2] && method === 'POST') {
+        requireRole(user, ['owner', 'admin']);
+        const { owner, repo } = parseRepoSlug(`${parts[2]}/${parts[3] ?? ''}`.replace(/\/$/, ''));
+        const token = resolveGitHubToken(db, user.tenantId);
+        if (!token) throw new Error('GITHUB_NOT_CONFIGURED');
+        const client = createGitHubClient({ token });
+        const input = await body(request);
+        const action = parts[4];
+        if (action === 'issues') {
+          if (input.number) return send(response, 200, await client.commentOnIssue({ owner, repo, issueNumber: input.number, body: validateText(input.body, 'BODY', 100000) }));
+          return send(response, 201, await client.createIssue({ owner, repo, title: validateText(input.title, 'TITLE', 256), body: typeof input.body === 'string' ? input.body.slice(0, 100000) : '', labels: Array.isArray(input.labels) ? input.labels.slice(0, 20).map((label) => String(label).slice(0, 64)) : [] }));
+        }
+        if (action === 'pulls') {
+          return send(response, 201, await client.createPullRequest({ owner, repo, title: validateText(input.title, 'TITLE', 256), head: validateText(input.head, 'HEAD', 256), base: validateText(input.base, 'BASE', 256), body: typeof input.body === 'string' ? input.body.slice(0, 100000) : '', draft: input.draft === true }));
+        }
+        if (action === 'info') return send(response, 200, await client.getRepo({ owner, repo }));
+        throw new Error('GITHUB_ACTION_UNSUPPORTED');
       }
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
       if (method === 'GET' && parts.join('/') === 'me/export') {
@@ -628,10 +696,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (parts[0] === 'projects' && parts[1] && parts[2] === 'memory') {
         const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', parts[1], user.tenantId); assertProjectAccess(project, user);
-        if (method === 'POST' && parts.length === 3) { const input = await body(request); validateText(input.source || 'api', 'SOURCE', 200); validateText(input.content, 'CONTENT', 200000); return send(response, 201, memory.addDocument({ tenantId: user.tenantId, projectId: project.id, source: input.source || 'api', content: input.content })); }
-        if (method === 'GET' && parts.length === 3) return send(response, 200, memory.search({ tenantId: user.tenantId, projectId: project.id, query: validateText(new URL(request.url, 'http://localhost').searchParams.get('q'), 'QUERY', 500), limit: 10 }));
+        if (method === 'POST' && parts.length === 3) { const input = await body(request); validateText(input.source || 'api', 'SOURCE', 200); validateText(input.content, 'CONTENT', 200000); return send(response, 201, await memory.addDocument({ tenantId: user.tenantId, projectId: project.id, source: input.source || 'api', content: input.content })); }
+        if (method === 'GET' && parts.length === 3) return send(response, 200, await memory.search({ tenantId: user.tenantId, projectId: project.id, query: validateText(new URL(request.url, 'http://localhost').searchParams.get('q'), 'QUERY', 500), limit: 10 }));
         if (method === 'GET' && parts[3] === 'export') return send(response, 200, memory.exportProject(user.tenantId, project.id));
-        if (method === 'POST' && parts[3] === 'reindex') return send(response, 200, memory.reindexProject(user.tenantId, project.id));
+        if (method === 'POST' && parts[3] === 'reindex') return send(response, 200, await memory.reindexProject(user.tenantId, project.id));
         if (method === 'DELETE' && parts.length === 3) { requireRole(user, ['owner', 'admin']); return send(response, 200, { deleted: memory.deleteProject(user.tenantId, project.id).changes }); }
       }
       if (method === 'POST' && parts[0] === 'runs' && parts.length === 1) {
@@ -736,8 +804,14 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
-      send(response, status, { error: status >= 500 ? "INTERNAL_ERROR" : message });
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      if (status >= 500 && errorTracker) {
+        // Fire-and-forget: reporting must never delay or break the response.
+        Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
+      }
+      // 503 signals a missing server-side configuration (a safe, actionable code);
+      // only genuine 500s are masked so internal details never leak.
+      send(response, status, { error: status >= 500 && status !== 503 ? "INTERNAL_ERROR" : message });
     }
   });
   server.headersTimeout = 15_000;
