@@ -4,6 +4,7 @@ import { normalizeModelId } from '../models/catalog.mjs';
 import { maestroModelRouter, isRoutingSentinel } from '../models/task-router.mjs';
 import { compileRunContext, renderGuidance, sanitizeDeep } from './context.mjs';
 import { classifyFailure, RECOVERY_EVENTS } from './recovery.mjs';
+import { isBoundedLimitError } from './long-running.mjs';
 import { deliverRun, DELIVERY_EVENTS } from './delivery.mjs';
 import { redactDeep, collectKnownSecrets } from '../secrets/vault.mjs';
 import { loadOverrides } from '../self-improve/store.mjs';
@@ -47,7 +48,7 @@ function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys())) {
 }
 function verify(result) { return result && result.ok !== false && result.output !== undefined && result.output !== null; }
 
-export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resolveEngine, modelRouter = maestroModelRouter, secrets = collectKnownSecrets() } = {}) {
+export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resolveEngine, modelRouter = maestroModelRouter, secrets = collectKnownSecrets(), longRunning = false } = {}) {
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   const knownSecrets = Array.isArray(secrets) ? secrets : [];
   const redact = (value) => redactDeep(value, knownSecrets);
@@ -128,6 +129,22 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
     };
     const approvedTools = new Set(payload.approvedTools || []);
     const resumeFrom = Number(payload.resumeFrom ?? 0);
+    // Long-running autonomous execution: when enabled, a run that exhausts its
+    // wall-clock budget mid-plan checkpoints and returns `continuation` instead of
+    // failing, so the ContinuationSupervisor can resume it from the checkpoint on
+    // a fresh run. Bounded by `maxContinuations` so it can never loop forever.
+    const allowContinuation = longRunning === true || payload.longRunning === true || process.env.AGENT_LONG_RUNNING === 'true';
+    const maxContinuations = Math.min(Math.max(0, Number(payload.maxContinuations ?? process.env.AGENT_MAX_CONTINUATIONS ?? 5) || 0), 20);
+    const continuations = Math.max(0, Number(payload.continuations ?? 0) || 0);
+    const continueRun = (plan, index, reason) => {
+      checkpoint(plan, index);
+      emit('continuation_required', { stepIndex: index, reason, continuations, maxContinuations });
+      return { status: 'continuation', reason, checkpoint: { plan, stepIndex: index }, usage, outputs };
+    };
+    // Run-scoped so the catch block can checkpoint-and-continue on a bounded stop
+    // (the step index is otherwise scoped to the for-loop and invisible here).
+    let plan;
+    let lastStepIndex = resumeFrom;
     try {
       // Record the routing decision up-front so the run stream shows which task
       // type was detected and which cross-provider chain will be used.
@@ -145,7 +162,6 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       }
       emit('planning_started', { goal: task?.goal });
       let planner;
-      let plan;
       for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
         guard();
         planner = await complete({ model: requestedModel ?? undefined, messages: [{ role: 'system', content: planPrompt(context.goal, { allowed: [...allowedTools], hints: context.hints, notes: context.notes }) }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
@@ -183,6 +199,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       };
       for (let index = resumeFrom; index < plan.steps.length; index += 1) {
         guard();
+        lastStepIndex = index;
         const step = plan.steps[index];
         const tool = TOOL_BY_ID.get(step.toolId);
         emit('step_started', { stepId: step.id, title: step.title, toolId: step.toolId });
@@ -258,6 +275,9 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         const verification = verify(toolResult) ? { status: 'VERIFIED', evidenceId } : { status: 'UNVERIFIED', evidenceId };
         db.run('INSERT INTO evidence(id,run_id,kind,payload_json,sha256,created_at) VALUES(?,?,?,?,?,?)', id('evidence'), run.id, 'verification', JSON.stringify(verification), hash(JSON.stringify(verification)), now());
         emit('step_completed', { stepId: step.id, toolId: step.toolId, verification: verification.status, evidenceId });
+        // Durable progress: persist the NEXT index so a continuation resumes
+        // exactly where this run stopped instead of replaying finished steps.
+        checkpoint(plan, index + 1);
         if (verification.status !== 'VERIFIED') return { status: 'unverified', outputs, usage };
       }
       // --- Delivery -------------------------------------------------------
