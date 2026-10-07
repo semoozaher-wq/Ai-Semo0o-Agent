@@ -1,7 +1,7 @@
 {
   "scorecard": {
-    "generatedAt": "2026-10-07T18:50:55.134Z",
-    "score": 91,
+    "generatedAt": "2026-10-07T20:24:28.970Z",
+    "score": 97,
     "level": "production",
     "models": {
       "configured": 0,
@@ -97,10 +97,10 @@
         "id": "computer-use",
         "name": "Agentic Computer Use / Browser Control",
         "weight": 2,
-        "status": "unwired",
-        "score": 0,
+        "status": "live",
+        "score": 100,
         "evidence": [
-          "tool:browser.run=unwired"
+          "tool:browser.run=live"
         ]
       },
       {
@@ -146,16 +146,16 @@
     ],
     "summary": {
       "total": 13,
-      "live": 11,
+      "live": 12,
       "partial": 1,
-      "unwired": 1,
+      "unwired": 0,
       "failed": 0
     }
   },
   "benchmark": {
     "name": "capability-scorecard",
-    "startedAt": "2026-10-07T18:50:55.135Z",
-    "finishedAt": "2026-10-07T18:50:55.135Z",
+    "startedAt": "2026-10-07T20:24:28.971Z",
+    "finishedAt": "2026-10-07T20:24:28.971Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -386,20 +386,20 @@
         "id": "computer-use",
         "name": "Agentic Computer Use / Browser Control",
         "weight": 2,
-        "ok": false,
+        "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "unwired"
+          "status": "live"
         },
         "error": null,
-        "score": 50,
+        "score": 100,
         "evaluators": [
           {
             "id": "available",
             "name": "available",
-            "passed": false,
+            "passed": true,
             "weight": 1,
-            "detail": "status=unwired"
+            "detail": "status=live"
           },
           {
             "id": "not-failed",
@@ -525,15 +525,15 @@
     ],
     "summary": {
       "total": 13,
-      "passed": 12,
-      "failed": 1,
-      "passRate": 92,
-      "score": 97,
+      "passed": 13,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
       "byEvaluator": {
         "available": {
-          "passed": 12,
-          "failed": 1,
-          "rate": 92
+          "passed": 13,
+          "failed": 0,
+          "rate": 100
         },
         "not-failed": {
           "passed": 13,

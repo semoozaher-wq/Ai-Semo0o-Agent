@@ -1,0 +1,120 @@
+{
+  "startedAt": "2026-10-07T20:23:24.423Z",
+  "pageUrl": "http://127.0.0.1:37175/",
+  "scenarios": [
+    {
+      "name": "browser-agent-cdp",
+      "ok": true,
+      "verification": {
+        "ok": true,
+        "results": [
+          {
+            "id": "title",
+            "description": "h1 title rendered",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "counter",
+            "description": "counter incremented three times",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "greeting",
+            "description": "typed value greeted",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "scrolled",
+            "description": "page scrolled",
+            "ok": true,
+            "value": true
+          }
+        ],
+        "consoleErrors": [],
+        "networkErrors": []
+      },
+      "evidenceEvents": 24,
+      "screenshotBytes": 9631,
+      "scrolledScreenshotBytes": 2256
+    },
+    {
+      "name": "run-browser-task",
+      "ok": true,
+      "verification": {
+        "ok": true,
+        "results": [
+          {
+            "id": "title",
+            "description": "h1 title rendered",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "counter",
+            "description": "counter incremented three times",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "greeting",
+            "description": "typed value greeted",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "scrolled",
+            "description": "page scrolled",
+            "ok": true,
+            "value": true
+          }
+        ],
+        "consoleErrors": [],
+        "networkErrors": []
+      },
+      "screenshotBytes": 2256
+    },
+    {
+      "name": "browser-run-tool",
+      "ok": true,
+      "url": "https://example.com",
+      "browserToolLive": true,
+      "verification": {
+        "ok": true,
+        "results": [
+          {
+            "id": "title",
+            "description": "document has a title",
+            "ok": true,
+            "value": true
+          },
+          {
+            "id": "body",
+            "description": "document has a body",
+            "ok": true,
+            "value": true
+          }
+        ],
+        "consoleErrors": [],
+        "networkErrors": []
+      },
+      "screenshotBytes": 42504
+    }
+  ],
+  "browser": {
+    "binary": "/root/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome",
+    "pageWebSocket": "ws://127.0.0.1:36699/devtools/page/4BE8818993F59A1C46E2A2F53220AF29",
+    "browserWebSocket": "ws://127.0.0.1:36699/devtools/browser/6a843e5e-bb84-4705-ab6d-25d3e563da46"
+  },
+  "finishedAt": "2026-10-07T20:23:25.410Z",
+  "passed": true,
+  "summary": {
+    "total": 3,
+    "executed": 3,
+    "passed": 3,
+    "failed": [],
+    "skipped": []
+  }
+}

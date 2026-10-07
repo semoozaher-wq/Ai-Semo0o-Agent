@@ -1,64 +1,42 @@
-# 🚀 Ai-Semo0o-Agent — Rebuild Plan (Production-Grade AI Platform)
+# Ai-Semo0o-Agent — Four-Point Completion Plan
 
-## Phase 0 — Analysis & Setup
-- [x] Clone & inspect original repo (BodyMap Pain — Expo/RN app)
-- [x] Restore deleted files from git history
-- [x] Verify npm package availability (expo 57, RN 0.86, React 19.2, TS 6)
-- [x] Set up project config (package.json, app.json, tsconfig.json, babel, metro)
-- [x] Install dependencies
+Scope: ONLY the four points below, on the CURRENT repo. Use existing code only —
+no rebuild, no duplication, no stubs, no fake tests. Test every change, run full
+tests + typecheck + security/verification. Deliver: new/modified files only + ZIP
++ DELETE LIST + final report with evidence. FORBIDDEN to modify anything outside
+the four points.
 
-## Phase 1 — Architecture & Foundation
-- [x] Design tokens / theme system (RTL, dark+light, gradients)
-- [x] TypeScript domain types (agents, tools, tasks, store, files, chat)
-- [x] Utils (id, format, validation, safe-json, result types)
-- [x] Data catalogs (models, tools, agents, permissions, templates)
-- [x] State layer (Zustand stores: app, chat, agents, store, files, analytics)
+## Point 1 — Unify Long-Running between server and worker
+- [x] Read server.mjs + worker.mjs + long-running.mjs (confirmed divergence)
+- [x] Wire createContinuationSupervisor + longRunning:true + AGENT_MAX_CONTINUATIONS into worker.mjs
+- [x] Fix dead continuation branch in agent/runtime.mjs (lastStepIndex + catch-block hand-off)
+- [x] Add regression test proving worker agent.run schedules a continuation
+- [x] Update outdated maestro "time budget fails closed" test to the real long-running contract
+- [x] Verify parity (server vs worker handler wiring) — 273 backend tests green
 
-## Phase 2 — Services Layer (services/)
-- [x] AI core: provider abstraction (OpenAI/Anthropic/Google/local), streaming, embeddings, model registry
-- [x] Agent Engine: planner, executor, tool registry, memory, reflection, self-healing loop
-- [x] Code Analysis: static analyzer, error detector, auto-fixer (self-healing code)
-- [x] Data Engine: file scanner, 153-file audit, dataset profiler, anomaly detection
-- [x] Store service: catalog, installer, permissions, updates, ratings
-- [x] Storage/persistence service
+## Point 2 — Complete real Multi-Agent on top of EXISTING TaskGraph
+- [x] Read phase2-core/platform.mjs TaskGraph/executeTaskGraph + existing tests
+- [x] Implement real multi-agent orchestration ON TOP of TaskGraph (backend/agent/multi-agent.mjs)
+- [x] Wire it into the agent runtime (payload.multiAgent) + scorecard comment
+- [x] Add tests (roles, real tools+evidence, parallel, replan, security, turn budget, HTTP E2E) — 281 backend green
 
-## Phase 3 — UI Components (components/)
-- [x] Primitives: Text, Gradient, Screen, Card, Button, Chip, Badge, Input, Avatar, Progress, Skeleton, Icon, Divider, Rating
-- [x] Composite: StatCard, SectionHeader, AgentCard, ChatBubble, EmptyState, ToolChip, ListRow, AppHeader
-- [x] Charts: Sparkline, BarChart, DonutChart, ProgressRing (SVG, no heavy deps)
+## Point 3 — Real End-to-End Agent Benchmark
+- [x] Read scripts/agent-benchmark.mjs + ops/capability-benchmark.mjs
+- [x] Extend benchmark to cover all 3 execution strategies E2E (single-agent, multi-agent, long-running) + code-intelligence
+- [x] Add test (backend/test/agent-benchmark.e2e.test.mjs) that runs the benchmark and guards its contract
+- [x] Run it and capture real evidence (agent-benchmark.report.json — all 4 scenarios 100%)
 
-## Phase 4 — Screens (screens/)
-- [x] Dashboard (overview, stats, activity, quick actions)
-- [x] Store (Google-Play-style: categories, featured, install, permissions, updates)
-- [x] Agent detail (screenshots, reviews, permissions, install/run)
-- [x] Chat (advanced: model picker, tools, attachments, streaming)
-- [x] Agents (autonomous task builder + live run timeline)
-- [x] Files (file manager + 153-file analyzer + analytics)
-- [x] Analytics (usage, tokens, tasks, charts)
-- [x] Settings (providers, API keys, theme, language, privacy)
-- [x] screens/index.ts barrel
+## Point 4 — Add and run real Browser E2E
+- [x] Read scripts/browser-smoke.mjs + backend/browser/* (found launcher returns browser-level ws — BrowserAgent needs a page target)
+- [x] Fix launcher: return a PAGE target ws + honest browserBinaryAvailable() + opt-in BROWSER_NO_SANDBOX
+- [x] Add real Browser E2E (scripts/browser-e2e.mjs): BrowserAgent over CDP + runBrowserTask + browser.run tool
+- [x] Add test (backend/test/browser-e2e.test.mjs) — runs real browser, skips honestly without one
+- [x] Run it and capture real evidence (browser-e2e.report.json + browser-e2e.screenshot.png — 3/3 scenarios)
 
-## Phase 5 — Routing (app/ — Expo Router)
-- [x] Root layout with providers + RTL + theme
-- [x] Tab navigator + all routes wired to screens
-- [x] +not-found
-
-## Phase 6 — BodyMap Pain (preserve original as built-in agent)
-- [x] anatomy domain types (src/types/anatomy.ts)
-- [x] anatomy service (src/services/anatomy) — load 317-part map, groups, regions, search, guidance
-- [x] interactive SVG BodyMap component (front/back, male/female, tappable groups)
-- [x] Anatomy screen (welcome → map → details → results → history)
-- [x] Route app/anatomy.tsx + screens barrel
-- [x] Wire AgentDetail to launch the built-in app agent
-- [x] Keep data/anatomyPainMap.json + scripts
-
-## Phase 7 — Quality & Verification
-- [x] tsc --noEmit passes (zero errors)
-- [x] ESLint clean (0 errors, 0 warnings)
-- [x] expo-doctor / dependency check (21/21 checks passed)
-- [x] Build web export for live preview (fallback: dedicated web demo)
-
-## Phase 8 — Delivery
-- [x] README + architecture docs
-- [x] Live preview URL
-- [x] Attach deliverables
+## Verification & Delivery
+- [x] Run full test suite (all green) — 520 tests, 0 fail (legacy 80 + execution 69 + phase1 43 + frontend 22 + phase2 23 + backend 283)
+- [x] Run typecheck + security scan — typecheck EXIT 0; security-scan 323 files, no findings
+- [x] Extra verification — verify-imports backend 281/0 broken; boot smoke OK; capability scorecard 97/100 (12 live, 1 partial, 0 unwired); trial:self-improve 9/9
+- [x] ZIP of new/modified files only
+- [x] DELETE LIST
+- [x] Final report (evidence + results)

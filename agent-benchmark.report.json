@@ -1,18 +1,18 @@
 {
-  "startedAt": "2026-10-07T18:51:11.845Z",
-  "workspace": "/tmp/semo0o-agent-bench-Iu7Kyg",
+  "startedAt": "2026-10-07T20:22:22.249Z",
+  "workspace": "/tmp/semo0o-agent-bench-mfasWR",
   "steps": [
     {
       "name": "setup",
       "register": 201,
       "project": 201,
-      "projectId": "project_7844cfc2-9597-483c-b039-3b968dc211ad"
+      "projectId": "project_6ebb6ad9-5af8-49df-a6a3-136b67a31a52"
     },
     {
       "name": "enqueue agent.run",
       "status": 202,
-      "runId": "run_78f3ef5d-4190-4416-ac5b-19c3c914157e",
-      "taskId": "task_a0b4aea0-f81d-45f1-af26-bcaf928e340f"
+      "runId": "run_15259b8b-6555-45f8-8d3e-7eccc21c15d0",
+      "taskId": "task_11445fe4-5a3e-407a-92d4-08c9b8e02345"
     },
     {
       "name": "agent loop finished",
@@ -54,9 +54,106 @@
       }
     },
     {
+      "name": "enqueue multi-agent run",
+      "status": 202,
+      "runId": "run_f4ad8bc1-6e36-4d49-8831-865eccf9378b"
+    },
+    {
+      "name": "multi-agent finished",
+      "status": "completed",
+      "multiAgent": true,
+      "graphNodes": 5,
+      "nodesCompleted": 5,
+      "evidenceCount": 3
+    },
+    {
+      "name": "multi-agent benchmark",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "completed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "multi-agent-flag": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "graph-nodes": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "nodes-completed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-evidence": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "enqueue long-running run",
+      "status": 202,
+      "runId": "run_089caf7a-b243-43d2-8c5b-38d6706cd56e"
+    },
+    {
+      "name": "long-running finished",
+      "status": "completed_with_warnings",
+      "continuation": {
+        "scheduled": true,
+        "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
+        "continuations": 1
+      },
+      "continuationStatus": "completed_with_warnings",
+      "continuationContinuation": {
+        "scheduled": false,
+        "reason": "continuation_limit_reached",
+        "limit": 1
+      }
+    },
+    {
+      "name": "long-running benchmark",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "continued-not-failed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "continuation-scheduled": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "continuation-bounded": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      }
+    },
+    {
       "name": "code-intelligence benchmark",
       "workspace": {
-        "root": "/tmp/semo0o-agent-bench-Iu7Kyg",
+        "root": "/tmp/semo0o-agent-bench-mfasWR",
         "files": 3,
         "symbols": 3
       },
@@ -103,11 +200,11 @@
       ]
     }
   ],
-  "finishedAt": "2026-10-07T18:51:12.340Z",
+  "finishedAt": "2026-10-07T20:22:23.965Z",
   "agentLoop": {
     "name": "agent-loop",
-    "startedAt": "2026-10-07T18:51:11.974Z",
-    "finishedAt": "2026-10-07T18:51:11.975Z",
+    "startedAt": "2026-10-07T20:22:22.372Z",
+    "finishedAt": "2026-10-07T20:22:22.372Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -186,10 +283,183 @@
       }
     }
   },
+  "multiAgent": {
+    "name": "multi-agent",
+    "startedAt": "2026-10-07T20:22:22.423Z",
+    "finishedAt": "2026-10-07T20:22:22.423Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "specialist-dag",
+        "name": "TaskGraph of specialist agents with real tools + evidence",
+        "weight": 1,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "completed",
+          "multiAgent": true,
+          "graphNodes": 5,
+          "nodesCompleted": 5,
+          "evidenceCount": 3
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "completed",
+            "name": "completed",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=completed"
+          },
+          {
+            "id": "multi-agent-flag",
+            "name": "multi-agent-flag",
+            "passed": true,
+            "weight": 1,
+            "detail": "multiAgent=true"
+          },
+          {
+            "id": "graph-nodes",
+            "name": "graph-nodes",
+            "passed": true,
+            "weight": 1,
+            "detail": "nodes=5"
+          },
+          {
+            "id": "nodes-completed",
+            "name": "nodes-completed",
+            "passed": true,
+            "weight": 1,
+            "detail": "node_completed=5"
+          },
+          {
+            "id": "has-evidence",
+            "name": "has-evidence",
+            "passed": true,
+            "weight": 1,
+            "detail": "evidence=3"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "completed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "multi-agent-flag": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "graph-nodes": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "nodes-completed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-evidence": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
+  "longRunning": {
+    "name": "long-running",
+    "startedAt": "2026-10-07T20:22:23.681Z",
+    "finishedAt": "2026-10-07T20:22:23.681Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "continuation",
+        "name": "bounded wall-clock -> checkpoint -> continuation",
+        "weight": 1,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "completed_with_warnings",
+          "continuation": {
+            "scheduled": true,
+            "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
+            "continuations": 1
+          },
+          "continuationStatus": "completed_with_warnings",
+          "continuationContinuation": {
+            "scheduled": false,
+            "reason": "continuation_limit_reached",
+            "limit": 1
+          }
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "continued-not-failed",
+            "name": "continued-not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=completed_with_warnings"
+          },
+          {
+            "id": "continuation-scheduled",
+            "name": "continuation-scheduled",
+            "passed": true,
+            "weight": 1,
+            "detail": "scheduled=true"
+          },
+          {
+            "id": "continuation-bounded",
+            "name": "continuation-bounded",
+            "passed": true,
+            "weight": 1,
+            "detail": "reason=continuation_limit_reached"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "continued-not-failed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "continuation-scheduled": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "continuation-bounded": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
   "codeIntelligence": {
     "name": "agent-code-intelligence",
-    "startedAt": "2026-10-07T18:51:12.336Z",
-    "finishedAt": "2026-10-07T18:51:12.340Z",
+    "startedAt": "2026-10-07T20:22:23.961Z",
+    "finishedAt": "2026-10-07T20:22:23.965Z",
     "durationMs": 4,
     "tasks": [
       {
@@ -197,7 +467,7 @@
         "name": "Codebase analysis",
         "weight": 2,
         "ok": true,
-        "durationMs": 0,
+        "durationMs": 1,
         "result": {
           "ok": true,
           "output": {
@@ -230,12 +500,12 @@
         "name": "ChangeSet construction",
         "weight": 2,
         "ok": true,
-        "durationMs": 3,
+        "durationMs": 2,
         "result": {
           "ok": true,
           "output": {
-            "id": "changeset_4c0b787a-76de-4d92-b0a4-8b5c5e34e407",
-            "generatedAt": "2026-10-07T18:51:12.339Z",
+            "id": "changeset_5f927a3e-2182-41e1-9dfb-a36dde46714b",
+            "generatedAt": "2026-10-07T20:22:23.964Z",
             "goal": "agent-benchmark",
             "summary": {
               "files": 0,
@@ -352,7 +622,7 @@
         "name": "Impact analysis",
         "weight": 2,
         "ok": true,
-        "durationMs": 0,
+        "durationMs": 1,
         "result": {
           "ok": true,
           "output": {
@@ -439,7 +709,7 @@
         "name": "Deep reasoning (definition)",
         "weight": 2,
         "ok": true,
-        "durationMs": 1,
+        "durationMs": 0,
         "result": {
           "ok": true,
           "output": {
