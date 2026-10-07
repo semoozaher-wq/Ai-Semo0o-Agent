@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { id, now } from '../db/client.mjs';
+import { createStripeAdapter } from './stripe.mjs';
 
 export const PLANS = Object.freeze({
   free: Object.freeze({ id: 'free', monthlyRuns: 1000, monthlyTokens: 100000 }),
@@ -116,5 +117,7 @@ export function applyWebhookEvent(db, { provider, eventId, eventType, payload })
 
 export function requireBillingProvider(env = process.env) {
   if (!env.BILLING_PROVIDER || !env.BILLING_WEBHOOK_SECRET) throw new Error('BILLING_PROVIDER_NOT_CONFIGURED');
-  throw new Error('BILLING_PROVIDER_ADAPTER_NOT_IMPLEMENTED');
+  const provider = String(env.BILLING_PROVIDER).toLowerCase();
+  if (provider === 'stripe') return createStripeAdapter(env);
+  throw new Error(`BILLING_PROVIDER_UNSUPPORTED:${provider}`);
 }
