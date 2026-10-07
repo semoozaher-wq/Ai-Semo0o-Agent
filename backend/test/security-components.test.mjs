@@ -38,12 +38,12 @@ test('memory store isolates project retrieval', async () => {
     db.run('INSERT INTO users(id,tenant_id,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?)', 'u1', 't1', 'owner@example.test', 'test', 'owner', timestamp);
     db.run('INSERT INTO projects(id,tenant_id,owner_id,name,created_at) VALUES(?,?,?,?,?)', 'p1', 't1', 'u1', 'One', timestamp);
     db.run('INSERT INTO projects(id,tenant_id,owner_id,name,created_at) VALUES(?,?,?,?,?)', 'p2', 't1', 'u1', 'Two', timestamp);
-    memory.addDocument({ tenantId: 't1', projectId: 'p1', source: 'a', content: 'alpha workspace security' }); memory.addDocument({ tenantId: 't1', projectId: 'p2', source: 'b', content: 'beta workspace' });
-    assert.equal(memory.search({ tenantId: 't1', projectId: 'p1', query: 'alpha' })[0].source, 'a');
-    assert.equal(memory.search({ tenantId: 't1', projectId: 'p2', query: 'alpha' })[0].source, 'b');
-    assert.throws(() => memory.search({ tenantId: 'other', projectId: 'p1', query: 'alpha' }), /MEMORY_PROJECT_NOT_FOUND/);
+    await memory.addDocument({ tenantId: 't1', projectId: 'p1', source: 'a', content: 'alpha workspace security' }); await memory.addDocument({ tenantId: 't1', projectId: 'p2', source: 'b', content: 'beta workspace' });
+    assert.equal((await memory.search({ tenantId: 't1', projectId: 'p1', query: 'alpha' }))[0].source, 'a');
+    assert.equal((await memory.search({ tenantId: 't1', projectId: 'p2', query: 'alpha' }))[0].source, 'b');
+    await assert.rejects(() => memory.search({ tenantId: 'other', projectId: 'p1', query: 'alpha' }), /MEMORY_PROJECT_NOT_FOUND/);
     assert.equal(memory.exportProject('t1', 'p1').length, 1);
-    assert.equal(memory.reindexProject('t1', 'p1').indexed, 1);
+    assert.equal((await memory.reindexProject('t1', 'p1')).indexed, 1);
     assert.equal(memory.deleteExpired({ tenantId: 't1', projectId: 'p1', before: new Date(0) }).changes, 0);
     assert.equal(memory.deleteProject('t1', 'p1').changes, 1);
     assert.equal(memory.exportProject('t1', 'p1').length, 0);
