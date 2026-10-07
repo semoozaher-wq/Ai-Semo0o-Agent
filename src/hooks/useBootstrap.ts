@@ -6,6 +6,7 @@ import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
+import { runBootstrapRecovery } from '../services/chat/recovery';
 
 /** Hydrates persisted stores and exposes a recoverable startup state. */
 export function useBootstrap(): {
@@ -34,6 +35,10 @@ export function useBootstrap(): {
         if (!cancelled) {
           setError(null);
           setReady(true);
+          // Best-effort: sweep any chat thread left mid-stream by a crash or a
+          // backend restart so the UI can offer a retry instead of spinning
+          // forever. Fire-and-forget — it must never block or fail startup.
+          void runBootstrapRecovery(useChatStore.getState());
         }
       } catch (cause) {
         if (!cancelled) {
