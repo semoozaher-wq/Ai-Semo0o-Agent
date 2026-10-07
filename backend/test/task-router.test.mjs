@@ -178,3 +178,75 @@ test('TASK_TYPE_MODELS only references supported models', () => {
     for (const id of chain) assert.ok(SUPPORTED_MODELS[id], `${taskType} references unsupported ${id}`);
   }
 });
+
+/* -------------------------------------------------------------------------- */
+/*  Health isolation between independent runs / tenants                       */
+/* -------------------------------------------------------------------------- */
+
+test('fork() returns an independent router with the same routing policy', () => {
+  const base = new MaestroModelRouter();
+  const fork = base.fork();
+  assert.ok(fork instanceof MaestroModelRouter);
+  assert.notEqual(fork, base);
+  // Same policy: identical first choice and chain for every task type.
+  for (const taskType of TASK_TYPES) {
+    assert.equal(fork.route({ taskType }).model, base.route({ taskType }).model);
+    assert.deepEqual(fork.chain(taskType), base.chain(taskType));
+  }
+});
+
+test('a failure in one run\'s forked router never poisons another run (isolation)', async () => {
+  const base = new MaestroModelRouter();
+
+  // Run 1 gets its own fork and its preferred model (Claude) fails, so the run
+  // falls through to the next model and marks Claude unhealthy *in its fork*.
+  const run1 = base.fork();
+  const run1Chain = run1.chain('code');
+  assert.equal(run1Chain[0], 'claude-sonnet-4-6');
+  const outcome = await run1.runWithFallback(run1Chain, async (model) => {
+    if (model === 'claude-sonnet-4-6') throw new Error(`DOWN:${model}`);
+    return { text: 'ok', model };
+  });
+  assert.equal(outcome.model, 'gpt-5', 'run 1 falls through to its next model');
+  assert.equal(run1.route({ taskType: 'code' }).model, 'gpt-5', 'run 1 remembers the outage');
+
+  // Run 2 gets a fresh fork: the same failure must NOT change its first choice.
+  const run2 = base.fork();
+  assert.equal(run2.route({ taskType: 'code' }).model, 'claude-sonnet-4-6', 'run 2 still starts from the preferred model');
+
+  // And the shared base router is untouched too.
+  assert.equal(base.route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
+});
+
+test('two tenants forked from the same base are isolated from each other', () => {
+  const base = new MaestroModelRouter();
+  const tenantA = base.fork();
+  const tenantB = base.fork();
+
+  // Tenant A's provider outage.
+  tenantA.updateHealth('gpt-5-mini', false);
+
+  // Tenant B and the base are unaffected.
+  assert.equal(tenantB.route({ taskType: 'general' }).model, 'gpt-5-mini');
+  assert.equal(base.route({ taskType: 'general' }).model, 'gpt-5-mini');
+  // Only tenant A sees the degradation.
+  assert.notEqual(tenantA.route({ taskType: 'general' }).model, 'gpt-5-mini');
+});
+
+test('fork({ shareHealth: true }) opts back into a shared circuit breaker', () => {
+  const base = new MaestroModelRouter();
+  const shared = base.fork({ shareHealth: true });
+  shared.updateHealth('claude-sonnet-4-6', false);
+  // The shared map is the SAME map, so the base sees the outage.
+  assert.equal(base.route({ taskType: 'code' }).model, 'gpt-5');
+  // And a fresh isolated fork still does not.
+  assert.equal(base.fork().route({ taskType: 'code' }).model, 'claude-sonnet-4-6');
+});
+
+test('updateHealth on a fork does not leak into the base health map', () => {
+  const base = new MaestroModelRouter();
+  const fork = base.fork();
+  fork.updateHealth('gpt-5', false);
+  assert.equal(base.route({ taskType: 'reasoning' }).model, 'gpt-5', 'base still prefers the healthy gpt-5');
+  assert.notEqual(fork.route({ taskType: 'reasoning' }).model, 'gpt-5', 'fork avoids the model it marked unhealthy');
+});
