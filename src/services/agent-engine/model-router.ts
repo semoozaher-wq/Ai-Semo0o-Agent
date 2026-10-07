@@ -100,7 +100,21 @@ function blendedCost(model: string): number {
  * Task-type aware, health-aware, fallback-capable model router for the Maestro.
  */
 export class MaestroModelRouter {
-  private readonly health = new Map<string, boolean>();
+  private readonly health: Map<string, boolean>;
+
+  constructor(health: Map<string, boolean> = new Map()) {
+    this.health = health;
+  }
+
+  /**
+   * Return an independent router with the SAME routing policy but a FRESH health
+   * state. Each Maestro run gets its own fork so one run's provider failures can
+   * never poison an unrelated run or tenant. Pass `shareHealth: true` to opt
+   * back into a cross-run circuit breaker.
+   */
+  fork({ shareHealth = false }: { shareHealth?: boolean } = {}): MaestroModelRouter {
+    return new MaestroModelRouter(shareHealth ? this.health : new Map());
+  }
 
   /** Ordered eligible model IDs for a task type (the fallback chain). */
   chain(taskType: MaestroTaskType, criteria: MaestroRoutingInput = {}): string[] {

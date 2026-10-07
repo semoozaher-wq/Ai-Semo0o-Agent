@@ -6,8 +6,16 @@ import type { ToolDefinition } from '../../types/tool';
 import { runTool } from './tools';
 import { LLMPlanner, type LLMPlanResult } from './llm-planner';
 import {
+  maestroModelRouter,
+  type MaestroModelRouter,
+  type MaestroRoutingInput,
+  type MaestroTaskType,
+} from './model-router';
+import {
   classifyFailure,
+  recoveryActionFor,
   verifyEvidence,
+  RECOVERY_EVENTS,
   type Evidence,
   type FailureKind,
   type VerificationResult,
@@ -24,6 +32,7 @@ export type OrchestratorStatus =
 export interface OrchestratorEvent {
   at: string;
   type:
+    | 'routing_decision'
     | 'planning_started'
     | 'planning_completed'
     | 'planning_failed'
@@ -31,6 +40,8 @@ export interface OrchestratorEvent {
     | 'step_started'
     | 'tool_completed'
     | 'step_completed'
+    | 'self_healing'
+    | 'self_healing_failed'
     | 'verification_required'
     | 'run_finished';
   stepId?: string | undefined;
@@ -47,6 +58,18 @@ export interface OrchestratorInput {
   context?: string;
   signal?: { cancelled: boolean };
   maxSteps?: number;
+  /**
+   * When true (the default) the Phase E Model Router runs INSIDE this loop:
+   * it classifies the goal, picks the best model for the task type and wraps the
+   * configured providers so a failed call falls back across providers. Set to
+   * false only for tests that need to exercise the raw provider list.
+   */
+  routing?: boolean;
+  /** Injectable router (defaults to the shared singleton) for testing. */
+  modelRouter?: MaestroModelRouter;
+  /** Optional explicit task type / vision hint for the router. */
+  taskType?: MaestroTaskType;
+  needsVision?: boolean;
   /** Dangerous tools are blocked unless this callback explicitly allows them. */
   requestPermission?: (request: {
     tool: ToolDefinition;
@@ -88,6 +111,8 @@ export interface OrchestratorResult {
   costUsd: number;
   evidence: Evidence[];
   verifications: VerificationResult[];
+  /** The model actually used for the run (after Phase E routing). */
+  model?: string;
 }
 
 const emptyUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -130,11 +155,39 @@ export class AgentOrchestrator {
     const tools = input.tools ?? [];
     const maxSteps = Math.max(1, Math.min(input.maxSteps ?? 20, 20));
 
+    // ---------------------------------------------------------------------
+    // Phase E Model Router wired INSIDE the Maestro loop. The goal is
+    // classified, the best model for that task type is chosen and the
+    // configured providers are wrapped so a failed call falls back across
+    // providers (Anthropic / OpenAI / Google) with live health tracking.
+    // ---------------------------------------------------------------------
+    let model = input.model;
+    let providers = input.providers;
+    if (input.routing !== false && providers.length > 0) {
+      // Health is tracked on a PER-RUN fork of the router so a provider outage
+      // in one run can never silently poison an unrelated run or tenant. The
+      // routing policy (task-type chains) is shared; only health is isolated.
+      const router = (input.modelRouter ?? maestroModelRouter).fork();
+      const routingInput: MaestroRoutingInput = { goal: input.goal };
+      if (input.taskType) routingInput.taskType = input.taskType;
+      if (input.needsVision !== undefined) routingInput.needsVision = input.needsVision;
+      const decision = router.route(routingInput);
+      const routed = router.createRoutedProvider({ ...routingInput, providers });
+      model = decision.model;
+      providers = [routed];
+      pushEvent(event('routing_decision', {
+        taskType: decision.taskType,
+        model: decision.model,
+        provider: decision.provider,
+        chain: decision.chain,
+      }));
+    }
+
     let planned: LLMPlanResult;
     try {
       planned = await this.planner.plan(input.goal, {
-        model: input.model,
-        providers: input.providers,
+        model,
+        providers,
         tools,
         context: input.context,
         signal: undefined,
@@ -159,6 +212,7 @@ export class AgentOrchestrator {
         costUsd: 0,
         evidence,
         verifications,
+        model,
       };
     }
 
@@ -175,9 +229,10 @@ export class AgentOrchestrator {
         warnings,
         errors,
         usage: planned.usage,
-        costUsd: estimateCostUsd(input.model, planned.usage),
+        costUsd: estimateCostUsd(model, planned.usage),
         evidence,
         verifications,
+        model,
       };
     }
 
@@ -189,7 +244,7 @@ export class AgentOrchestrator {
     for (const step of plan.steps) {
       if (input.signal?.cancelled) {
         warnings.push('RUN_CANCELLED_BY_USER');
-        return this.finish('cancelled', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+        return this.finish('cancelled', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
       }
 
       pushEvent(event('step_started', { title: step.title, kind: step.kind }, step.id, step.toolId));
@@ -203,7 +258,7 @@ export class AgentOrchestrator {
       if (!tool) {
         errors.push(`UNKNOWN_TOOL:${step.toolId}`);
         pushEvent(event('tool_completed', { ok: false, simulated: false, error: 'UNKNOWN_TOOL' }, step.id, step.toolId));
-        return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+        return this.finish('failed', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
       }
 
       if (tool.dangerous) {
@@ -212,7 +267,7 @@ export class AgentOrchestrator {
         if (!allowed) {
           const message = `PERMISSION_DENIED:${tool.id}`;
           errors.push(message);
-          return this.finish('blocked', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+          return this.finish('blocked', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
         }
       }
 
@@ -270,6 +325,15 @@ export class AgentOrchestrator {
           ? verification.failureKind ?? 'VALIDATION_FAILURE'
           : classifyFailure(result.error, 'TOOL_FAILURE');
         if (attempt >= maxAttempts || !input.selfHeal) {
+          // No healer is available (or attempts are exhausted). Record the SAME
+          // `self_healing_failed` event the backend emits, carrying the bounded
+          // policy decision so the two timelines are identical.
+          pushEvent(event(RECOVERY_EVENTS.selfHealingFailed, {
+            action: recoveryActionFor({ failureKind, attempt, maxAttempts, canRepair: Boolean(input.selfHeal) }),
+            failureKind,
+            attempt,
+            reason: input.selfHeal ? 'attempts_exhausted' : 'no_healer',
+          }, step.id, step.toolId));
           errors.push(`${failureKind}:${result.error || verification.summary || step.toolId}`);
           break;
         }
@@ -281,26 +345,31 @@ export class AgentOrchestrator {
           attempt,
         });
         if (!decision || decision.action === 'block') {
+          pushEvent(event(RECOVERY_EVENTS.selfHealingFailed, { action: 'block', failureKind, attempt }, step.id, step.toolId));
           errors.push(`${failureKind}:${result.error || verification.summary || step.toolId}`);
-          return this.finish(decision?.action === 'block' ? 'blocked' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+          return this.finish(decision?.action === 'block' ? 'blocked' : 'failed', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
         }
         if (decision.toolArgs) toolArgs = decision.toolArgs;
+        // The unified recovery event: identical name and payload shape to the
+        // backend (`backend/agent/runtime.mjs`), so a timeline renders the same
+        // on both sides.
+        pushEvent(event(RECOVERY_EVENTS.selfHealing, { action: decision.action, failureKind, attempt }, step.id, step.toolId));
         warnings.push(`SELF_HEALED:${step.id}:attempt_${attempt}`);
         pushEvent(event('step_started', { recovery: decision.action, attempt: attempt + 1 }, step.id, step.toolId));
       }
 
       if (!verified) {
         const lastVerification = verifications[verifications.length - 1];
-        return this.finish(lastVerification?.status === 'UNVERIFIED' ? 'unverified' : 'failed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+        return this.finish(lastVerification?.status === 'UNVERIFIED' ? 'unverified' : 'failed', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
       }
     }
 
     if (!hasExecutableStep || !hasVerifiedEvidence) {
       pushEvent(event('verification_required', { hasExecutableStep, hasVerifiedEvidence }));
       warnings.push('NO_VERIFIED_EVIDENCE');
-      return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+      return this.finish('unverified', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
     }
-    return this.finish(warnings.length ? 'completed_with_warnings' : 'completed', plan, planned, events, outputs, warnings, errors, usage, input.model, evidence, verifications);
+    return this.finish(warnings.length ? 'completed_with_warnings' : 'completed', plan, planned, events, outputs, warnings, errors, usage, model, evidence, verifications);
   }
 
   private finish(
@@ -328,6 +397,7 @@ export class AgentOrchestrator {
       costUsd: estimateCostUsd(model, usage),
       evidence,
       verifications,
+      model,
     };
     return result;
   }
