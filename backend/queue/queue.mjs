@@ -3,9 +3,12 @@ import { id, now } from '../db/client.mjs';
 export const RUN_STATES = Object.freeze(['queued','running','waiting_approval','blocked','paused','completed','completed_with_warnings','failed','cancelled','unverified']);
 
 export class RunQueue {
-  constructor(db, { pollMs = 100, workerId = id('worker'), leaseMs = 15 * 60_000, maxAttempts = 3, concurrency = 1 } = {}) {
+  constructor(db, { pollMs = 100, workerId = id('worker'), leaseMs = 15 * 60_000, maxAttempts = 3, concurrency = 1, redact = (value) => value } = {}) {
     this.db = db; this.pollMs = pollMs; this.workerId = workerId; this.leaseMs = Math.max(10_000, Number(leaseMs));
     this.maxAttempts = Math.max(1, Number(maxAttempts)); this.concurrency = Math.max(1, Number(concurrency));
+    // `redact` is applied to every result persisted as `result_json` (including
+    // the error path) so a secret in a thrown error can never reach the database.
+    this.redact = typeof redact === 'function' ? redact : (value) => value;
     this.handlers = new Map(); this.timer = null; this.stopped = false; this.processing = 0; this.activeControllers = new Map();
   }
   register(kind, handler) { this.handlers.set(kind, handler); }
@@ -47,7 +50,7 @@ export class RunQueue {
       if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : String(error);
         if (run.attempts < this.maxAttempts) {
-          this.db.run("UPDATE runs SET status='queued', worker_id=NULL, lease_until=NULL, result_json=?, updated_at=? WHERE id=? AND status='running'", JSON.stringify({ error: message, retrying: true }), now(), run.id);
+          this.db.run("UPDATE runs SET status='queued', worker_id=NULL, lease_until=NULL, result_json=?, updated_at=? WHERE id=? AND status='running'", JSON.stringify(this.redact({ error: message, retrying: true })), now(), run.id);
           this.db.run("UPDATE tasks SET status='queued', updated_at=? WHERE id=?", now(), run.task_id);
         } else await this.finish(run, 'failed', { error: message, attempts: run.attempts });
       }
@@ -55,7 +58,7 @@ export class RunQueue {
   }
   async finish(run, status, result) {
     const timestamp = now(); this.db.transaction(() => {
-      const changed = this.db.run("UPDATE runs SET status=?, result_json=?, worker_id=NULL, lease_until=NULL, updated_at=? WHERE id=? AND status='running' AND worker_id=?", status, JSON.stringify(result ?? {}), timestamp, run.id, this.workerId);
+      const changed = this.db.run("UPDATE runs SET status=?, result_json=?, worker_id=NULL, lease_until=NULL, updated_at=? WHERE id=? AND status='running' AND worker_id=?", status, JSON.stringify(this.redact(result ?? {})), timestamp, run.id, this.workerId);
       if (changed.changes !== 1) return;
       this.db.run('UPDATE tasks SET status=?, updated_at=? WHERE id=?', status, timestamp, run.task_id);
       this.db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), run.tenant_id, `run.${status}`, 'run', run.id, JSON.stringify({ attempts: run.attempts }), timestamp);
