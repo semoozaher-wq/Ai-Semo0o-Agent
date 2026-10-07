@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { Conversation, Message, MessageStatus } from '../types/chat';
+import { Conversation, Message } from '../types/chat';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
 import { DEFAULT_MODEL_ID } from '../data/models';
 import { backendApi, ApiEvent } from '../services/api/client';
+import { sweepInterruptedChats, markInterruptedMessages, planInterruptedRetry } from '../services/chat/recovery';
 
 let streamToken = 0;
 let activeController: AbortController | null = null;
@@ -22,6 +23,7 @@ interface ChatState {
   renameConversation(id: string, title: string): void;
   send(text: string, opts?: { model?: string; mode?: 'chat' | 'agent' }): Promise<void>;
   recoverInterrupted(): Promise<number>;
+  retryInterrupted(conversationId: string): Promise<void>;
   stop(): void;
   clear(): Promise<void>;
 }
@@ -83,6 +85,33 @@ export const useChatStore = create<ChatState>((set, get) => {
       return false;
     }
   };
+  // Produce the assistant reply for an already-appended user turn. Shared by
+  // `send` and `retryInterrupted` so a retry reuses the exact same streaming,
+  // agent-run, fallback and error handling as a first attempt.
+  const generateReply = async (conversationId: string, assistantId: string, content: string, model: string, mode: 'chat' | 'agent', token: number) => {
+    const conversation = get().conversations.find((item) => item.id === conversationId);
+    try {
+      if (mode === 'chat') {
+        const streamed = await streamChat(conversationId, assistantId, content, model, conversation?.backendId, token);
+        // Streaming unavailable (older backend, proxy that buffers SSE, or an
+        // empty stream): fall back to a single-shot completion so the user
+        // still gets an answer.
+        if (!streamed && token === streamToken) {
+          const result = await backendApi.chat({ message: content, model });
+          if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
+        }
+      } else {
+        const project = await ensureProject();
+        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
+        await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId, assistantId, event); }, activeController?.signal);
+        const snapshot = await backendApi.getRun(run.runId);
+        const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
+        if (token === streamToken) patchMessage(conversationId, assistantId, { content: finalText, status: snapshot.status === 'completed' ? 'complete' : 'error', error: snapshot.status === 'completed' ? undefined : snapshot.status });
+      }
+    } catch (error) {
+      if (token === streamToken) patchMessage(conversationId, assistantId, { content: 'تعذّر تشغيل الوكيل عبر الـBackend.', status: 'error', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED' });
+    } finally { if (token === streamToken) set({ streaming: false }); persist(); }
+  };
 
   return {
     conversations: [], messages: {}, activeId: null, streaming: false, hydrated: false,
@@ -112,53 +141,40 @@ export const useChatStore = create<ChatState>((set, get) => {
       const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: mode === 'agent' ? 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…' : 'جارٍ إعداد الرد…', createdAt: nowIso(), status: 'streaming', model };
       set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(content) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: content.slice(0, 80) } : item), streaming: true }; });
       const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
-      try {
-        if (mode === 'chat') {
-          const streamed = await streamChat(conversationId, assistantId, content, model, conversation?.backendId, token);
-          // Streaming unavailable (older backend, proxy that buffers SSE, or an
-          // empty stream): fall back to a single-shot completion so the user
-          // still gets an answer.
-          if (!streamed && token === streamToken) {
-            const result = await backendApi.chat({ message: content, model });
-            if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
-          }
-        } else {
-          const project = await ensureProject();
-          const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
-          await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId!, assistantId, event); }, activeController.signal);
-          const snapshot = await backendApi.getRun(run.runId);
-          const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
-          if (token === streamToken) patchMessage(conversationId, assistantId, { content: finalText, status: snapshot.status === 'completed' ? 'complete' : 'error', error: snapshot.status === 'completed' ? undefined : snapshot.status });
-        }
-      } catch (error) {
-        if (token === streamToken) patchMessage(conversationId, assistantId, { content: 'تعذّر تشغيل الوكيل عبر الـBackend.', status: 'error', error: error instanceof Error ? error.message : 'BACKEND_AGENT_FAILED' });
-      } finally { if (token === streamToken) set({ streaming: false }); persist(); }
+      await generateReply(conversationId, assistantId, content, model, mode, token);
     },
     async recoverInterrupted() {
       // Ask the backend which threads hold a reply that was left mid-stream by a
       // crash/restart, sweep them to `interrupted`, and mirror that locally so
-      // the UI can offer a retry instead of spinning forever.
+      // the UI can offer a retry instead of spinning forever. Best-effort: any
+      // failure leaves the local state untouched.
       try {
-        const { conversations } = await backendApi.getRecoverableChats();
-        if (!conversations.length) return 0;
-        const recoveredBackendIds = new Set<string>();
-        let count = 0;
-        for (const item of conversations) {
-          try { const result = await backendApi.recoverChat(item.conversationId); count += result.recovered.length; recoveredBackendIds.add(item.conversationId); } catch { /* keep sweeping the rest */ }
-        }
-        set((state) => {
-          const messages = { ...state.messages };
-          for (const conversation of state.conversations) {
-            if (!conversation.backendId || !recoveredBackendIds.has(conversation.backendId)) continue;
-            const list = messages[conversation.id];
-            if (!list) continue;
-            messages[conversation.id] = list.map((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'pending') ? { ...message, status: 'interrupted' as MessageStatus } : message);
-          }
-          return { messages };
-        });
+        const { recoveredCount, recoveredBackendIds } = await sweepInterruptedChats(backendApi);
+        if (!recoveredBackendIds.length) return 0;
+        set((state) => ({ messages: markInterruptedMessages(state.messages, state.conversations, recoveredBackendIds) }));
         persist();
-        return count;
+        return recoveredCount;
       } catch { return 0; }
+    },
+    async retryInterrupted(conversationId) {
+      // Replay the user turn that produced the most recent interrupted reply,
+      // dropping the dead assistant message first so the thread stays coherent.
+      const plan = planInterruptedRetry(get().messages[conversationId]);
+      if (!plan) return;
+      const conversation = get().conversations.find((item) => item.id === conversationId);
+      const model = conversation?.model ?? DEFAULT_MODEL_ID;
+      const assistantId = uid('msg');
+      const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: 'جارٍ إعادة المحاولة…', createdAt: nowIso(), status: 'streaming', model };
+      set((state) => {
+        const existing = state.messages[conversationId] ?? [];
+        return {
+          messages: { ...state.messages, [conversationId]: [...existing.slice(0, plan.keepCount), assistantMessage] },
+          conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, updatedAt: nowIso() } : item),
+          streaming: true,
+        };
+      });
+      const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
+      await generateReply(conversationId, assistantId, plan.content, model, 'chat', token);
     },
     stop() { streamToken += 1; activeController?.abort(); activeController = null; set({ streaming: false }); persist(); },
     async clear() { streamToken += 1; activeController?.abort(); set({ conversations: [], messages: {}, activeId: null, streaming: false }); await storage.remove(STORAGE_KEYS.conversations); await storage.remove(STORAGE_KEYS.messages); },

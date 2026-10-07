@@ -5,6 +5,7 @@ import type {
   ApiModelsStatus,
   ApiBillingStatus,
   ApiReadyReport,
+  ApiIntegrationsStatus,
 } from '../services/api/client';
 
 /**
@@ -19,6 +20,7 @@ export interface SystemStatusState {
   tools: ApiToolsStatus | null;
   models: ApiModelsStatus | null;
   billing: ApiBillingStatus | null;
+  integrations: ApiIntegrationsStatus | null;
   ready: ApiReadyReport | null;
   readyStatus: number | null;
   loading: boolean;
@@ -31,6 +33,7 @@ export const useSystemStatusStore = create<SystemStatusState>((set) => ({
   tools: null,
   models: null,
   billing: null,
+  integrations: null,
   ready: null,
   readyStatus: null,
   loading: false,
@@ -44,16 +47,20 @@ export const useSystemStatusStore = create<SystemStatusState>((set) => ({
     set({ loading: true, error: null });
     try {
       await backendApi.ensureSession();
-      const [tools, models, billing, readiness] = await Promise.all([
+      const [tools, models, billing, readiness, integrations] = await Promise.all([
         backendApi.getToolsStatus(),
         backendApi.getModelsStatus(),
         backendApi.getBillingStatus(),
         backendApi.getReady(),
+        // The connector console is independently failable: a backend that does
+        // not expose /integrations/status must not blank the core status.
+        backendApi.getIntegrationsStatus().catch(() => null),
       ]);
       set({
         tools,
         models,
         billing,
+        integrations,
         ready: readiness.report,
         readyStatus: readiness.status,
         loading: false,
