@@ -5,6 +5,7 @@ import { maestroModelRouter, isRoutingSentinel } from '../models/task-router.mjs
 import { compileRunContext, renderGuidance, sanitizeDeep } from './context.mjs';
 import { classifyFailure, RECOVERY_EVENTS } from './recovery.mjs';
 import { isBoundedLimitError } from './long-running.mjs';
+import { createMultiAgentOrchestrator } from './multi-agent.mjs';
 import { deliverRun, DELIVERY_EVENTS } from './delivery.mjs';
 import { redactDeep, collectKnownSecrets } from '../secrets/vault.mjs';
 import { loadOverrides } from '../self-improve/store.mjs';
@@ -145,7 +146,35 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
     // (the step index is otherwise scoped to the for-loop and invisible here).
     let plan;
     let lastStepIndex = resumeFrom;
+    // Multi-Agent execution strategy: decompose the goal into a DAG of specialist
+    // agents over the EXISTING dynamic planner (`phase2-core` TaskGraph) and run it
+    // with conflict-checked parallel batches. It reuses the SAME tool registry,
+    // routed model, evidence ledger and event stream as the single-agent loop — it
+    // is a second strategy, not a rebuild.
+    const runMultiAgent = async () => {
+      let engine;
+      if (typeof resolveEngine === 'function') {
+        try { engine = await resolveEngine({ task, run }); }
+        catch (error) { emit('engine_unavailable', { error: error instanceof Error ? error.message : String(error) }); }
+      }
+      emit('planning_started', { goal: context.goal, multiAgent: true });
+      const orchestrator = createMultiAgentOrchestrator({
+        llm: routedLlm,
+        tools,
+        emit: (type, details = {}) => emit(type, details),
+        evidence: (toolId, args, result) => writeEvidence(db, run, toolId, args, result, knownSecrets),
+        costFor,
+        maxAttempts: limits.maxRetries,
+      });
+      const result = await orchestrator({ goal: context.goal, run, task, workspaceRoot, engine, model: requestedModel, signal, context: { hints: context.hints, notes: context.notes }, approvedTools });
+      const status = result.ok ? 'completed' : 'completed_with_warnings';
+      db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id('usage'), run.id, run.tenant_id, 'multi-agent', String(requestedModel ?? 'router'), result.usage.promptTokens || 0, result.usage.completionTokens || 0, result.usage.totalTokens || 0, result.cost || 0, now());
+      emit('run_finished', { status, multiAgent: true, nodes: result.graph.nodes.length, usage: result.usage, costUsd: result.cost || 0 });
+      return { status, multiAgent: true, graph: result.graph, outputs: result.outputs, usage: result.usage, costUsd: result.cost || 0 };
+    };
     try {
+      // Multi-Agent mode is an explicit, opt-in execution strategy for this run.
+      if (payload.multiAgent === true) return await runMultiAgent();
       // Record the routing decision up-front so the run stream shows which task
       // type was detected and which cross-provider chain will be used.
       try {
@@ -198,8 +227,11 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         }
       };
       for (let index = resumeFrom; index < plan.steps.length; index += 1) {
-        guard();
+        // Record the step about to run BEFORE the budget guard so a bounded stop
+        // (thrown from guard()) resumes from the correct, not-yet-finished step
+        // instead of replaying an already-completed one.
         lastStepIndex = index;
+        guard();
         const step = plan.steps[index];
         const tool = TOOL_BY_ID.get(step.toolId);
         emit('step_started', { stepId: step.id, title: step.title, toolId: step.toolId });
@@ -278,6 +310,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         // Durable progress: persist the NEXT index so a continuation resumes
         // exactly where this run stopped instead of replaying finished steps.
         checkpoint(plan, index + 1);
+        lastStepIndex = index + 1;
         if (verification.status !== 'VERIFIED') return { status: 'unverified', outputs, usage };
       }
       // --- Delivery -------------------------------------------------------
@@ -319,6 +352,15 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       // not a planner/tool failure.
       if (error && typeof error.message === 'string' && error.message.startsWith('MAESTRO_ALL_MODELS_FAILED')) {
         emit(RECOVERY_EVENTS.rerouteFailed, { attempts: error.attempts ?? [], error: error.message });
+      }
+      // Long-running autonomous execution: a bounded wall-clock stop mid-plan is
+      // NOT a failure. When the run is allowed to continue and a durable plan
+      // checkpoint exists, hand off to the ContinuationSupervisor (which enqueues
+      // a fresh run resuming from `lastStepIndex`) instead of throwing. Structural
+      // caps (step / tool-call / loop) are NOT resumable and keep throwing, so a
+      // run can never loop forever.
+      if (allowContinuation && plan && isBoundedLimitError(error)) {
+        return continueRun(plan, lastStepIndex, error.message);
       }
       throw error;
     }
