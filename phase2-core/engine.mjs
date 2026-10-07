@@ -31,6 +31,11 @@ export const DEFAULT_LIMITS = Object.freeze({
 
 const DEFAULT_COMMANDS = new Set(['git', 'node', 'npm', 'npx']);
 
+// Directory (relative to the workspace root) that holds run evidence. Every run
+// gets its own timestamped sub-directory, so the whole container is excluded
+// from checkpoints to keep evidence out of commits across runs.
+const EVIDENCE_CONTAINER = '.semo0o-evidence';
+
 // Environment variables that are safe to forward to sandboxed child processes.
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM'];
 // Names that must never reach a child process: they either let an attacker inject
@@ -116,6 +121,43 @@ function normalizeRelativePath(input) {
     throw new ExecutionError('Path traversal outside the workspace is forbidden.', 'PATH_OUTSIDE_WORKSPACE');
   }
   return normalized;
+}
+
+// Branches that represent the shared, protected integration line. Task work must
+// never be written directly to them; a dedicated task branch is created instead.
+const DEFAULT_BRANCHES = new Set(['master', 'main']);
+
+/** True when a branch name is the protected default/integration branch. */
+export function isDefaultBranch(name) {
+  return DEFAULT_BRANCHES.has(String(name ?? '').trim().toLowerCase());
+}
+
+function validateBranchName(name) {
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 200) {
+    throw new ExecutionError('A branch name between 1 and 200 characters is required.', 'INVALID_BRANCH');
+  }
+  const branch = name.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch)) {
+    throw new ExecutionError('Branch name contains characters that are not allowed.', 'INVALID_BRANCH', { branch });
+  }
+  if (
+    branch.includes('..') ||
+    branch.includes('//') ||
+    branch.includes('@{') ||
+    branch.endsWith('/') ||
+    branch.endsWith('.') ||
+    branch.endsWith('.lock')
+  ) {
+    throw new ExecutionError('Branch name is not a valid Git reference.', 'INVALID_BRANCH', { branch });
+  }
+  return branch;
+}
+
+function validateRevision(revision) {
+  if (typeof revision !== 'string' || !/^[A-Za-z0-9._/-]{1,255}$/.test(revision)) {
+    throw new ExecutionError('Invalid Git revision.', 'INVALID_REVISION');
+  }
+  return revision;
 }
 
 function commandSummary(command, args) {
@@ -302,6 +344,61 @@ export class RealWorkspace {
     }
   }
 
+  /**
+   * Bounded, permission-gated directory listing. It never follows symlinks and
+   * skips heavy/generated directories, so a scan can neither walk out of the
+   * workspace nor exhaust memory. Paths are always workspace-relative.
+   */
+  async list({ scope = '.', maxFiles = 500, maxDepth = 32 } = {}) {
+    await this.permissions.require(Capability.FILE_READ, { operation: 'list', path: scope });
+    if (!this.root) throw new ExecutionError('Workspace is not initialized.', 'NOT_INITIALIZED');
+    const limit = ensurePositiveInteger(maxFiles, 500, 'maxFiles');
+    if (limit > 5_000) throw new ExecutionError('maxFiles exceeds the safe boundary.', 'INVALID_LIMIT');
+    const depthLimit = ensurePositiveInteger(maxDepth, 32, 'maxDepth');
+    if (depthLimit > 128) throw new ExecutionError('maxDepth exceeds the safe boundary.', 'INVALID_LIMIT');
+
+    const normalizedScope = scope === undefined || scope === '' || scope === '.' ? '' : normalizeRelativePath(scope);
+    let start = this.root;
+    if (normalizedScope !== '') {
+      start = await this.#resolveExisting(normalizedScope);
+      const scopeStat = await fs.lstat(start);
+      if (scopeStat.isSymbolicLink()) throw new ExecutionError('Symlink traversal is forbidden.', 'SYMLINK_FORBIDDEN');
+      if (!scopeStat.isDirectory()) throw new ExecutionError('Only directories can be listed.', 'NOT_A_DIRECTORY');
+    }
+
+    const skipped = new Set(['node_modules', '.git', '.expo', EVIDENCE_CONTAINER]);
+    const files = [];
+    let truncated = false;
+    const visit = async (dir, relative, depth) => {
+      if (files.length >= limit) {
+        truncated = true;
+        return;
+      }
+      if (depth > depthLimit) return;
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (files.length >= limit) {
+          truncated = true;
+          return;
+        }
+        if (skipped.has(entry.name)) continue;
+        if (entry.isSymbolicLink()) continue; // never follow symlinks out of the workspace
+        const nextRelative = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await visit(path.join(dir, entry.name), nextRelative, depth + 1);
+        } else if (entry.isFile()) {
+          const info = await fs.lstat(path.join(dir, entry.name));
+          files.push({ path: nextRelative, sizeBytes: info.size });
+        }
+      }
+    };
+    await visit(start, normalizedScope, 0);
+
+    const result = { scope: normalizedScope || '.', files, truncated };
+    await this.evidence.record('workspace_listed', { scope: result.scope, files: files.length, truncated });
+    return result;
+  }
+
   async #target(normalized) {
     if (!this.root) throw new ExecutionError('Workspace is not initialized.', 'NOT_INITIALIZED');
     const target = path.resolve(this.root, ...normalized.split('/'));
@@ -449,7 +546,11 @@ export class TerminalSandbox {
       const child = spawn(executable, spawnArgs, {
         cwd: this.root,
         detached: process.platform !== 'win32',
-        env: { ...process.env, ...(request?.env ?? {}) },
+        // Never inherit the server's environment: it holds SECRETS_MASTER_KEY,
+        // provider API keys, and database paths. buildSandboxEnv forwards only an
+        // allow-list (PATH/LANG/...), pins HOME/TMPDIR inside the workspace, and
+        // drops anything matching ENV_DENYLIST.
+        env: buildSandboxEnv(this.root, request?.env ?? {}),
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -507,9 +608,11 @@ export class TerminalSandbox {
 
 /** Git operations are routed through the same bounded terminal and distinct permissions. */
 export class RealGit {
-  constructor(terminal, evidence) {
+  constructor(terminal, evidence, { exclude = [] } = {}) {
     this.terminal = terminal;
     this.evidence = evidence;
+    // Workspace-relative paths that must never be committed (run evidence, scratch).
+    this.exclude = [...new Set(exclude.filter((entry) => typeof entry === 'string' && entry.length > 0))];
   }
 
   async status() {
@@ -526,6 +629,82 @@ export class RealGit {
     return { ...result, branch: result.stdout.trim() };
   }
 
+  async listBranches() {
+    const result = await this.#run(['branch', '--format=%(refname:short)'], Capability.GIT_READ);
+    return { ...result, branches: result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) };
+  }
+
+  isDefaultBranch(name) {
+    return isDefaultBranch(name);
+  }
+
+  /** Initialise a fresh repository inside the workspace (used when no remote is given). */
+  async init({ branch } = {}) {
+    const args = ['init'];
+    if (branch) args.push(`--initial-branch=${validateBranchName(branch)}`);
+    const result = await this.#run(args, Capability.GIT_WRITE);
+    if (!result.ok) throw new ExecutionError('Unable to initialise the repository.', 'GIT_INIT_FAILED', result);
+    await this.evidence.record('git_initialized', { branch: branch ?? null });
+    return { ...result, initialized: true };
+  }
+
+  /**
+   * Clone a repository into a workspace-relative destination. Remote URLs require
+   * the network capability; a local path does not. This is the real Git checkout
+   * the lifecycle needs (status/diff/branch), unlike a file-only import.
+   */
+  async clone(url, { dest = '.', ref, depth, needsNetwork } = {}) {
+    if (typeof url !== 'string' || url.trim().length === 0 || url.length > 2048 || url.includes('\u0000')) {
+      throw new ExecutionError('A valid repository URL or path is required.', 'INVALID_REMOTE');
+    }
+    const target = normalizeRelativePath(dest === '' ? '.' : dest);
+    const args = ['clone'];
+    if (depth) args.push('--depth', String(ensurePositiveInteger(depth, 1, 'depth')));
+    if (ref) args.push('--branch', validateRevision(ref));
+    args.push('--', url.trim(), target);
+    const remote = /^(https?:|git@|ssh:|git:\/\/)/i.test(url.trim());
+    const result = await this.#run(args, Capability.GIT_WRITE, {
+      needsNetwork: needsNetwork ?? remote,
+      timeoutMs: 300_000,
+      maxOutputBytes: 2_000_000,
+    });
+    if (!result.ok) throw new ExecutionError('Git clone failed.', 'GIT_CLONE_FAILED', result);
+    await this.evidence.record('git_cloned', { url: url.trim(), dest: target, ref: ref ?? null, remote });
+    return { ...result, url: url.trim(), dest: target, ref: ref ?? null, remote };
+  }
+
+  /**
+   * Create (or check out) an independent task branch. Creating the protected
+   * default branch is refused so the integration line is never written to.
+   */
+  async createBranch(name, { from } = {}) {
+    const branch = validateBranchName(name);
+    if (isDefaultBranch(branch)) {
+      throw new ExecutionError(
+        'Refusing to create the protected default branch; task work must use a dedicated branch.',
+        'DEFAULT_BRANCH_FORBIDDEN',
+        { branch },
+      );
+    }
+    const base = from ? validateRevision(from) : undefined;
+
+    // A freshly initialised repository has an "unborn" branch with no ref, so an
+    // existence check must also consider the current symbolic HEAD.
+    const current = await this.#run(['symbolic-ref', '--quiet', 'HEAD'], Capability.GIT_READ);
+    const currentBranch = current.ok ? current.stdout.trim().replace(/^refs\/heads\//, '') : '';
+    if (currentBranch === branch) {
+      await this.evidence.record('git_branch_ready', { branch, from: base ?? 'HEAD', created: false, current: true });
+      return { ok: true, branch, from: base ?? 'HEAD', created: false, alreadyOn: true };
+    }
+
+    const exists = await this.#run(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], Capability.GIT_READ);
+    const args = exists.ok ? ['checkout', branch] : ['checkout', '-b', branch, ...(base ? [base] : [])];
+    const result = await this.#run(args, Capability.GIT_WRITE);
+    if (!result.ok) throw new ExecutionError('Unable to create or check out the task branch.', 'GIT_BRANCH_FAILED', result);
+    await this.evidence.record('git_branch_ready', { branch, from: base ?? 'HEAD', created: !exists.ok });
+    return { ...result, branch, from: base ?? 'HEAD', created: !exists.ok };
+  }
+
   async checkpoint(message) {
     if (typeof message !== 'string' || message.trim().length < 3 || message.length > 240) {
       throw new ExecutionError('Checkpoint message must be between 3 and 240 characters.', 'INVALID_CHECKPOINT');
@@ -534,7 +713,7 @@ export class RealGit {
     const changed = before.entries.filter((entry) => !entry.startsWith('##'));
     if (changed.length === 0) return { created: false, reason: 'clean_worktree', status: before };
 
-    const add = await this.#run(['add', '--all', '--', '.'], Capability.GIT_WRITE);
+    const add = await this.#run(['add', '--all', '--', '.', ...this.exclude.map((entry) => `:(exclude)${entry}`)], Capability.GIT_WRITE);
     if (!add.ok) throw new ExecutionError('Unable to stage checkpoint changes.', 'GIT_ADD_FAILED', add);
     const commit = await this.#run(['commit', '--no-gpg-sign', '-m', message.trim()], Capability.GIT_WRITE);
     if (!commit.ok) throw new ExecutionError('Unable to create checkpoint commit.', 'GIT_COMMIT_FAILED', commit);
@@ -545,13 +724,11 @@ export class RealGit {
   }
 
   async rollback(revision) {
-    if (typeof revision !== 'string' || !/^[A-Za-z0-9._/-]{1,255}$/.test(revision)) {
-      throw new ExecutionError('Invalid Git revision.', 'INVALID_REVISION');
-    }
+    const target = validateRevision(revision);
     // Deliberately does not call git clean: untracked user files must never be deleted implicitly.
-    const result = await this.#run(['reset', '--hard', revision], Capability.GIT_WRITE);
+    const result = await this.#run(['reset', '--hard', target], Capability.GIT_WRITE);
     if (!result.ok) throw new ExecutionError('Git rollback failed.', 'GIT_ROLLBACK_FAILED', result);
-    await this.evidence.record('git_rollback', { revision, result });
+    await this.evidence.record('git_rollback', { revision: target, result });
     return result;
   }
 
@@ -584,7 +761,7 @@ export class AgentExecutionEngine {
     if (!workspacePath) throw new ExecutionError('workspacePath is required.', 'INVALID_WORKSPACE');
     this.permissions = new PermissionGateway({ grants, requestApproval });
     this.evidence = new EvidenceStore(
-      evidenceDirectory ?? path.join(workspacePath, '.semo0o-evidence', randomUUID()),
+      evidenceDirectory ?? path.join(workspacePath, EVIDENCE_CONTAINER, randomUUID()),
     );
     this.files = new RealWorkspace(workspacePath, this.permissions, this.evidence);
     this.limits = limits;
@@ -603,7 +780,18 @@ export class AgentExecutionEngine {
       limits: this.limits,
       allowedCommands: this.allowedCommands,
     });
-    this.git = new RealGit(this.terminal, this.evidence);
+    // Never let run evidence or scratch files be committed by a checkpoint.
+    const excludes = ['.tmp'];
+    const relativeEvidence = path.relative(this.files.root, this.evidence.directory);
+    if (relativeEvidence && !relativeEvidence.startsWith('..') && !path.isAbsolute(relativeEvidence)) {
+      const normalized = relativeEvidence.split(path.sep).join('/');
+      excludes.push(normalized);
+      // Evidence runs live under a shared container (default .semo0o-evidence/<run>).
+      // Exclude the whole container so evidence from earlier runs is never staged.
+      const [container] = normalized.split('/');
+      if (container === EVIDENCE_CONTAINER && container !== normalized) excludes.push(container);
+    }
+    this.git = new RealGit(this.terminal, this.evidence, { exclude: excludes });
     return this;
   }
 
