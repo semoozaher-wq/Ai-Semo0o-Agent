@@ -1,0 +1,498 @@
+{
+  "startedAt": "2026-10-07T18:51:11.845Z",
+  "workspace": "/tmp/semo0o-agent-bench-Iu7Kyg",
+  "steps": [
+    {
+      "name": "setup",
+      "register": 201,
+      "project": 201,
+      "projectId": "project_7844cfc2-9597-483c-b039-3b968dc211ad"
+    },
+    {
+      "name": "enqueue agent.run",
+      "status": 202,
+      "runId": "run_78f3ef5d-4190-4416-ac5b-19c3c914157e",
+      "taskId": "task_a0b4aea0-f81d-45f1-af26-bcaf928e340f"
+    },
+    {
+      "name": "agent loop finished",
+      "status": "completed",
+      "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+      "evidenceCount": 4,
+      "toolResultEvents": 2
+    },
+    {
+      "name": "agent-loop benchmark",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "completed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-evidence": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-final": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "tools-ran": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "code-intelligence benchmark",
+      "workspace": {
+        "root": "/tmp/semo0o-agent-bench-Iu7Kyg",
+        "files": 3,
+        "symbols": 3
+      },
+      "summary": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "ok": {
+            "passed": 4,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-output": {
+            "passed": 4,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      },
+      "tasks": [
+        {
+          "id": "analyze",
+          "ok": true,
+          "score": 100
+        },
+        {
+          "id": "changeset",
+          "ok": true,
+          "score": 100
+        },
+        {
+          "id": "impact",
+          "ok": true,
+          "score": 100
+        },
+        {
+          "id": "reason",
+          "ok": true,
+          "score": 100
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-10-07T18:51:12.340Z",
+  "agentLoop": {
+    "name": "agent-loop",
+    "startedAt": "2026-10-07T18:51:11.974Z",
+    "finishedAt": "2026-10-07T18:51:11.975Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "scan-and-analyze",
+        "name": "Plan -> tool -> verify -> final",
+        "weight": 1,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "completed",
+          "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+          "evidenceCount": 4,
+          "toolResultEvents": 2
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "completed",
+            "name": "completed",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=completed"
+          },
+          {
+            "id": "has-evidence",
+            "name": "has-evidence",
+            "passed": true,
+            "weight": 1,
+            "detail": "evidence=4"
+          },
+          {
+            "id": "has-final",
+            "name": "has-final",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          },
+          {
+            "id": "tools-ran",
+            "name": "tools-ran",
+            "passed": true,
+            "weight": 1,
+            "detail": "tool_completed=2"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "completed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-evidence": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-final": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "tools-ran": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
+  "codeIntelligence": {
+    "name": "agent-code-intelligence",
+    "startedAt": "2026-10-07T18:51:12.336Z",
+    "finishedAt": "2026-10-07T18:51:12.340Z",
+    "durationMs": 4,
+    "tasks": [
+      {
+        "id": "analyze",
+        "name": "Codebase analysis",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "ok": true,
+          "output": {
+            "path": "app.js",
+            "issues": [],
+            "healthy": true
+          }
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "ok",
+            "name": "ok",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          },
+          {
+            "id": "has-output",
+            "name": "has-output",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "changeset",
+        "name": "ChangeSet construction",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 3,
+        "result": {
+          "ok": true,
+          "output": {
+            "id": "changeset_4c0b787a-76de-4d92-b0a4-8b5c5e34e407",
+            "generatedAt": "2026-10-07T18:51:12.339Z",
+            "goal": "agent-benchmark",
+            "summary": {
+              "files": 0,
+              "additions": 0,
+              "deletions": 0,
+              "created": 0,
+              "modified": 0,
+              "deleted": 0,
+              "renamed": 0,
+              "untracked": 0,
+              "conflicted": 0
+            },
+            "changes": [],
+            "impact": {
+              "changedFiles": [],
+              "directDependents": [],
+              "blastRadius": [],
+              "affectedFiles": [],
+              "affectedTests": [],
+              "affectedSymbols": [],
+              "depth": {},
+              "risk": {
+                "score": 0,
+                "level": "low",
+                "factors": [
+                  {
+                    "name": "blast_radius",
+                    "value": 0,
+                    "weight": 0
+                  },
+                  {
+                    "name": "test_coverage",
+                    "value": 0,
+                    "weight": 0
+                  },
+                  {
+                    "name": "fan_in",
+                    "value": 0,
+                    "weight": 0
+                  },
+                  {
+                    "name": "dependency_depth",
+                    "value": 0,
+                    "weight": 0
+                  }
+                ]
+              },
+              "truncated": false
+            },
+            "verification": {
+              "steps": [
+                {
+                  "id": "tests",
+                  "command": "npm test",
+                  "reason": "no directly affected tests detected; run the full suite",
+                  "required": true
+                }
+              ],
+              "required": [
+                "tests"
+              ],
+              "tests": []
+            },
+            "risk": {
+              "score": 0,
+              "level": "low",
+              "factors": [
+                {
+                  "name": "blast_radius",
+                  "value": 0,
+                  "weight": 0
+                },
+                {
+                  "name": "test_coverage",
+                  "value": 0,
+                  "weight": 0
+                },
+                {
+                  "name": "fan_in",
+                  "value": 0,
+                  "weight": 0
+                },
+                {
+                  "name": "dependency_depth",
+                  "value": 0,
+                  "weight": 0
+                }
+              ]
+            },
+            "description": "0 file(s) (+0/-0), risk low (0/100)"
+          }
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "ok",
+            "name": "ok",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          },
+          {
+            "id": "has-output",
+            "name": "has-output",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "impact",
+        "name": "Impact analysis",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "ok": true,
+          "output": {
+            "changedFiles": [
+              "app.js"
+            ],
+            "directDependents": [
+              "test/app.test.js"
+            ],
+            "blastRadius": [
+              "test/app.test.js"
+            ],
+            "affectedFiles": [
+              "app.js",
+              "test/app.test.js"
+            ],
+            "affectedTests": [
+              "test/app.test.js"
+            ],
+            "affectedSymbols": [
+              {
+                "name": "run",
+                "file": "app.js",
+                "line": 2,
+                "kind": "VariableDeclaration",
+                "parser": "typescript-ast",
+                "relation": "changed"
+              }
+            ],
+            "depth": {
+              "test/app.test.js": 1
+            },
+            "risk": {
+              "score": 22,
+              "level": "low",
+              "factors": [
+                {
+                  "name": "blast_radius",
+                  "value": 1,
+                  "weight": 0.88
+                },
+                {
+                  "name": "test_coverage",
+                  "value": 1,
+                  "weight": 16
+                },
+                {
+                  "name": "fan_in",
+                  "value": 1,
+                  "weight": 2.5
+                },
+                {
+                  "name": "dependency_depth",
+                  "value": 1,
+                  "weight": 2.5
+                }
+              ]
+            },
+            "truncated": false,
+            "description": "1 file(s) changed, 1 dependent(s) in blast radius, 1 affected test(s), risk low (22/100)"
+          }
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "ok",
+            "name": "ok",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          },
+          {
+            "id": "has-output",
+            "name": "has-output",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "reason",
+        "name": "Deep reasoning (definition)",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 1,
+        "result": {
+          "ok": true,
+          "output": {
+            "name": "run",
+            "matches": [
+              {
+                "file": "app.js",
+                "line": 2,
+                "kind": "VariableDeclaration",
+                "parser": "typescript-ast"
+              }
+            ]
+          }
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "ok",
+            "name": "ok",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          },
+          {
+            "id": "has-output",
+            "name": "has-output",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "ok": {
+          "passed": 4,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-output": {
+          "passed": 4,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
+  "passed": true
+}

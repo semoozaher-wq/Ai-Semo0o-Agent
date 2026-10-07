@@ -1,0 +1,546 @@
+{
+  "scorecard": {
+    "generatedAt": "2026-10-07T18:50:55.134Z",
+    "score": 91,
+    "level": "production",
+    "models": {
+      "configured": 0,
+      "healthy": 0,
+      "total": 0
+    },
+    "integrations": {
+      "configured": [],
+      "total": 8
+    },
+    "capabilities": [
+      {
+        "id": "codebase-understanding",
+        "name": "Smart Codebase Understanding",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "tool:code.analyze=live"
+        ]
+      },
+      {
+        "id": "dependency-graph",
+        "name": "Dependency Graph",
+        "weight": 2,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:dependencyGraph=true"
+        ]
+      },
+      {
+        "id": "impact-analysis",
+        "name": "Impact Analysis",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "tool:code.impact=live"
+        ]
+      },
+      {
+        "id": "change-intelligence",
+        "name": "Change Intelligence / ChangeSet",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "tool:code.changeset=live"
+        ]
+      },
+      {
+        "id": "long-running",
+        "name": "Long-Running Autonomous Execution",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:longRunning=true"
+        ]
+      },
+      {
+        "id": "self-healing",
+        "name": "Self-Healing + Recovery",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:selfHealing=true"
+        ]
+      },
+      {
+        "id": "deep-reasoning",
+        "name": "Deep Codebase Reasoning",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "tool:code.reason=live"
+        ]
+      },
+      {
+        "id": "multi-step-verification",
+        "name": "Multi-Step Verification",
+        "weight": 3,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:multiStepVerification=true"
+        ]
+      },
+      {
+        "id": "computer-use",
+        "name": "Agentic Computer Use / Browser Control",
+        "weight": 2,
+        "status": "unwired",
+        "score": 0,
+        "evidence": [
+          "tool:browser.run=unwired"
+        ]
+      },
+      {
+        "id": "multi-agent",
+        "name": "Multi-Agent Orchestration",
+        "weight": 2,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:multiAgent=true"
+        ]
+      },
+      {
+        "id": "agent-evaluation",
+        "name": "Agent Evaluation & Benchmark Engine",
+        "weight": 2,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:agentEvaluation=true"
+        ]
+      },
+      {
+        "id": "integrations",
+        "name": "Production-grade Integrations",
+        "weight": 2,
+        "status": "partial",
+        "score": 50,
+        "evidence": [
+          "connectors:0/8 configured"
+        ]
+      },
+      {
+        "id": "capability-benchmarking",
+        "name": "Capability Benchmarking",
+        "weight": 2,
+        "status": "live",
+        "score": 100,
+        "evidence": [
+          "runtime:capabilityBenchmarking=true"
+        ]
+      }
+    ],
+    "summary": {
+      "total": 13,
+      "live": 11,
+      "partial": 1,
+      "unwired": 1,
+      "failed": 0
+    }
+  },
+  "benchmark": {
+    "name": "capability-scorecard",
+    "startedAt": "2026-10-07T18:50:55.135Z",
+    "finishedAt": "2026-10-07T18:50:55.135Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "codebase-understanding",
+        "name": "Smart Codebase Understanding",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "dependency-graph",
+        "name": "Dependency Graph",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "impact-analysis",
+        "name": "Impact Analysis",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "change-intelligence",
+        "name": "Change Intelligence / ChangeSet",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "long-running",
+        "name": "Long-Running Autonomous Execution",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "self-healing",
+        "name": "Self-Healing + Recovery",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "deep-reasoning",
+        "name": "Deep Codebase Reasoning",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "multi-step-verification",
+        "name": "Multi-Step Verification",
+        "weight": 3,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "computer-use",
+        "name": "Agentic Computer Use / Browser Control",
+        "weight": 2,
+        "ok": false,
+        "durationMs": 0,
+        "result": {
+          "status": "unwired"
+        },
+        "error": null,
+        "score": 50,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": false,
+            "weight": 1,
+            "detail": "status=unwired"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "multi-agent",
+        "name": "Multi-Agent Orchestration",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "agent-evaluation",
+        "name": "Agent Evaluation & Benchmark Engine",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "integrations",
+        "name": "Production-grade Integrations",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "partial"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=partial"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      },
+      {
+        "id": "capability-benchmarking",
+        "name": "Capability Benchmarking",
+        "weight": 2,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "live"
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "available",
+            "name": "available",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=live"
+          },
+          {
+            "id": "not-failed",
+            "name": "not-failed",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 13,
+      "passed": 12,
+      "failed": 1,
+      "passRate": 92,
+      "score": 97,
+      "byEvaluator": {
+        "available": {
+          "passed": 12,
+          "failed": 1,
+          "rate": 92
+        },
+        "not-failed": {
+          "passed": 13,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  }
+}
