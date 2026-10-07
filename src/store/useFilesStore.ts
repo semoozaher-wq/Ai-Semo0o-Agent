@@ -50,7 +50,7 @@ const SAMPLE_SOURCES: { name: string; source: string }[] = [
   {
     name: 'src/services/store/index.ts',
     source: [
-      'const apiKey = "sk-live-abcdef123456";',
+      'const apiKey = "sk-live-abcdef123456";', // security-scan:allow possible-hardcoded-secret (demo fixture string, not a real credential)
       'try {',
       '  install();',
       '} catch (e) {}',
