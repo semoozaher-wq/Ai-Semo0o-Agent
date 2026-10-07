@@ -10,6 +10,10 @@ import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.
 import { assertSafeUrlResolved, assertWorkspacePath } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
 import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from './connectors.mjs';
+import { buildProjectIntelligence } from '../../phase2-core/platform.mjs';
+import { analyzeImpact, describeImpact } from '../../phase2-core/impact.mjs';
+import { buildChangeSet, describeChangeSet } from '../../phase2-core/changeset.mjs';
+import { CodebaseReasoner } from '../../phase2-core/reasoning.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -125,10 +129,28 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   // atomic writes). Engine-only tools fail closed when no engine is supplied.
   const engineTools = createEngineToolHandlers();
   const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply']);
+  // Code-intelligence tools degrade (rather than fail closed) when no per-task
+  // engine is supplied, so they are reported `partial` instead of `live`.
+  const enginePartial = new Set(['code.changeset']);
   const withEngine = (toolId, fallback) => async (args, context = {}) => {
     if (context.engine) return engineTools[toolId](args, context);
     if (fallback) return fallback(args, context);
     return engineTools[toolId](args, context); // throws ENGINE_REQUIRED (fail closed)
+  };
+  // Shared, TTL-bounded project index so a burst of code-intelligence tool calls
+  // (impact + reason + changeset in one plan) indexes the workspace once instead
+  // of three times. `refresh:true` forces a rebuild and a failed build is dropped
+  // from the cache so the next call retries instead of caching the rejection.
+  const indexCache = new Map();
+  const indexTtlMs = Math.max(0, Number(process.env.CODE_INDEX_TTL_MS ?? 10000) || 0);
+  const projectIndex = (root, { refresh = false } = {}) => {
+    const key = path.resolve(root);
+    const cached = indexCache.get(key);
+    if (!refresh && cached && Date.now() - cached.at < indexTtlMs) return cached.promise;
+    const promise = buildProjectIntelligence(key);
+    indexCache.set(key, { at: Date.now(), promise });
+    promise.catch(() => { if (indexCache.get(key)?.promise === promise) indexCache.delete(key); });
+    return promise;
   };
   if (tavily) tools.set('web.search', async (args) => await tavily(args));
   tools.set('web.scrape', async (args) => ({ output: await fetchText(args) }));
@@ -169,6 +191,47 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   });
   tools.set('pdf.extract', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); return { output: { path: safe, text: await runPdfText(resolved, Number(args.maxChars ?? 200000)) } }; });
   tools.set('code.analyze', async (args, context) => { const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = await readFile(resolved, 'utf8'); const issues = []; for (const [pattern, rule] of [[/TODO|FIXME|XXX/g, 'todo-comment'], [/\beval\s*\(/g, 'eval-usage'], [/console\.(log|debug)\s*\(/g, 'no-console'], [/api[_-]?key\s*[:=]\s*['"]/ig, 'hardcoded-secret']]) { const matches = content.match(pattern); if (matches?.length) issues.push({ rule, count: matches.length }); } return { output: { path: safe, issues, healthy: issues.length === 0 } }; });
+  // Impact Analysis: blast radius of a set of changed files over the project index.
+  tools.set('code.impact', async (args, context) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const intelligence = await projectIndex(context.workspaceRoot, { refresh: args.refresh === true });
+    const impact = analyzeImpact(intelligence, { changedFiles: args.changedFiles, maxDepth: args.maxDepth });
+    return { output: { ...impact, description: describeImpact(impact) } };
+  });
+  // Change Intelligence: structured ChangeSet from the workspace Git status/diff,
+  // enriched with the impact analysis and a verification plan. Uses the real
+  // engine Git when present; degrades to an empty (honest) status otherwise.
+  tools.set('code.changeset', async (args, context) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const intelligence = await projectIndex(context.workspaceRoot, { refresh: args.refresh === true });
+    let status = [];
+    let diff = '';
+    if (context.engine?.git) {
+      try { status = (await context.engine.git.status()).entries ?? []; } catch { status = []; }
+      try { diff = (await context.engine.git.diff()).stdout ?? ''; } catch { diff = ''; }
+    }
+    const changeSet = buildChangeSet({ status, diff, intelligence, goal: args.goal });
+    return { output: { ...changeSet, description: describeChangeSet(changeSet) } };
+  });
+  // Deep Codebase Reasoning: definition / references / trace / explain / search
+  // over the project index. Lexical reference scanning reads real files (real
+  // line numbers); without a reader it stays structural (no invented lines).
+  tools.set('code.reason', async (args, context) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const root = context.workspaceRoot;
+    const intelligence = await projectIndex(root, { refresh: args.refresh === true });
+    const reasoner = new CodebaseReasoner(intelligence, {
+      read: async (relative) => { const { resolved } = await workspacePath(root, relative); return readFile(resolved, 'utf8'); },
+    });
+    const mode = String(args.mode || 'auto');
+    const target = args.target || args.question;
+    if (mode === 'definition') return { output: reasoner.definition(target) };
+    if (mode === 'references') return { output: await reasoner.references(target) };
+    if (mode === 'trace') return { output: reasoner.trace(args.from, args.to) };
+    if (mode === 'explain') return { output: await reasoner.explain(target) };
+    if (mode === 'search') return { output: { results: reasoner.search(args.question) } };
+    return { output: await reasoner.answer(args.question) };
+  });
   tools.set('doc.summarize', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path); const content = (await readFile(resolved, 'utf8')).slice(0, 120000); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Summarize faithfully. Do not invent facts.' }, { role: 'user', content: `Summarize this document in ${args.length || 'medium'} length:\n${content}` }], signal: context.signal }); return { output: { path: safe, summary: response.text, usage: response.usage } }; });
   tools.set('translate', async (args, context) => { if (!llm) throw new Error('SERVER_LLM_REQUIRED'); const response = await llm.complete({ model: context.model, messages: [{ role: 'system', content: 'Translate accurately and return only the translation.' }, { role: 'user', content: `Target language: ${args.target}\nText:\n${args.text}` }], signal: context.signal }); return { output: { translation: response.text, usage: response.usage } }; });
   // Connector-backed tools. Each handler resolves its provider from the
