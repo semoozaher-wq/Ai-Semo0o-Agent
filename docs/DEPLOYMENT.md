@@ -200,12 +200,31 @@ Run `verify` after every `backup`, and rehearse `restore` on a scratch copy — 
 npm run typecheck       # tsc --noEmit
 npm run lint            # expo lint
 npm run security:scan   # scripts/security-scan.mjs
-npm run test:backend    # 108 node:test cases (capability + contract + E2E + readiness)
-npm test                # full suite
+npm run test:backend    # node:test cases (capability + contract + E2E + readiness)
+npm test                # full suite (legacy harness + execution + phase1 + frontend + phase2 + backend + pain-map)
 npm run build           # expo export --platform web
 ```
 
 A release is deployable only when all gates are green. See the P5 report for the latest evidence.
+
+### 7.1 The release gate is test-driven, not deploy-driven
+
+A successful Vercel deployment is **not** the release gate. Two independent,
+test-driven gates must pass:
+
+1. **CI (`.github/workflows/ci.yml` + `.github/workflows/quality.yml`)** runs the
+   full suite on **both** the declared minimum Node (`22.5`, the first release
+   with `node:sqlite`) **and** the exact production runtime (`22.11.0`, pinned in
+   `backend/Dockerfile` and `render.yaml`). A regression on either version fails
+   the build instead of shipping.
+2. **The Vercel build itself** runs `npm run release:gate` before it exports the
+   frontend (`vercel.json` → `buildCommand`). `release:gate` is
+   `typecheck + test:phase1 + test:frontend`, so the frontend cannot be published
+   when the TypeScript build or the agent-engine/API contracts regress. If the
+   gate fails, the Vercel build fails and the previous deployment stays live.
+
+The backend has its own gate: Render runs `healthCheckPath: /health` and the same
+CI suite before a backend deploy is considered releasable.
 
 ---
 
