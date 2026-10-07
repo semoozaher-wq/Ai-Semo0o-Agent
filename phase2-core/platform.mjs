@@ -152,8 +152,14 @@ const symbolPattern = /\b(?:export\s+)?(?:async\s+)?(?:function|class|interface|
 
 export async function buildProjectIntelligence(root, options = {}) {
   const files = [];
+  // Additive bound: callers (e.g. the code-intelligence tools) can cap the number
+  // of source files indexed so a huge workspace cannot make an index build
+  // unbounded. Defaults to unbounded, so existing callers are unaffected.
+  const maxFiles = Number.isFinite(options.maxFiles) && options.maxFiles > 0 ? Math.floor(options.maxFiles) : Infinity;
+  let truncated = false;
   const walk = async (directory) => {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (files.length >= maxFiles) { truncated = true; return; }
       if (['node_modules', '.git', 'dist', '.expo'].includes(entry.name)) continue;
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) await walk(full);
@@ -199,7 +205,7 @@ export async function buildProjectIntelligence(root, options = {}) {
   const graph = imports.filter((edge) => edge.resolved).map(({ from, resolved }) => ({ from, to: resolved }));
   const tests = files.filter((file) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(file)).map((file) => path.relative(root, file));
   const testMapping = tests.map((test) => ({ test, importedSources: graph.filter((edge) => edge.from === test).map((edge) => edge.to), likelySources: graph.filter((edge) => edge.from === test).map((edge) => edge.to) }));
-  return { generatedAt: now(), root, files: files.map((file) => path.relative(root, file)), symbols, imports, importGraph: graph, dependencyGraph: graph, testMapping, parser: ts ? 'typescript-ast' : 'lexical-fallback' };
+  return { generatedAt: now(), root, files: files.map((file) => path.relative(root, file)), symbols, imports, importGraph: graph, dependencyGraph: graph, testMapping, parser: ts ? 'typescript-ast' : 'lexical-fallback', truncated };
 }
 
 async function resolveImport(root, importer, specifier) {
