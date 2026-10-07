@@ -11,6 +11,7 @@ import { createUser } from '../auth/security.mjs';
 
 // ---------------------------------------------------------------------------
 // Full agent lifecycle E2E: Goal -> Plan -> Execute -> Test -> Repair -> Verify
+//                            -> Delivery
 //
 // The existing suites each cover PART of the loop:
 //   * agent-runtime-engine.test.mjs : Goal -> Plan -> Execute -> Test -> Verify
@@ -22,7 +23,10 @@ import { createUser } from '../auth/security.mjs';
 // HTTP server, the real run queue, the real isolated task workspace and the real
 // AgentExecutionEngine: the first verification command FAILS, the engine asks the
 // LLM to diagnose the failure, the LLM returns a corrected operation, the edit is
-// re-applied and re-tested, and only then is the run marked completed.
+// re-applied and re-tested, and only then is the run marked completed. Finally
+// the verified work is DELIVERED: committed to the isolated task branch as a
+// checkpoint and recorded as a delivery artifact, with the protected default
+// branch left untouched.
 // ---------------------------------------------------------------------------
 
 const PASSWORD = 'correct horse battery staple';
@@ -102,7 +106,7 @@ async function waitFor(check, { timeoutMs = 25_000, intervalMs = 40 } = {}) {
   }
 }
 
-test('full lifecycle: Goal -> Plan -> Execute -> Test -> Repair -> Verify through the real engine', async () => {
+test('full lifecycle: Goal -> Plan -> Execute -> Test -> Repair -> Verify -> Delivery through the real engine', async () => {
   const source = await makeSourceRepo();
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-lifecycle-e2e-'));
   const db = new Database(path.join(dir, 'agent.sqlite'));
@@ -180,6 +184,34 @@ test('full lifecycle: Goal -> Plan -> Execute -> Test -> Repair -> Verify throug
     assert.ok(types.includes('permission_requested'), 'approval gate');
     assert.ok(types.includes('step_completed'), 'Verify');
     assert.ok(finished.events.some((event) => event.type === 'tool_completed' && event.payload_json.includes('"ok":true')), 'the repaired tool call must report ok');
+
+    // --- Delivery ---------------------------------------------------------
+    // After Verify, the run must DELIVER: commit the verified change to the
+    // isolated task branch as a checkpoint and record the delivery artifact.
+    assert.ok(types.includes('delivery_completed'), 'the Delivery stage must be emitted');
+    const delivery = finished.result?.delivery;
+    assert.ok(delivery, 'the run result must include the delivery artifact');
+    assert.equal(delivery.delivered, true, JSON.stringify(delivery));
+    assert.equal(delivery.branch, `semo0o/task/${taskId}`);
+    assert.ok(delivery.revision, 'delivery must report the commit revision');
+    assert.ok(
+      Array.isArray(delivery.changed) && delivery.changed.some((entry) => entry.includes('app.js')),
+      `delivery must list the changed file: ${JSON.stringify(delivery.changed)}`,
+    );
+    assert.equal(delivery.diff.available, true);
+    assert.ok(delivery.diff.stdout.includes('module.exports = 3'), 'the delivery diff must contain the verified change');
+
+    // The checkpoint really landed on the task branch...
+    assert.equal(git(taskWorkspace, ['rev-parse', 'HEAD']), delivery.revision);
+    assert.match(git(taskWorkspace, ['log', '-1', '--pretty=%s']), /^semo0o: deliver/);
+    // ...and the protected default branch is still untouched.
+    assert.equal(git(taskWorkspace, ['rev-parse', 'main']), mainTip);
+
+    // The delivery event carries the branch + revision and no fake state.
+    const deliveryEvent = finished.events.find((event) => event.type === 'delivery_completed');
+    assert.ok(deliveryEvent, 'delivery_completed event must exist');
+    assert.ok(deliveryEvent.payload_json.includes(`semo0o/task/${taskId}`), deliveryEvent.payload_json);
+    assert.ok(deliveryEvent.payload_json.includes('"delivered":true'), deliveryEvent.payload_json);
   } finally {
     queue.stop();
     await new Promise((resolve) => app.server.close(resolve));
