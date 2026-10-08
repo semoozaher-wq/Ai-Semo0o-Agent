@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme, useThemeController } from '../theme';
 import {
@@ -9,9 +9,9 @@ import {
   AgentCard,
   EmptyState,
   ListRow,
+  Composer,
 } from '../components/composite';
 import { Badge } from '../components/ui/Badge';
-import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Gradient } from '../components/ui/Gradient';
 import { Icon } from '../components/ui/Icon';
@@ -27,7 +27,9 @@ import { useAnalyticsStore, computeTotals } from '../store/useAnalyticsStore';
 import { useChatStore } from '../store/useChatStore';
 import { QUICK_ACTIONS } from '../data/quickActions';
 import { featuredAgents } from '../data/agents';
-import { getModel, getProvider } from '../data/models';
+import { PROVIDERS, getModel, getProvider, modelsByProvider } from '../data/models';
+import { ProviderId } from '../types/model';
+import { Attachment } from '../types/chat';
 import { formatCompact, formatNumber } from '../utils/format';
 
 function greeting(): string {
@@ -43,6 +45,7 @@ export function Dashboard() {
   const router = useRouter();
 
   const settings = useAppStore((s) => s.settings);
+  const setActiveModel = useAppStore((s) => s.setActiveModel);
   const tasks = useAgentsStore((s) => s.tasks);
   const installed = useStoreStore((s) => s.installed);
   const files = useFilesStore((s) => s.files);
@@ -50,6 +53,10 @@ export function Dashboard() {
   const usage = useAnalyticsStore((s) => s.usage);
   const send = useChatStore((s) => s.send);
   const newConversation = useChatStore((s) => s.newConversation);
+  const streaming = useChatStore((s) => s.streaming);
+  const stop = useChatStore((s) => s.stop);
+
+  const [modelOpen, setModelOpen] = React.useState(false);
 
   const totals = computeTotals(usage);
   const model = getModel(settings.activeModel);
@@ -63,6 +70,12 @@ export function Dashboard() {
   const startChat = (prompt?: string) => {
     if (!newConversation()) return;
     if (prompt) void send(prompt);
+    router.push('/chat');
+  };
+
+  const startChatWithAttachments = (text: string, attachments: Attachment[]) => {
+    if (!newConversation()) return;
+    if (text || attachments.length > 0) void send(text, { attachments });
     router.push('/chat');
   };
 
@@ -130,30 +143,32 @@ export function Dashboard() {
                   شغّل وكلاء أذكياء لتنفيذ المهام المعقّدة تلقائيًا — بحث، برمجة، تحليل بيانات، وتقارير.
                 </Text>
 
-                <View style={styles.heroActions}>
-                  <Button
-                    label="ابدأ مهمة"
-                    icon="flash"
-                    variant="secondary"
-                    onPress={() => router.push('/agents')}
-                    style={{ backgroundColor: '#FFFFFF' }}
-                  />
-                  <Button
-                    label="محادثة جديدة"
-                    icon="chatbubbles-outline"
-                    variant="ghost"
-                    onPress={() => startChat()}
+                <View
+                  style={[
+                    styles.composerCard,
+                    { backgroundColor: theme.colors.background, borderRadius: theme.radius.xl },
+                  ]}
+                >
+                  <Composer
+                    onSubmit={startChatWithAttachments}
+                    busy={streaming}
+                    onStop={stop}
+                    placeholder="اكتب فكرتك أو مهمتك… أو أرفق ملفًا أو رابطًا"
                   />
                 </View>
 
-                {provider && model ? (
-                  <View style={styles.heroModel}>
-                    <View style={[styles.dot, { backgroundColor: provider.accent }]} />
-                    <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: theme.fontSize.sm }}>
-                      النموذج النشط: {model.name}
-                    </Text>
-                  </View>
-                ) : null}
+                <Pressable
+                  onPress={() => setModelOpen(true)}
+                  style={styles.heroModel}
+                  accessibilityRole="button"
+                  accessibilityLabel="اختر النموذج"
+                >
+                  <View style={[styles.dot, { backgroundColor: provider?.accent ?? '#FFFFFF' }]} />
+                  <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: theme.fontSize.sm }}>
+                    {model ? model.name : 'اختر النموذج'}
+                  </Text>
+                  <Icon name="chevron-down" size={14} color="rgba(255,255,255,0.9)" />
+                </Pressable>
               </View>
             </Gradient>
           </Card>
@@ -387,6 +402,79 @@ export function Dashboard() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal visible={modelOpen} transparent animationType="slide" onRequestClose={() => setModelOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setModelOpen(false)}>
+          <Pressable
+            style={[
+              styles.sheet,
+              { backgroundColor: theme.colors.backgroundElevated, borderColor: theme.colors.border },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.sheetHandle} />
+            <Text variant="subtitle" weight="bold" style={{ marginBottom: theme.spacing.md }}>
+              اختر النموذج
+            </Text>
+            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
+              {(Object.keys(PROVIDERS) as ProviderId[]).map((pid) => {
+                const prov = PROVIDERS[pid];
+                const models = modelsByProvider(pid);
+                if (models.length === 0) return null;
+                return (
+                  <View key={pid} style={{ marginBottom: theme.spacing.lg }}>
+                    <View style={styles.provHeader}>
+                      <View style={[styles.dot, { backgroundColor: prov.accent }]} />
+                      <Text variant="label" weight="semibold">
+                        {prov.nameAr}
+                      </Text>
+                      {!prov.requiresApiKey ? <Badge label="بدون مفتاح" tone="success" /> : null}
+                    </View>
+                    {models.map((m) => {
+                      const active = m.id === settings.activeModel;
+                      return (
+                        <Pressable
+                          key={m.id}
+                          onPress={() => {
+                            setActiveModel(m.id);
+                            setModelOpen(false);
+                          }}
+                          style={[
+                            styles.modelRow,
+                            {
+                              borderColor: active ? theme.colors.primary : theme.colors.border,
+                              backgroundColor: active ? theme.colors.primarySoft : theme.colors.surface,
+                              borderRadius: theme.radius.lg,
+                            },
+                          ]}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <View style={styles.modelNameRow}>
+                              <Text variant="body" weight="semibold">
+                                {m.name}
+                              </Text>
+                              {m.recommended ? <Badge label="موصى به" tone="accent" /> : null}
+                            </View>
+                            <Text variant="caption" tone="muted" numberOfLines={2} style={{ marginTop: 2 }}>
+                              {m.description}
+                            </Text>
+                            <View style={styles.modelCaps}>
+                              <Badge label={`${Math.round(m.contextWindow / 1000)}K سياق`} tone="neutral" />
+                              <Badge label={`سرعة ${m.speed}/5`} tone="info" />
+                              <Badge label={`جودة ${m.quality}/5`} tone="primary" />
+                            </View>
+                          </View>
+                          {active ? <Icon name="checkmark-circle" size={22} tone="primary" /> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }
@@ -410,12 +498,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
   },
-  heroActions: { flexDirection: 'row', gap: 10, marginTop: 20, flexWrap: 'wrap' },
-  heroModel: { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
+  composerCard: { marginTop: 20, padding: 6 },
+  heroModel: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 },
   dot: { width: 8, height: 8, borderRadius: 4, marginEnd: 8 },
   statsRow: { flexDirection: 'row', gap: 12 },
   quickCard: { width: 108, alignItems: 'center', paddingVertical: 16, paddingHorizontal: 8 },
   quickIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   divider: { height: StyleSheet.hairlineWidth },
+  backdrop: { flex: 1, backgroundColor: 'rgba(4,5,12,0.55)', justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, borderTopWidth: StyleSheet.hairlineWidth },
+  sheetHandle: { width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(128,128,128,0.4)', alignSelf: 'center', marginBottom: 16 },
+  provHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  modelRow: { flexDirection: 'row', alignItems: 'center', padding: 12, marginBottom: 8, borderWidth: 1 },
+  modelNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  modelCaps: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
 });
