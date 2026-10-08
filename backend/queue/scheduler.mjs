@@ -23,6 +23,8 @@ import { id, now } from '../db/client.mjs';
 // =============================================================================
 
 export const TRIGGER_KINDS = Object.freeze(['cron', 'interval', 'once']);
+/** Missed-run policies: skip the missed slot, coalesce it into one run, or replay each slot. */
+export const MISSED_RUN_POLICIES = Object.freeze(['skip', 'catchup', 'run_all']);
 
 const CRON_FIELDS = Object.freeze(['minute', 'hour', 'dom', 'month', 'dow']);
 const CRON_RANGES = Object.freeze({ minute: [0, 59], hour: [0, 23], dom: [1, 31], month: [1, 12], dow: [0, 6] });
@@ -92,9 +94,10 @@ export function normalizeSchedule(kind, schedule) {
 }
 
 /**
- * The next time a trigger should fire, strictly after `from` (UTC). Returns null
- * for a `once` trigger whose moment has already passed. Pure and side-effect free
- * so it is trivially unit-testable.
+ * The next time a trigger should fire, strictly after `from`. Cron schedules are
+ * evaluated in the trigger's `timezone` (default UTC) so "09:00" means 09:00
+ * *local* and stays correct across DST. Returns null for a `once` trigger whose
+ * moment has already passed. Pure and side-effect free so it is unit-testable.
  */
 export function computeNextRun(trigger, from = new Date()) {
   const fromMs = from.getTime();
@@ -109,7 +112,7 @@ export function computeNextRun(trigger, from = new Date()) {
     const steps = Math.floor((fromMs - anchor) / intervalMs) + 1;
     return new Date(anchor + steps * intervalMs);
   }
-  if (trigger.kind === 'cron') return nextCronTime(parseCron(trigger.schedule), from);
+  if (trigger.kind === 'cron') return nextCronTimeInZone(parseCron(trigger.schedule), from, trigger.timezone || 'UTC');
   throw new Error('TRIGGER_KIND_INVALID');
 }
 
@@ -132,19 +135,109 @@ export function nextCronTime(parsed, from = new Date()) {
   return null;
 }
 
+// --- Timezone-aware cron -----------------------------------------------------
+// A cron schedule is a *wall-clock* specification ("09:00"), so it must be
+// evaluated in the trigger's timezone, not UTC. These helpers convert between a
+// real UTC instant and the local wall-clock of an IANA timezone using Intl, so
+// DST is handled by the platform's own tz database (no dependency).
+
+/** True when `timeZone` is a valid IANA zone the runtime understands. */
+export function isValidTimeZone(timeZone) {
+  if (!timeZone || timeZone === 'UTC') return true;
+  try { new Intl.DateTimeFormat('en-US', { timeZone }); return true; } catch { return false; }
+}
+
+/** Offset (ms) = localWallClockAsUTC - actualUTC for `instantMs` in `timeZone`. */
+function tzOffsetMs(instantMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(instantMs));
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+  const asUtc = Date.UTC(Number(map.year), Number(map.month) - 1, Number(map.day), Number(map.hour) % 24, Number(map.minute), Number(map.second));
+  return asUtc - instantMs;
+}
+
+/** Convert a local wall-clock (a Date whose UTC fields ARE the wall-clock) to the real UTC instant. */
+function localWallClockToUtc(wallMs, timeZone) {
+  let offset = tzOffsetMs(wallMs, timeZone);
+  offset = tzOffsetMs(wallMs - offset, timeZone); // second pass resolves DST boundaries
+  return wallMs - offset;
+}
+
+/**
+ * Next cron fire time strictly after `from`, evaluated in `timeZone` (IANA name).
+ * Falls back to UTC evaluation for 'UTC'/unknown zones. Pure.
+ */
+export function nextCronTimeInZone(parsed, from = new Date(), timeZone = 'UTC') {
+  if (!timeZone || timeZone === 'UTC' || !isValidTimeZone(timeZone)) return nextCronTime(parsed, from);
+  const offset = tzOffsetMs(from.getTime(), timeZone);
+  const wall = new Date(from.getTime() + offset); // local wall-clock as pseudo-UTC
+  wall.setUTCSeconds(0, 0);
+  wall.setUTCMinutes(wall.getUTCMinutes() + 1);
+  const limit = wall.getTime() + 366 * 4 * 86_400_000;
+  while (wall.getTime() <= limit) {
+    if (!parsed.month.has(wall.getUTCMonth() + 1)) { wall.setUTCMonth(wall.getUTCMonth() + 1, 1); wall.setUTCHours(0, 0, 0, 0); continue; }
+    const domMatch = parsed.dom.has(wall.getUTCDate());
+    const dowMatch = parsed.dow.has(wall.getUTCDay());
+    const dayMatch = (!parsed.domStar && !parsed.dowStar) ? (domMatch || dowMatch) : (domMatch && dowMatch);
+    if (!dayMatch) { wall.setUTCDate(wall.getUTCDate() + 1); wall.setUTCHours(0, 0, 0, 0); continue; }
+    if (!parsed.hour.has(wall.getUTCHours())) { wall.setUTCHours(wall.getUTCHours() + 1, 0, 0, 0); continue; }
+    if (!parsed.minute.has(wall.getUTCMinutes())) { wall.setUTCMinutes(wall.getUTCMinutes() + 1, 0, 0); continue; }
+    const result = new Date(localWallClockToUtc(wall.getTime(), timeZone));
+    if (result.getTime() > from.getTime()) return result;
+    wall.setUTCMinutes(wall.getUTCMinutes() + 1); // DST overlap can map backwards; advance and retry
+  }
+  return null;
+}
+
+// Bounded-parallelism helper: run `worker` over `items` with at most `limit`
+// invocations in flight at once. Used to cap how many triggers fire concurrently
+// so a large backlog (e.g. after downtime) cannot fan out all at once.
+async function runBounded(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const size = Math.max(1, Math.min(limit, items.length));
+  const runners = Array.from({ length: size }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 /**
  * The scheduler. It owns no timer of its own beyond a poll interval and does no
  * work unless `start()` is called, so constructing it in the server/worker is
  * side-effect free and safe for tests.
+ *
+ * Hardening over the original UTC-only version:
+ *   - cron schedules are evaluated in the trigger's IANA `timezone` (DST-aware);
+ *   - a `missed_run_policy` decides what happens when a trigger is overdue
+ *     because the process was down (skip the backlog / catch up gradually /
+ *     replay every missed slot);
+ *   - a fire that throws is retried with bounded exponential backoff before the
+ *     schedule is advanced, so a transient failure (e.g. a missing workspace)
+ *     does not silently drop a run;
+ *   - `concurrency` bounds how many triggers are fired at once per tick.
  */
 export class TriggerScheduler {
-  constructor(db, { queue, pollMs = 30_000, now: nowFn = () => new Date(), maxPerTick = 50 } = {}) {
+  constructor(db, {
+    queue, pollMs = 30_000, now: nowFn = () => new Date(), maxPerTick = 50,
+    concurrency = 5, maxRetries = 3, retryBackoffMs = 60_000, retryBackoffMaxMs = 3_600_000, maxCatchup = 50,
+  } = {}) {
     if (!db || !queue) throw new Error('SCHEDULER_DEPENDENCIES_REQUIRED');
     this.db = db;
     this.queue = queue;
     this.pollMs = Math.max(1_000, Number(pollMs) || 30_000);
     this.now = typeof nowFn === 'function' ? nowFn : () => new Date();
     this.maxPerTick = Math.max(1, Number(maxPerTick) || 50);
+    this.concurrency = Math.max(1, Number(concurrency) || 5);
+    this.maxRetries = Math.max(0, Number.isFinite(Number(maxRetries)) ? Number(maxRetries) : 3);
+    this.retryBackoffMs = Math.max(1_000, Number(retryBackoffMs) || 60_000);
+    this.retryBackoffMaxMs = Math.max(this.retryBackoffMs, Number(retryBackoffMaxMs) || 3_600_000);
+    this.maxCatchup = Math.max(1, Number(maxCatchup) || 50);
     this.timer = null;
     this.stopped = false;
     this.processing = false;
@@ -175,55 +268,113 @@ export class TriggerScheduler {
         'SELECT * FROM scheduled_triggers WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at LIMIT ?',
         nowIso, this.maxPerTick,
       );
-      for (const trigger of due) {
-        try { this.fire(trigger); ids.push(trigger.id); }
-        catch (error) { this.recordError(trigger, error); }
-      }
+      // Bounded fan-out: at most `concurrency` triggers fire at once. `fire` is
+      // synchronous today, but the pool still bounds how many run+task rows are
+      // written back-to-back, and it keeps the contract correct if a fire ever
+      // becomes async (network/DB round-trip).
+      await runBounded(due, this.concurrency, async (trigger) => {
+        try { const result = await this.fire(trigger); ids.push(trigger.id); return result; }
+        catch (error) { this.recordError(trigger, error); return null; }
+      });
     } finally {
       this.processing = false;
     }
     return { fired: ids.length, ids };
   }
 
-  /** Create the task and enqueue its run for one trigger fire (idempotent). */
+  /**
+   * Create the task(s) and enqueue the run(s) for one trigger fire (idempotent).
+   *
+   * The `missed_run_policy` decides what to do when the trigger is overdue:
+   *   - `catchup` (default): fire the due slot once, then advance exactly one
+   *     slot, so a long backlog drains gradually one run per tick;
+   *   - `skip`: fire the due slot once, then jump `next_run_at` to the first slot
+   *     strictly after now (the intermediate missed slots are dropped);
+   *   - `run_all`: fire the due slot *and* every missed slot up to `maxCatchup`
+   *     now, then jump to the first slot after now.
+   * Idempotency is per (trigger, slot), so re-firing the same snapshot collapses
+   * to a single run.
+   */
   fire(trigger) {
     const fireTime = trigger.next_run_at || this.now().toISOString();
-    const next = computeNextRun(trigger, new Date(fireTime));
+    const policy = MISSED_RUN_POLICIES.includes(trigger.missed_run_policy) ? trigger.missed_run_policy : 'catchup';
+    const nowDate = this.now();
     return this.db.transaction(() => {
       const workspaceId = trigger.workspace_id
         || this.db.get('SELECT id FROM workspaces WHERE project_id=? ORDER BY created_at LIMIT 1', trigger.project_id)?.id;
       if (!workspaceId) throw new Error('TRIGGER_WORKSPACE_REQUIRED');
-      const payload = { ...JSON.parse(trigger.payload_json || '{}'), goal: trigger.goal, triggerId: trigger.id };
-      const kind = payload.kind || 'agent.run';
-      const taskId = id('task');
+
+      // Which slots to actually run. Always the current due slot; `run_all` also
+      // replays the backlog that accumulated while the scheduler was down.
+      const slots = [fireTime];
+      if (policy === 'run_all') {
+        let cursor = computeNextRun(trigger, new Date(fireTime));
+        while (cursor && cursor.getTime() <= nowDate.getTime() && slots.length < this.maxCatchup) {
+          slots.push(cursor.toISOString());
+          cursor = computeNextRun(trigger, cursor);
+        }
+      }
+
+      // Where the schedule resumes. `catchup` advances a single slot from the
+      // fired time (backlog drains gradually); `skip`/`run_all` jump past now.
+      let next;
+      if (policy === 'catchup') next = computeNextRun(trigger, new Date(fireTime));
+      else next = computeNextRun(trigger, nowDate);
+
       const timestamp = now();
+      let lastTaskId = null;
+      for (const slot of slots) {
+        const payload = { ...JSON.parse(trigger.payload_json || '{}'), goal: trigger.goal, triggerId: trigger.id, scheduledFor: slot };
+        const kind = payload.kind || 'agent.run';
+        const taskId = id('task');
+        this.db.run(
+          'INSERT INTO tasks(id,tenant_id,project_id,workspace_id,created_by,goal,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+          taskId, trigger.tenant_id, trigger.project_id, workspaceId, trigger.created_by, trigger.goal, 'queued', timestamp, timestamp,
+        );
+        this.queue.enqueue({ taskId, tenantId: trigger.tenant_id, payload, kind, idempotencyKey: `trigger:${trigger.id}:${slot}` });
+        lastTaskId = taskId;
+      }
+
       this.db.run(
-        'INSERT INTO tasks(id,tenant_id,project_id,workspace_id,created_by,goal,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
-        taskId, trigger.tenant_id, trigger.project_id, workspaceId, trigger.created_by, trigger.goal, 'queued', timestamp, timestamp,
-      );
-      this.queue.enqueue({ taskId, tenantId: trigger.tenant_id, payload, kind, idempotencyKey: `trigger:${trigger.id}:${fireTime}` });
-      this.db.run(
-        'UPDATE scheduled_triggers SET last_run_at=?, next_run_at=?, run_count=run_count+1, last_error=NULL, updated_at=? WHERE id=?',
-        fireTime, next ? next.toISOString() : null, timestamp, trigger.id,
+        'UPDATE scheduled_triggers SET last_run_at=?, next_run_at=?, run_count=run_count+?, last_error=NULL, retry_count=0, updated_at=? WHERE id=?',
+        fireTime, next ? next.toISOString() : null, slots.length, timestamp, trigger.id,
       );
       this.db.run(
         'INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)',
         id('audit'), trigger.tenant_id, 'trigger.fired', 'scheduled_trigger', trigger.id,
-        JSON.stringify({ fireTime, next: next ? next.toISOString() : null, taskId }), timestamp,
+        JSON.stringify({ fireTime, next: next ? next.toISOString() : null, taskId: lastTaskId, policy, fired: slots.length }), timestamp,
       );
-      return { taskId, nextRunAt: next ? next.toISOString() : null };
+      return { taskId: lastTaskId, nextRunAt: next ? next.toISOString() : null, fired: slots.length, policy };
     });
   }
 
-  /** Record a fire failure without wedging the scheduler; advance the schedule. */
+  /**
+   * Record a fire failure. A transient failure is retried with bounded
+   * exponential backoff (up to `max_retries`) before the schedule is advanced,
+   * so a run is not silently dropped; once retries are exhausted the schedule
+   * moves on and the counter resets.
+   */
   recordError(trigger, error) {
     const timestamp = now();
+    const message = String(error?.message || error).slice(0, 500);
+    const retryCount = Number(trigger.retry_count || 0);
+    const maxRetries = Number.isFinite(Number(trigger.max_retries)) ? Number(trigger.max_retries) : this.maxRetries;
+    if (retryCount < maxRetries) {
+      const backoff = Math.min(this.retryBackoffMaxMs, this.retryBackoffMs * 2 ** retryCount);
+      const nextRetry = new Date(this.now().getTime() + backoff);
+      this.db.run(
+        'UPDATE scheduled_triggers SET last_error=?, next_run_at=?, retry_count=retry_count+1, updated_at=? WHERE id=?',
+        message, nextRetry.toISOString(), timestamp, trigger.id,
+      );
+      return { retried: true, attempt: retryCount + 1, nextRunAt: nextRetry.toISOString() };
+    }
     let next = null;
-    try { next = computeNextRun(trigger, new Date()); } catch { next = null; }
+    try { next = computeNextRun(trigger, this.now()); } catch { next = null; }
     this.db.run(
-      'UPDATE scheduled_triggers SET last_error=?, next_run_at=?, updated_at=? WHERE id=?',
-      String(error?.message || error).slice(0, 500), next ? next.toISOString() : null, timestamp, trigger.id,
+      'UPDATE scheduled_triggers SET last_error=?, next_run_at=?, retry_count=0, updated_at=? WHERE id=?',
+      message, next ? next.toISOString() : null, timestamp, trigger.id,
     );
+    return { retried: false, attempt: retryCount, nextRunAt: next ? next.toISOString() : null };
   }
 }
 
