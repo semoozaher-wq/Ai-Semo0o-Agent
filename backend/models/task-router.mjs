@@ -45,17 +45,23 @@ export const TASK_TYPE_MODELS = Object.freeze({
   general: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-2.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'],
 });
 
-// Non-catalog hints (latency, vision) used only for tie-breaking inside a tier.
-// Cost and context come straight from the catalog so they can never drift.
+// Capability + cost/latency/quality hints used for capability-aware selection and
+// objective-driven ranking. `vision`/`tools`/`json` are hard capability flags
+// (a model that lacks one is filtered out when the request requires it); `quality`
+// is a heuristic 0..1 score used only when the caller optimizes for quality. Cost
+// and context come straight from the catalog so they can never drift.
 const MODEL_META = Object.freeze({
-  'gpt-5-mini': { vision: true, latencyMs: 120 },
-  'gpt-5': { vision: true, latencyMs: 220 },
-  'gemini-2.5-flash-lite': { vision: true, latencyMs: 90 },
-  'gemini-3-flash-preview': { vision: true, latencyMs: 100 },
-  'gemini-3.1-pro-preview': { vision: true, latencyMs: 200 },
-  'claude-haiku-4-5': { vision: true, latencyMs: 140 },
-  'claude-sonnet-4-6': { vision: true, latencyMs: 260 },
+  'gpt-5-mini': { vision: true, tools: true, json: true, quality: 0.78, latencyMs: 120 },
+  'gpt-5': { vision: true, tools: true, json: true, quality: 0.95, latencyMs: 220 },
+  'gemini-2.5-flash-lite': { vision: true, tools: true, json: true, quality: 0.6, latencyMs: 90 },
+  'gemini-3-flash-preview': { vision: true, tools: true, json: true, quality: 0.82, latencyMs: 100 },
+  'gemini-3.1-pro-preview': { vision: true, tools: true, json: true, quality: 0.92, latencyMs: 200 },
+  'claude-haiku-4-5': { vision: true, tools: true, json: true, quality: 0.75, latencyMs: 140 },
+  'claude-sonnet-4-6': { vision: true, tools: true, json: true, quality: 0.93, latencyMs: 260 },
 });
+
+/** The optimization objectives `route()` understands. `balanced` = the default priority policy. */
+export const ROUTE_OBJECTIVES = Object.freeze(['balanced', 'quality', 'cost', 'latency']);
 
 // Deterministic, dependency-free goal classification. Ordered most-specific first.
 const TASK_HINTS = Object.freeze({
@@ -95,6 +101,9 @@ function descriptorFor(id, priority) {
     priority,
     healthy: true,
     vision: meta.vision !== false,
+    tools: meta.tools !== false,
+    json: meta.json !== false,
+    quality: typeof meta.quality === 'number' ? meta.quality : 0.7,
     contextTokens: spec.context,
     costPer1k: meta.costPer1k ?? (spec.input + spec.output) / 2,
     latencyMs: meta.latencyMs ?? 150,
@@ -172,11 +181,43 @@ export class MaestroModelRouter {
     return this.routerFor(resolved).rank({ ...criteria, taskType: resolved }).map((item) => item.id);
   }
 
-  /** Full routing decision for a request. */
+  /**
+   * The full capability/cost/latency/quality profile of a model. Callers (and the
+   * UI) use this to decide whether a model can serve a request before routing.
+   */
+  capabilities(id) {
+    const descriptor = this.descriptorFor(id, 0);
+    return {
+      id: descriptor.id,
+      provider: descriptor.provider,
+      vision: descriptor.vision,
+      tools: descriptor.tools,
+      json: descriptor.json,
+      quality: descriptor.quality,
+      contextTokens: descriptor.contextTokens,
+      costPer1k: descriptor.costPer1k,
+      latencyMs: descriptor.latencyMs,
+    };
+  }
+
+  /**
+   * Full routing decision for a request.
+   *
+   * Beyond the task-type policy, the caller can steer selection with:
+   *   - `requires`  : hard capability requirements, e.g. `{ tools: true, json: true, vision: true }`.
+   *                   A model lacking a required capability is filtered out (fail-closed).
+   *   - `optimize`  : `'quality' | 'cost' | 'latency' | 'balanced'` (default). Non-balanced
+   *                   objectives re-order the chain by that objective (priority breaks ties).
+   *   - `contextTokens` / `maxCost` / `maxLatencyMs` / `needsVision`: existing hard filters.
+   *
+   * The default (no `requires`, no `optimize`) is byte-for-byte the previous
+   * task-type policy, so existing callers are unaffected.
+   */
   route(criteria = {}) {
     const taskType = TASK_TYPES.includes(criteria.taskType) ? criteria.taskType : classifyTask(criteria);
+    const optimize = ROUTE_OBJECTIVES.includes(criteria.optimize) ? criteria.optimize : 'balanced';
     this.syncHealth();
-    const ranked = this.routerFor(taskType).rank({ ...criteria, taskType });
+    const ranked = this.routerFor(taskType).rank({ ...criteria, taskType, optimize });
     if (!ranked.length) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
     const chain = ranked.map((item) => item.id);
     return {
@@ -184,7 +225,10 @@ export class MaestroModelRouter {
       model: chain[0],
       provider: ranked[0].provider,
       chain,
-      reason: `task_type=${taskType}`,
+      optimize,
+      requires: criteria.requires ?? null,
+      capabilities: this.capabilities(chain[0]),
+      reason: `task_type=${taskType}${optimize !== 'balanced' ? ` optimize=${optimize}` : ''}`,
     };
   }
 
