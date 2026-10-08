@@ -1,5 +1,5 @@
 import { id, now, hash } from '../db/client.mjs';
-import { DANGEROUS_TOOLS, TOOL_BY_ID, fromProviderToolName, openAITools } from './catalog.mjs';
+import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG, fromProviderToolName, openAITools } from './catalog.mjs';
 import { normalizeModelId } from '../models/catalog.mjs';
 import { maestroModelRouter, isRoutingSentinel } from '../models/task-router.mjs';
 import { compileRunContext, renderGuidance, sanitizeDeep } from './context.mjs';
@@ -9,6 +9,7 @@ import { createMultiAgentOrchestrator } from './multi-agent.mjs';
 import { deliverRun, DELIVERY_EVENTS } from './delivery.mjs';
 import { redactDeep, collectKnownSecrets } from '../secrets/vault.mjs';
 import { loadOverrides } from '../self-improve/store.mjs';
+import { reflectOnRun, loadLessons } from './reflection.mjs';
 
 const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
 function addUsage(a = {}, b = {}) { return { promptTokens: (a.promptTokens || 0) + (b.promptTokens || 0), completionTokens: (a.completionTokens || 0) + (b.completionTokens || 0), totalTokens: (a.totalTokens || 0) + (b.totalTokens || 0) }; }
@@ -36,11 +37,11 @@ function planPrompt(goal, { allowed = [...TOOL_BY_ID.keys()], hints = [], notes 
   const guidance = renderGuidance({ hints, notes });
   return `You are the secure planner for an AI agent. Return ONLY JSON with this shape: {"reasoning":string,"steps":[{"id":string,"title":string,"toolId":string,"args":object}]. The toolId MUST be exactly one of: ${allowed.join(', ')}. Choose only tools that directly help. Never invent a tool name. Never choose email.send, calendar.schedule, image.generate, or image.analyze unless the user explicitly asks and the connector is available. For code delivery, inspect with git.status/git.diff/git.log, snapshot with git.checkpoint, and ship+verify with github.pr.create and github.ci.status. Use memory.search/memory.write for durable project context, web.extract/doc.extract for research, and code.review for LLM code review. Never choose slack.post, teams.post, discord.post, notion.page.create, webhook.post, github.issue.create, github.issue.comment, github.pr.create, git.checkpoint, or memory.write unless the user explicitly asks and the connector is configured.${guidance ? `\nLearned guidance (from verified past runs):\n${guidance}` : ''} Goal:\n${goal}`;
 }
-function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys())) {
+function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys()), byId = TOOL_BY_ID) {
   if (!raw || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > 12) throw new Error('PLANNER_INVALID_STEP_COUNT');
   const steps = raw.steps.map((step, index) => {
     const toolId = String(step.toolId || '');
-    if (!TOOL_BY_ID.has(toolId)) throw new Error(`PLANNER_UNKNOWN_TOOL:${toolId}`);
+    if (!byId.has(toolId)) throw new Error(`PLANNER_UNKNOWN_TOOL:${toolId}`);
     if (!allowed.has(toolId)) throw new Error(`PLANNER_DISABLED_TOOL:${toolId}`);
     if (!step.args || typeof step.args !== 'object' || Array.isArray(step.args)) throw new Error(`PLANNER_INVALID_ARGS:${index}`);
     return { id: String(step.id || `step_${index + 1}`), title: String(step.title || toolId), toolId, args: step.args };
@@ -54,6 +55,13 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
   const knownSecrets = Array.isArray(secrets) ? secrets : [];
   const redact = (value) => redactDeep(value, knownSecrets);
   const runAgent = async ({ run, payload, signal }) => {
+    // The merged tool view: the compiled-in catalog PLUS any plugin tools the
+    // operator registered at boot (backend/tools/plugins.mjs). When no registry
+    // view is available this is exactly the static catalog, so behaviour is
+    // unchanged for every existing tool.
+    const view = typeof tools.view === 'function'
+      ? tools.view()
+      : { byId: TOOL_BY_ID, all: TOOL_CATALOG, dangerous: DANGEROUS_TOOLS, openAI: openAITools };
     // Hard caps are never exceeded, even when a self-improvement override asks for
     // more. Overrides may only move a limit within these caps.
     const caps = { maxSteps: 12, maxToolCalls: 48, maxRetries: 3, maxTokens: 250000, maxCostUsd: 100, timeoutMs: 30 * 60_000, maxReplans: 2 };
@@ -73,12 +81,18 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       if (!(field in limits) || !Number.isFinite(value)) continue;
       limits[field] = Math.min(Math.max(1, value), caps[field]);
     }
-    const allowedTools = new Set([...TOOL_BY_ID.keys()].filter((toolId) => !overrides.disabledTools.has(toolId)));
+    const allowedTools = new Set([...view.byId.keys()].filter((toolId) => !overrides.disabledTools.has(toolId)));
     if (Object.values(limits).some((value) => !Number.isFinite(value) || value <= 0)) throw new Error('AGENT_LIMITS_INVALID');
     const deadline = Date.now() + limits.timeoutMs;
     const task = db.get('SELECT * FROM tasks WHERE id=?', run.task_id);
     const workspace = db.get('SELECT * FROM workspaces WHERE id=?', task?.workspace_id);
     const context = compileRunContext({ task, workspace, payload, overrides });
+    // Cross-run reflection: surface the most recent lessons distilled from this
+    // project's previous runs as extra planner guidance (bounded, fail-soft).
+    try {
+      const lessons = loadLessons(db, { tenantId: run.tenant_id, projectId: task?.project_id, limit: 5 });
+      if (lessons.length) context.notes = [...context.notes, ...lessons];
+    } catch { /* reflection is advisory: never block a run on it */ }
     const workspaceRoot = context.workspaceRoot;
     if (!workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
     // Resolve the requested model. A sentinel ("auto"/"default"/"test"/empty) means
@@ -194,13 +208,13 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
         guard();
         planner = await complete({ model: requestedModel ?? undefined, messages: [{ role: 'system', content: planPrompt(context.goal, { allowed: [...allowedTools], hints: context.hints, notes: context.notes }) }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
-        try { plan = normalizePlan(parseJson(planner.text), context.goal, allowedTools); break; }
+        try { plan = normalizePlan(parseJson(planner.text), context.goal, allowedTools, view.byId); break; }
         catch (error) { emit(RECOVERY_EVENTS.planningFailed, { attempt, error: error.message }); if (attempt === limits.maxRetries) throw error; emit(RECOVERY_EVENTS.selfHealing, { action: 'replan', failureKind: classifyFailure(error, 'PLANNING_FAILURE'), attempt }); }
       }
       if (plan.steps.length > limits.maxSteps) throw new Error('AGENT_STEP_LIMIT_EXCEEDED');
       checkpoint(plan, resumeFrom);
       emit('planning_completed', { provider: planner.provider, model: planner.model, requestedModel: planner.requestedModel, substituted: planner.substituted === true, routedModel: planner.routedModel, routeTaskType: planner.routeTaskType, routeChain: planner.routeChain, routeAttempts: planner.routeAttempts, steps: plan.steps.length, usage: planner.usage });
-      const toolSchemas = openAITools();
+      const toolSchemas = view.openAI();
       // Link the agent to the Phase 1 task workspace: resolve the per-task
       // AgentExecutionEngine once per run and hand it to every tool call. When no
       // resolver is configured (or it fails), tools fall back to their plain,
@@ -219,7 +233,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         try {
           const prompt = `${planPrompt(currentPlan.goal, { allowed: [...allowedTools], hints: context.hints, notes: context.notes })}\n\nA previous step FAILED. Produce a SHORT recovery plan (1-3 steps) that works around the failure using only the allowed tools. Do not repeat the exact same failing call.\nFailed step: ${JSON.stringify({ id: step.id, toolId: step.toolId, error })}`;
           const response = await complete({ model: requestedModel ?? undefined, messages: [{ role: 'system', content: prompt }], signal });
-          const parsed = normalizePlan(parseJson(response.text), currentPlan.goal, allowedTools);
+          const parsed = normalizePlan(parseJson(response.text), currentPlan.goal, allowedTools, view.byId);
           return parsed.steps;
         } catch (recoveryError) {
           emit(RECOVERY_EVENTS.selfHealingFailed, { action: 'replan', error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError) });
@@ -233,9 +247,9 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         lastStepIndex = index;
         guard();
         const step = plan.steps[index];
-        const tool = TOOL_BY_ID.get(step.toolId);
+        const tool = view.byId.get(step.toolId);
         emit('step_started', { stepId: step.id, title: step.title, toolId: step.toolId });
-        if (DANGEROUS_TOOLS.has(step.toolId) && !approvedTools.has(step.toolId)) {
+        if (view.dangerous.has(step.toolId) && !approvedTools.has(step.toolId)) {
           const approvalId = id('approval');
           db.run('INSERT INTO approvals(id,run_id,requested_by,capability,decision,reason,created_at) VALUES(?,?,?,?,?,?,?)', approvalId, run.id, task.created_by, step.toolId, 'pending', `Agent requests ${step.toolId}: ${step.title}`, now());
           checkpoint(plan, index);
@@ -365,7 +379,28 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       throw error;
     }
   };
+  // After a run reaches a terminal state, distil a bounded set of lessons from
+  // its OWN events and persist them so the NEXT run for the project can plan
+  // around them. This is strictly advisory: it runs after the result is computed
+  // and any failure is swallowed, so it can never change or break a run.
+  const reflect = (input, result) => {
+    try {
+      if (!input?.run) return;
+      const events = db.all('SELECT type,payload_json FROM run_events WHERE run_id=? ORDER BY created_at', input.run.id);
+      reflectOnRun({ db, run: input.run, result, events });
+    } catch { /* reflection is best-effort */ }
+  };
   // The result is persisted verbatim as `runs.result_json`, so it is redacted once
   // more on the way out — covering the final answer and the collected outputs.
-  return async (input) => redact(await runAgent(input));
+  return async (input) => {
+    let result;
+    try {
+      result = await runAgent(input);
+    } catch (error) {
+      reflect(input, { status: 'failed', error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    reflect(input, result);
+    return redact(result);
+  };
 }
