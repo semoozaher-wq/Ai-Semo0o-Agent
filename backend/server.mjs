@@ -7,9 +7,13 @@ import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
+import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS } from './queue/scheduler.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { DistributedRateLimiter, applySecurityHeaders } from './security/http.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
+import { loadPluginsFromEnv } from './tools/plugins.mjs';
+import { TOOL_BY_ID } from './agent/catalog.mjs';
+import { listReflections } from './agent/reflection.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
@@ -148,6 +152,18 @@ function assertRunAccess(db, run, user) {
   const project = task ? db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', task.project_id, user.tenantId) : null;
   assertProjectAccess(project, user);
   return task;
+}
+// Present a scheduled trigger with its payload decoded (never expose raw JSON).
+function triggerView(row) {
+  if (!row) return null;
+  let payload = {};
+  try { payload = JSON.parse(row.payload_json || '{}'); } catch { payload = {}; }
+  return {
+    id: row.id, tenantId: row.tenant_id, projectId: row.project_id, workspaceId: row.workspace_id,
+    name: row.name, kind: row.kind, schedule: row.schedule, goal: row.goal, payload,
+    enabled: row.enabled === 1, nextRunAt: row.next_run_at, lastRunAt: row.last_run_at,
+    runCount: row.run_count, lastError: row.last_error, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
 }
 // Read-only Git state for a task's workspace, reusing the Phase 1 execution
 // runtime. Evidence is written to a temp directory so the checkout stays clean.
@@ -306,6 +322,18 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   // run instead of being reported as a failure. Bounded by AGENT_MAX_CONTINUATIONS.
   const continuation = createContinuationSupervisor({ db, queue: runQueue, maxContinuations: Number(process.env.AGENT_MAX_CONTINUATIONS || 5) });
   runQueue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, longRunning: true, ...(modelRouter ? { modelRouter } : {}) })));
+  // Extension SDK: load operator-provided tool plugins (TOOL_PLUGINS_DIR) into the
+  // live registry. Fail-soft and isolated: a broken plugin is reported, never
+  // fatal, and it can never overwrite a first-party tool id.
+  const pluginsReady = loadPluginsFromEnv({ registry: tools, reservedIds: new Set(TOOL_BY_ID.keys()) })
+    .catch(() => ({ loaded: [], failed: [], skipped: [] }));
+  // Scheduled / recurring autonomy. Constructed here (side-effect free) so the
+  // trigger routes can use it; started alongside the queue below.
+  const scheduler = new TriggerScheduler(db, {
+    queue: runQueue,
+    pollMs: Number(process.env.TRIGGER_POLL_MS || 30_000),
+    maxPerTick: Number(process.env.TRIGGER_MAX_PER_TICK || 50),
+  });
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
     response.setHeader('x-request-id', requestId);
@@ -865,6 +893,79 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           return send(response, 200, runQueue.get(run.id, user.tenantId));
         }
       }
+      // --- Scheduled / recurring autonomy (Trigger Scheduler) ---------------
+      // A trigger is a durable definition of WHEN to start a run. Firing a
+      // trigger creates an ordinary task + queued run, so scheduled work is
+      // processed by the same worker as everything else.
+      if (parts[0] === 'triggers') {
+        if (method === 'GET' && parts.length === 1) {
+          const rows = db.all('SELECT * FROM scheduled_triggers WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200', user.tenantId);
+          return send(response, 200, { triggers: rows.map(triggerView) });
+        }
+        if (method === 'POST' && parts.length === 1) {
+          const input = await body(request);
+          const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', input.projectId, user.tenantId);
+          assertProjectAccess(project, user);
+          const kind = validateText(input.kind || 'cron', 'TRIGGER_KIND', 16);
+          if (!TRIGGER_KINDS.includes(kind)) throw new Error('TRIGGER_KIND_INVALID');
+          const schedule = normalizeSchedule(kind, validateText(input.schedule, 'TRIGGER_SCHEDULE', 200));
+          const name = validateText(input.name, 'TRIGGER_NAME', 200);
+          const goal = validateText(input.goal, 'GOAL', 4000);
+          const workspaceId = input.workspaceId ? validateText(input.workspaceId, 'WORKSPACE_ID', 128) : null;
+          if (workspaceId && !db.get('SELECT id FROM workspaces WHERE id=? AND project_id=?', workspaceId, project.id)) throw new Error('NOT_FOUND');
+          const payload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) ? input.payload : {};
+          const enabled = input.enabled === false ? 0 : 1;
+          const triggerId = id('trigger');
+          const timestamp = now();
+          const next = enabled ? computeNextRun({ kind, schedule, created_at: timestamp }, new Date()) : null;
+          db.transaction(() => {
+            db.run(
+              'INSERT INTO scheduled_triggers(id,tenant_id,project_id,workspace_id,created_by,name,kind,schedule,goal,payload_json,enabled,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+              triggerId, user.tenantId, project.id, workspaceId, user.id, name, kind, schedule, goal, JSON.stringify(payload), enabled, next ? next.toISOString() : null, timestamp, timestamp,
+            );
+            db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'trigger.created', 'scheduled_trigger', triggerId, JSON.stringify({ kind, schedule }), timestamp);
+          });
+          return send(response, 201, triggerView(db.get('SELECT * FROM scheduled_triggers WHERE id=?', triggerId)));
+        }
+        if (parts[1]) {
+          const trigger = db.get('SELECT * FROM scheduled_triggers WHERE id=? AND tenant_id=?', parts[1], user.tenantId);
+          if (!trigger) throw new Error('NOT_FOUND');
+          if (method === 'POST' && parts[2] === 'run') {
+            return send(response, 202, scheduler.fire({ ...trigger, next_run_at: trigger.next_run_at || now() }));
+          }
+          if (method === 'PATCH' && parts.length === 2) {
+            const input = await body(request);
+            const fields = [];
+            const params = [];
+            if (input.name !== undefined) { fields.push('name=?'); params.push(validateText(input.name, 'TRIGGER_NAME', 200)); }
+            if (input.goal !== undefined) { fields.push('goal=?'); params.push(validateText(input.goal, 'GOAL', 4000)); }
+            const kind = input.kind !== undefined ? validateText(input.kind, 'TRIGGER_KIND', 16) : trigger.kind;
+            const schedule = (input.schedule !== undefined || input.kind !== undefined)
+              ? normalizeSchedule(kind, validateText(input.schedule ?? trigger.schedule, 'TRIGGER_SCHEDULE', 200))
+              : trigger.schedule;
+            if (input.kind !== undefined || input.schedule !== undefined) { fields.push('kind=?', 'schedule=?'); params.push(kind, schedule); }
+            if (input.payload !== undefined && input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)) { fields.push('payload_json=?'); params.push(JSON.stringify(input.payload)); }
+            const enabled = input.enabled === undefined ? trigger.enabled : (input.enabled ? 1 : 0);
+            if (input.enabled !== undefined) { fields.push('enabled=?'); params.push(enabled); }
+            const next = enabled ? computeNextRun({ ...trigger, kind, schedule }, new Date()) : null;
+            fields.push('next_run_at=?'); params.push(next ? next.toISOString() : null);
+            fields.push('updated_at=?'); params.push(now());
+            params.push(trigger.id, user.tenantId);
+            db.run(`UPDATE scheduled_triggers SET ${fields.join(',')} WHERE id=? AND tenant_id=?`, ...params);
+            return send(response, 200, triggerView(db.get('SELECT * FROM scheduled_triggers WHERE id=?', trigger.id)));
+          }
+          if (method === 'DELETE' && parts.length === 2) {
+            db.run('DELETE FROM scheduled_triggers WHERE id=? AND tenant_id=?', trigger.id, user.tenantId);
+            return send(response, 200, { deleted: trigger.id });
+          }
+        }
+      }
+      // --- Cross-run reflection / episodic lessons --------------------------
+      if (method === 'GET' && parts[0] === 'reflections') {
+        const projectId = new URL(request.url, 'http://localhost').searchParams.get('projectId') || undefined;
+        if (projectId) { const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', projectId, user.tenantId); assertProjectAccess(project, user); }
+        return send(response, 200, { reflections: listReflections(db, user.tenantId, { projectId }) });
+      }
       // --- Code intelligence ------------------------------------------------
       // Read-only views over the project index. They never mutate the workspace
       // and never fabricate data: an empty repository yields an empty (honest)
@@ -964,7 +1065,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   server.headersTimeout = 15_000;
   server.requestTimeout = 30_000;
   server.maxHeadersCount = 64;
-  return { server, db, queue: runQueue, chat };
+  return { server, db, queue: runQueue, chat, scheduler, pluginsReady, tools };
 }
 
 if (process.argv[1]?.endsWith('backend/server.mjs')) {
@@ -976,14 +1077,14 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   assertEnv();
   const db = new Database();
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db, engineAvailable: true }) });
-  if (process.env.DISABLE_WORKER !== '1') app.queue.start();
+  if (process.env.DISABLE_WORKER !== '1') { app.queue.start(); app.scheduler.start(); }
   const port = Number(process.env.PORT || 8787);
   // Render (and every other container host) injects PORT and requires the process
   // to bind 0.0.0.0 so its router and port-scanner can reach it. resolveBindHost
   // FORCES 0.0.0.0 on Render (never 127.0.0.1/localhost) and whenever PORT is set;
   // only a plain local run keeps the loopback default.
   const host = resolveBindHost();
-  const shutdown = () => { app.queue.stop(); app.server.close(() => db.close()); };
+  const shutdown = () => { app.scheduler.stop(); app.queue.stop(); app.server.close(() => db.close()); };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
   app.server.listen(port, host, () => {

@@ -1,7 +1,10 @@
 import { Database } from './db/client.mjs';
 import { RunQueue } from './queue/queue.mjs';
+import { TriggerScheduler } from './queue/scheduler.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
+import { loadPluginsFromEnv } from './tools/plugins.mjs';
+import { TOOL_BY_ID } from './agent/catalog.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { createContinuationSupervisor } from './agent/long-running.mjs';
@@ -49,6 +52,12 @@ export function createWorkerRuntime({ db, llm = createLLMRouter(), codeRunner, s
   });
   queue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const tools = createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
+  // Extension SDK: load operator-provided tool plugins into the live registry.
+  const pluginsReady = loadPluginsFromEnv({ registry: tools, reservedIds: new Set(TOOL_BY_ID.keys()) })
+    .catch(() => ({ loaded: [], failed: [], skipped: [] }));
+  // Scheduled / recurring autonomy: same scheduler as the server, so a dedicated
+  // worker process also fires due triggers.
+  const scheduler = new TriggerScheduler(db, { queue, pollMs: Number(process.env.TRIGGER_POLL_MS || 30_000) });
   // Long-running autonomy — SAME wiring as the in-process server worker
   // (`createApp`): the continuation supervisor wraps the agent handler so a
   // bounded wall-clock stop (checkpointed mid-plan) is transparently resumed on
@@ -58,7 +67,7 @@ export function createWorkerRuntime({ db, llm = createLLMRouter(), codeRunner, s
   const continuation = createContinuationSupervisor({ db, queue, maxContinuations: Number(process.env.AGENT_MAX_CONTINUATIONS || 5) });
   // Link every agent run to its isolated per-task workspace engine.
   queue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor: modelCost, resolveEngine: createTaskEngineResolver({ db }), secrets: knownSecrets, longRunning: true })));
-  return { queue, tools, llm, knownSecrets };
+  return { queue, tools, llm, knownSecrets, scheduler, pluginsReady };
 }
 
 if (process.argv[1]?.endsWith('backend/worker.mjs')) {
@@ -68,10 +77,11 @@ if (process.argv[1]?.endsWith('backend/worker.mjs')) {
   assertEnv();
   if (process.env.NODE_ENV === 'production') process.umask(0o077);
   const db = new Database();
-  const { queue } = createWorkerRuntime({ db });
+  const { queue, scheduler } = createWorkerRuntime({ db });
   queue.start();
+  scheduler.start();
   console.log(`agent worker ${queue.workerId} started`);
-  const shutdown = () => { queue.stop(); db.close(); process.exit(0); };
+  const shutdown = () => { scheduler.stop(); queue.stop(); db.close(); process.exit(0); };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
