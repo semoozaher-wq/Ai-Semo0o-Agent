@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Conversation, Message } from '../types/chat';
+import { Attachment, Conversation, Message } from '../types/chat';
 import { storage, STORAGE_KEYS } from '../services/storage';
 import { uid } from '../utils/id';
 import { titleFromPrompt } from '../utils/text';
@@ -21,7 +21,7 @@ interface ChatState {
   setActive(id: string): void;
   deleteConversation(id: string): Promise<void>;
   renameConversation(id: string, title: string): void;
-  send(text: string, opts?: { model?: string; mode?: 'chat' | 'agent' }): Promise<void>;
+  send(text: string, opts?: { model?: string; mode?: 'chat' | 'agent'; attachments?: Attachment[] }): Promise<void>;
   recoverInterrupted(): Promise<number>;
   retryInterrupted(conversationId: string): Promise<void>;
   stop(): void;
@@ -29,6 +29,20 @@ interface ChatState {
 }
 
 function nowIso(): string { return new Date().toISOString(); }
+
+/**
+ * Fold the user's queued attachments into the outgoing prompt so the agent
+ * actually receives the file/URL references (the chat API has no attachment
+ * field). The originals are still stored on the message for the UI.
+ */
+function withAttachmentReferences(content: string, attachments: Attachment[]): string {
+  if (attachments.length === 0) return content;
+  const lines = attachments.map(
+    (item) => `- ${item.name}${item.uri ? ` — ${item.uri}` : ''} (${item.mimeType}${item.sizeBytes ? `, ${item.sizeBytes} bytes` : ''})`,
+  );
+  const block = `[المرفقات]\n${lines.join('\n')}`;
+  return content ? `${content}\n\n${block}` : block;
+}
 
 export const useChatStore = create<ChatState>((set, get) => {
   const persist = () => {
@@ -131,17 +145,20 @@ export const useChatStore = create<ChatState>((set, get) => {
     async deleteConversation(id) { set((state) => { const conversations = state.conversations.filter((item) => item.id !== id); const messages = { ...state.messages }; delete messages[id]; return { conversations, messages, activeId: state.activeId === id ? conversations[0]?.id ?? null : state.activeId }; }); persist(); },
     renameConversation(id, title) { set((state) => ({ conversations: state.conversations.map((item) => item.id === id ? { ...item, title, updatedAt: nowIso() } : item) })); persist(); },
     async send(text, opts) {
-      const content = text.trim(); if (!content) return;
+      const content = text.trim();
+      const attachments = opts?.attachments ?? [];
+      if (!content && attachments.length === 0) return;
       let conversationId = get().activeId; if (!conversationId) conversationId = get().newConversation(opts?.model);
       const conversation = get().conversations.find((item) => item.id === conversationId);
       const model = opts?.model ?? conversation?.model ?? DEFAULT_MODEL_ID;
-      const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete' };
+      const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete', ...(attachments.length ? { attachments } : {}) };
       const assistantId = uid('msg');
       const mode = opts?.mode ?? 'chat';
       const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: mode === 'agent' ? 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…' : 'جارٍ إعداد الرد…', createdAt: nowIso(), status: 'streaming', model };
-      set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(content) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: content.slice(0, 80) } : item), streaming: true }; });
+      const preview = content || attachments[0]?.name || '';
+      set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(preview) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: preview.slice(0, 80) } : item), streaming: true }; });
       const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
-      await generateReply(conversationId, assistantId, content, model, mode, token);
+      await generateReply(conversationId, assistantId, withAttachmentReferences(content, attachments), model, mode, token);
     },
     async recoverInterrupted() {
       // Ask the backend which threads hold a reply that was left mid-stream by a
