@@ -49,6 +49,8 @@ import { analyzeImpact, describeImpact } from '../phase2-core/impact.mjs';
 import { buildChangeSet, describeChangeSet } from '../phase2-core/changeset.mjs';
 import { CodebaseReasoner } from '../phase2-core/reasoning.mjs';
 import { buildCapabilityScorecard, collectCapabilitySignals, describeScorecard, loadProofArtifacts, runAgentBenchmark } from './ops/capability-benchmark.mjs';
+import { CreationStudio, CREATION_TERMINAL_STATES } from './creation/studio.mjs';
+import { FORMATS as CREATION_FORMATS, PALETTES as CREATION_PALETTES } from './creation/brief.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -124,12 +126,48 @@ function send(response, status, data) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(json(data));
 }
+// Stream a binary artefact (video/gif/zip) with a download filename. Used by the
+// Creation Studio artefact routes; never JSON-wrapped so browsers can save it.
+function sendBinary(response, status, buffer, contentType, filename) {
+  response.writeHead(status, {
+    'content-type': contentType,
+    'content-length': buffer.length,
+    'cache-control': 'no-store',
+    'content-disposition': `attachment; filename="${filename}"`,
+  });
+  response.end(buffer);
+}
 function bearer(request) { const value = request.headers.authorization ?? ''; return value.startsWith('Bearer ') ? value.slice(7) : null; }
 function requireUser(db, request) { const user = authenticateToken(db, bearer(request)); if (!user) throw new Error('UNAUTHORIZED'); return user; }
 function routeParts(url) { return new URL(url, 'http://localhost').pathname.split('/').filter(Boolean); }
 function validateText(value, name, max = 120) {
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) throw new Error(`INVALID_${name.toUpperCase()}`);
   return value.trim();
+}
+// Whitelist + coerce the Creation Studio director options from an untrusted
+// request body. Unknown keys are dropped and enums are validated against the
+// canonical brief tables, so a bad option can never reach the render pipeline.
+const CREATION_RESOLUTIONS = ['draft', 'standard', 'high', 'full'];
+function creationOptions(input = {}) {
+  const options = {};
+  if (CREATION_FORMATS[input.format]) options.format = input.format;
+  if (CREATION_PALETTES[input.palette]) options.palette = input.palette;
+  if (CREATION_RESOLUTIONS.includes(input.resolution)) options.resolution = input.resolution;
+  const duration = Number(input.duration);
+  if (Number.isFinite(duration)) options.duration = Math.max(4, Math.min(300, duration));
+  const fps = Number(input.fps);
+  if (Number.isFinite(fps)) options.fps = Math.max(6, Math.min(30, Math.round(fps)));
+  const quality = Number(input.quality);
+  if (Number.isFinite(quality)) options.quality = Math.max(30, Math.min(95, Math.round(quality)));
+  const gifFps = Number(input.gifFps);
+  if (Number.isFinite(gifFps)) options.gifFps = Math.max(4, Math.min(24, Math.round(gifFps)));
+  const gifMaxDimension = Number(input.gifMaxDimension);
+  if (Number.isFinite(gifMaxDimension)) options.gifMaxDimension = Math.max(160, Math.min(1280, Math.round(gifMaxDimension)));
+  if (typeof input.model === 'string' && input.model.trim()) options.model = input.model.trim().slice(0, 120);
+  if (input.bundle === false) options.bundle = false;
+  if (input.pngSequence === true) options.pngSequence = true;
+  if (input.useImages === false) options.useImages = false;
+  return options;
 }
 // Best-effort transactional email enqueue. Account lifecycle flows (register,
 // password reset, invitations) must never fail because the outbox write failed;
@@ -303,6 +341,41 @@ async function streamRunEvents(response, db, runId, tenantId, request) {
   }
 }
 
+// Server-Sent Events for a Creation Studio job. Mirrors streamRunEvents but is
+// backed by the in-memory job registry: it replays buffered events (so a client
+// that connects late never misses a stage), then live-forwards until the job
+// reaches a terminal state and closes the stream.
+async function streamCreationEvents(response, studio, jobId, tenantId, request) {
+  const initial = studio.events(jobId, tenantId, 0);
+  if (!initial) throw new Error('CREATION_JOB_NOT_FOUND');
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+  let cursor = 0;
+  let closed = false;
+  request.on('close', () => { closed = true; });
+  const flush = () => {
+    const snapshot = studio.events(jobId, tenantId, cursor);
+    if (!snapshot) return false;
+    for (const event of snapshot.events) { cursor = event.seq; response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`); }
+    return true;
+  };
+  const unsubscribe = studio.subscribe(jobId, () => { if (!closed) flush(); }, tenantId) || (() => {});
+  try {
+    flush();
+    while (!closed) {
+      const job = studio.get(jobId, tenantId);
+      if (!job || CREATION_TERMINAL_STATES.has(job.status)) {
+        flush();
+        response.write(`event: close\ndata: ${JSON.stringify({ status: job?.status ?? 'not_found' })}\n\n`);
+        response.end();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  } finally {
+    unsubscribe();
+  }
+}
+
 export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter, costFor = modelCost, modelRouter, secrets } = {}) {
   rateLimiter ??= new DistributedRateLimiter(db, { max: Number(process.env.RATE_LIMIT_MAX || 120) });
   // Known secret values are resolved once and shared by the queue (result_json)
@@ -315,6 +388,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   const memory = new MemoryStore(db);
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true, memory });
   const chat = new ChatStore(db);
+  // Creation Studio: the async job layer behind /creation/*. It reuses the same
+  // server LLM router (optional) and auto-detects configured media providers,
+  // falling back to the deterministic Local Studio so a video is always produced.
+  const creationStudio = new CreationStudio({ llm });
   // Optional Sentry-compatible error tracking. Null when unconfigured so we
   // never report a fake "errors are tracked" state.
   let errorTracker = null;
@@ -412,6 +489,50 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         return send(response, 200, { received: true, ...result });
       }
       const user = requireUser(db, request);
+      // --- Creation Studio (AI Creation platform) --------------------------
+      // One goal in, a real deliverable out. The Studio runs the autonomous
+      // Director (think -> plan -> render -> critique -> improve -> deliver) as
+      // an observable async job. All routes are tenant-scoped.
+      if (parts[0] === 'creation') {
+        if (method === 'GET' && parts[1] === 'capabilities') return send(response, 200, creationStudio.capabilities());
+        if (method === 'GET' && parts[1] === 'jobs' && parts.length === 2) return send(response, 200, { jobs: creationStudio.list(user.tenantId) });
+        if (method === 'POST' && parts[1] === 'jobs' && parts.length === 2) {
+          const input = await body(request);
+          const goal = validateText(input.goal, 'GOAL', 4000);
+          const options = creationOptions(input);
+          return send(response, 202, creationStudio.start({ goal, tenantId: user.tenantId, userId: user.id, options }));
+        }
+        if (method === 'POST' && parts[1] === 'plan' && parts.length === 2) {
+          const input = await body(request);
+          const goal = validateText(input.goal, 'GOAL', 4000);
+          return send(response, 200, await creationStudio.plan(goal, creationOptions(input)));
+        }
+        if (parts[1] === 'jobs' && parts.length >= 3) {
+          const jobId = parts[2];
+          if (method === 'GET' && parts.length === 3) {
+            const view = creationStudio.status(jobId, user.tenantId);
+            if (!view) throw new Error('CREATION_JOB_NOT_FOUND');
+            return send(response, 200, view);
+          }
+          if (method === 'GET' && parts[3] === 'events') {
+            if (String(request.headers.accept ?? '').includes('text/event-stream')) return streamCreationEvents(response, creationStudio, jobId, user.tenantId, request);
+            const snapshot = creationStudio.events(jobId, user.tenantId, Number(new URL(request.url, 'http://localhost').searchParams.get('since')) || 0);
+            if (!snapshot) throw new Error('CREATION_JOB_NOT_FOUND');
+            return send(response, 200, { jobId, status: snapshot.job.status, events: snapshot.events });
+          }
+          if (method === 'GET' && parts[3] === 'artifacts' && parts.length === 5) {
+            const artifact = creationStudio.artifact(jobId, parts[4], user.tenantId);
+            if (!artifact) throw new Error('CREATION_ARTIFACT_NOT_FOUND');
+            return sendBinary(response, 200, artifact.buffer, artifact.mimeType, artifact.filename);
+          }
+          if (method === 'POST' && parts[3] === 'cancel' && parts.length === 4) {
+            const view = creationStudio.cancel(jobId, user.tenantId);
+            if (!view) throw new Error('CREATION_JOB_NOT_FOUND');
+            return send(response, 200, view);
+          }
+        }
+        throw new Error('NOT_FOUND');
+      }
       if (method === 'GET' && parts.join('/') === 'tools/status') {
         const status = tools.status?.() ?? { live: [], partial: [], catalogOnly: [], simulated: [], unwired: [], failed: [], dangerous: [], tools: [] };
         const summary = { live: status.live?.length ?? 0, partial: status.partial?.length ?? 0, unwired: status.unwired?.length ?? 0, failed: status.failed?.length ?? 0, catalogOnly: status.catalogOnly?.length ?? 0, simulated: status.simulated?.length ?? 0, dangerous: status.dangerous?.length ?? 0 };
@@ -1120,7 +1241,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       if (status >= 500 && errorTracker) {
         // Fire-and-forget: reporting must never delay or break the response.
         Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
