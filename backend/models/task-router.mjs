@@ -63,6 +63,13 @@ const MODEL_META = Object.freeze({
 /** The optimization objectives `route()` understands. `balanced` = the default priority policy. */
 export const ROUTE_OBJECTIVES = Object.freeze(['balanced', 'quality', 'cost', 'latency']);
 
+// How strongly real, observed outcomes (the Experience Engine prior) may re-rank
+// the static policy. 0 = ignore experience (pure static policy); 1 = experience
+// fully overrides the static order. The default keeps the static policy as the
+// prior and lets evidence only *nudge* it, scaled by per-model confidence, so a
+// model with no (or little) history can never be demoted on noise.
+export const EXPERIENCE_WEIGHT = Number(process.env.AGENT_EXPERIENCE_WEIGHT ?? 0.6);
+
 // Deterministic, dependency-free goal classification. Ordered most-specific first.
 const TASK_HINTS = Object.freeze({
   vision: /(image|photo|picture|screenshot|diagram|chart|vision|multimodal|صورة|صور|لقطة|رسم|مخطط)/i,
@@ -118,12 +125,16 @@ function descriptorFor(id, priority) {
  * filtering and ranking and this class only adds the routing policy + fallback.
  */
 export class MaestroModelRouter {
-  constructor({ taskTypes = TASK_TYPE_MODELS, health = null } = {}) {
+  constructor({ taskTypes = TASK_TYPE_MODELS, health = null, experience = null } = {}) {
     this.taskTypes = taskTypes;
     // The health map is the single mutable piece of state. It is injectable so a
     // caller can share one circuit-breaker across runs, while the default is a
     // private map that `fork()` can hand to an isolated per-run router.
     this.health = health instanceof Map ? health : new Map();
+    // The Experience Engine prior: `{ [taskType]: { [modelId]: { successRate,
+    // confidence, attempts } } }`. Read-only, tenant-scoped and injectable; when
+    // absent (the default) routing is byte-for-byte the static policy.
+    this.experience = experience && typeof experience === 'object' ? experience : null;
     this.routers = new Map();
     for (const [taskType, chain] of Object.entries(taskTypes)) {
       const descriptors = chain.map((id, index) => this.descriptorFor(id, chain.length - index));
@@ -165,7 +176,54 @@ export class MaestroModelRouter {
    * back into a cross-run circuit breaker.
    */
   fork({ shareHealth = false } = {}) {
-    return new MaestroModelRouter({ taskTypes: this.taskTypes, health: shareHealth ? this.health : new Map() });
+    return new MaestroModelRouter({ taskTypes: this.taskTypes, health: shareHealth ? this.health : new Map(), experience: this.experience });
+  }
+
+  /**
+   * Install (or clear) the Experience Engine prior for this router. The prior is
+   * read-only and tenant-scoped; it only ever *nudges* the static policy, scaled
+   * by per-model confidence, so it can never re-rank on thin evidence.
+   */
+  setExperience(prior) {
+    this.experience = prior && typeof prior === 'object' ? prior : null;
+    return this;
+  }
+
+  /**
+   * Re-rank an already-ranked candidate list using the observed-outcome prior.
+   *
+   * The static rank becomes a 0..1 score (`1` for the top choice). Each candidate
+   * is then blended toward its observed success rate in proportion to its
+   * confidence:
+   *
+   *     blended = (1 - w*c) * staticScore + (w*c) * observedSuccessRate
+   *
+   * With no prior — or with `c = 0` (too little evidence) — `blended` equals the
+   * static score, so the order is unchanged. This is what lets a model that keeps
+   * succeeding for a task type rise, and one that keeps failing fall, WITHOUT
+   * ever discarding the curated cross-provider policy.
+   */
+  applyExperience(taskType, ranked) {
+    const table = this.experience?.[taskType];
+    if (!table || !Array.isArray(ranked) || ranked.length < 2 || !Number.isFinite(EXPERIENCE_WEIGHT) || EXPERIENCE_WEIGHT <= 0) {
+      return ranked;
+    }
+    const n = ranked.length;
+    const scored = ranked.map((item, index) => {
+      const staticScore = (n - index) / n; // 1 for the top choice .. 1/n for the last
+      const stat = table[item.id];
+      const confidence = stat ? Math.max(0, Math.min(1, Number(stat.confidence) || 0)) : 0;
+      const rate = stat && Number.isFinite(Number(stat.successRate)) ? Number(stat.successRate) : 0.5;
+      const w = Math.min(1, Math.max(0, EXPERIENCE_WEIGHT)) * confidence;
+      const blended = (1 - w) * staticScore + w * rate;
+      return {
+        item: { ...item, experience: stat ? { successRate: rate, confidence, attempts: Number(stat.attempts) || 0 } : null },
+        blended,
+        staticScore,
+      };
+    });
+    scored.sort((a, b) => (b.blended - a.blended) || (b.staticScore - a.staticScore));
+    return scored.map((entry) => entry.item);
   }
 
   /** Mark a model healthy/unhealthy across every task-type router. */
@@ -178,7 +236,8 @@ export class MaestroModelRouter {
   chain(taskType, criteria = {}) {
     const resolved = TASK_TYPES.includes(taskType) ? taskType : classifyTask({ ...criteria, taskType });
     this.syncHealth();
-    return this.routerFor(resolved).rank({ ...criteria, taskType: resolved }).map((item) => item.id);
+    const ranked = this.applyExperience(resolved, this.routerFor(resolved).rank({ ...criteria, taskType: resolved }));
+    return ranked.map((item) => item.id);
   }
 
   /**
@@ -217,9 +276,10 @@ export class MaestroModelRouter {
     const taskType = TASK_TYPES.includes(criteria.taskType) ? criteria.taskType : classifyTask(criteria);
     const optimize = ROUTE_OBJECTIVES.includes(criteria.optimize) ? criteria.optimize : 'balanced';
     this.syncHealth();
-    const ranked = this.routerFor(taskType).rank({ ...criteria, taskType, optimize });
+    const ranked = this.applyExperience(taskType, this.routerFor(taskType).rank({ ...criteria, taskType, optimize }));
     if (!ranked.length) throw new Error('NO_HEALTHY_MODEL_FOR_REQUIREMENTS');
     const chain = ranked.map((item) => item.id);
+    const experienceApplied = Boolean(this.experience?.[taskType]);
     return {
       taskType,
       model: chain[0],
@@ -228,7 +288,9 @@ export class MaestroModelRouter {
       optimize,
       requires: criteria.requires ?? null,
       capabilities: this.capabilities(chain[0]),
-      reason: `task_type=${taskType}${optimize !== 'balanced' ? ` optimize=${optimize}` : ''}`,
+      experienceApplied,
+      experience: ranked[0].experience ?? null,
+      reason: `task_type=${taskType}${optimize !== 'balanced' ? ` optimize=${optimize}` : ''}${experienceApplied ? ' experience=on' : ''}`,
     };
   }
 
