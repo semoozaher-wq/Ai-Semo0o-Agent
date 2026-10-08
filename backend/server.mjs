@@ -7,13 +7,15 @@ import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
-import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS } from './queue/scheduler.mjs';
+import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS, MISSED_RUN_POLICIES, isValidTimeZone } from './queue/scheduler.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { DistributedRateLimiter, applySecurityHeaders } from './security/http.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
 import { loadPluginsFromEnv } from './tools/plugins.mjs';
 import { TOOL_BY_ID } from './agent/catalog.mjs';
 import { listReflections } from './agent/reflection.mjs';
+import { evaluateRun, evaluateRuns, compareRuns } from './agent/evaluation.mjs';
+import { riskPolicy, degradedCapabilities, validateStartupConfig } from './agent/safety.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
@@ -161,6 +163,8 @@ function triggerView(row) {
   return {
     id: row.id, tenantId: row.tenant_id, projectId: row.project_id, workspaceId: row.workspace_id,
     name: row.name, kind: row.kind, schedule: row.schedule, goal: row.goal, payload,
+    timezone: row.timezone || 'UTC', missedRunPolicy: row.missed_run_policy || 'catchup',
+    retryCount: row.retry_count ?? 0, maxRetries: row.max_retries ?? 3,
     enabled: row.enabled === 1, nextRunAt: row.next_run_at, lastRunAt: row.last_run_at,
     runCount: row.run_count, lastError: row.last_error, createdAt: row.created_at, updatedAt: row.updated_at,
   };
@@ -306,7 +310,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   // redacted data. Tests may inject an explicit `secrets` list.
   const knownSecrets = Array.isArray(secrets) ? secrets : collectKnownSecrets();
   const redact = (value) => redactDeep(value, knownSecrets);
-  const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1), redact });
+  const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1), retryBackoffMs: Number(process.env.WORKER_RETRY_BACKOFF_MS || 1_000), retryBackoffMaxMs: Number(process.env.WORKER_RETRY_BACKOFF_MAX_MS || 60_000), redact });
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
   const memory = new MemoryStore(db);
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true, memory });
@@ -321,7 +325,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   // wall-clock stop (checkpointed mid-plan) is transparently resumed on a fresh
   // run instead of being reported as a failure. Bounded by AGENT_MAX_CONTINUATIONS.
   const continuation = createContinuationSupervisor({ db, queue: runQueue, maxContinuations: Number(process.env.AGENT_MAX_CONTINUATIONS || 5) });
-  runQueue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, longRunning: true, ...(modelRouter ? { modelRouter } : {}) })));
+  runQueue.register('agent.run', continuation.wrap(createAgentRunHandler({ db, tools, llm, costFor, resolveEngine, secrets: knownSecrets, longRunning: true, memory, ...(modelRouter ? { modelRouter } : {}) })));
   // Extension SDK: load operator-provided tool plugins (TOOL_PLUGINS_DIR) into the
   // live registry. Fail-soft and isolated: a broken plugin is reported, never
   // fatal, and it can never overwrite a first-party tool id.
@@ -333,6 +337,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
     queue: runQueue,
     pollMs: Number(process.env.TRIGGER_POLL_MS || 30_000),
     maxPerTick: Number(process.env.TRIGGER_MAX_PER_TICK || 50),
+    concurrency: Number(process.env.TRIGGER_CONCURRENCY || 5),
+    maxRetries: Number(process.env.TRIGGER_MAX_RETRIES || 3),
+    retryBackoffMs: Number(process.env.TRIGGER_RETRY_BACKOFF_MS || 60_000),
+    retryBackoffMaxMs: Number(process.env.TRIGGER_RETRY_BACKOFF_MAX_MS || 3_600_000),
   });
   const server = createServer(async (request, response) => {
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
@@ -868,6 +876,25 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         if (!run) throw new Error('NOT_FOUND');
         const task = assertRunAccess(db, run, user);
         if (method === 'GET' && parts.length === 2) return send(response, 200, { ...run, payload: JSON.parse(run.payload_json), result: run.result_json ? JSON.parse(run.result_json) : null, evidence: db.all('SELECT id,kind,payload_json,sha256,created_at FROM evidence WHERE run_id=? ORDER BY created_at', run.id), events: db.all('SELECT id,type,payload_json,created_at FROM run_events WHERE run_id=? ORDER BY created_at', run.id), usage: db.all('SELECT provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd FROM run_usage WHERE run_id=?', run.id) });
+        // Reusable evaluation & quality control: a reproducible scorecard for this
+        // run (outcome, tool efficiency, cost/latency, evidence completeness,
+        // human intervention, composite quality). Derived from the run's own rows.
+        if (method === 'GET' && parts[2] === 'evaluation') {
+          const evaluation = evaluateRun(db, run.id, { tenantId: user.tenantId });
+          return send(response, 200, evaluation ?? { runId: run.id, status: run.status, evaluated: false });
+        }
+        // Regression hook: compare this run against a baseline run and flag a
+        // quality regression beyond the (optional) threshold.
+        if (method === 'GET' && parts[2] === 'compare') {
+          const url = new URL(request.url, 'http://localhost');
+          const baseline = validateText(url.searchParams.get('baseline'), 'RUN_ID', 128);
+          const threshold = Number(url.searchParams.get('threshold'));
+          const baselineRun = runQueue.get(baseline, user.tenantId);
+          if (!baselineRun) throw new Error('NOT_FOUND');
+          assertRunAccess(db, baselineRun, user);
+          const comparison = compareRuns(db, baseline, run.id, { tenantId: user.tenantId, ...(Number.isFinite(threshold) ? { threshold } : {}) });
+          return send(response, 200, comparison ?? { compared: false });
+        }
         if (method === 'GET' && parts[2] === 'events') return streamRunEvents(response, db, run.id, user.tenantId, request);
         if (method === 'POST' && parts[2] === 'cancel') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.cancel(run.id, user.tenantId)); }
         if (method === 'POST' && parts[2] === 'retry') { if (task.created_by !== user.id) requireRole(user, ['owner','admin']); return send(response, 200, runQueue.retry(run.id, user.tenantId)); }
@@ -915,15 +942,19 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           if (workspaceId && !db.get('SELECT id FROM workspaces WHERE id=? AND project_id=?', workspaceId, project.id)) throw new Error('NOT_FOUND');
           const payload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) ? input.payload : {};
           const enabled = input.enabled === false ? 0 : 1;
+          const timezone = input.timezone ? validateText(input.timezone, 'TRIGGER_TIMEZONE', 64) : 'UTC';
+          if (!isValidTimeZone(timezone)) throw new Error('INVALID_TRIGGER_TIMEZONE');
+          const missedRunPolicy = input.missedRunPolicy ? validateText(input.missedRunPolicy, 'TRIGGER_MISSED_RUN_POLICY', 16) : 'catchup';
+          if (!MISSED_RUN_POLICIES.includes(missedRunPolicy)) throw new Error('INVALID_TRIGGER_MISSED_RUN_POLICY');
           const triggerId = id('trigger');
           const timestamp = now();
-          const next = enabled ? computeNextRun({ kind, schedule, created_at: timestamp }, new Date()) : null;
+          const next = enabled ? computeNextRun({ kind, schedule, created_at: timestamp, timezone }, new Date()) : null;
           db.transaction(() => {
             db.run(
-              'INSERT INTO scheduled_triggers(id,tenant_id,project_id,workspace_id,created_by,name,kind,schedule,goal,payload_json,enabled,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-              triggerId, user.tenantId, project.id, workspaceId, user.id, name, kind, schedule, goal, JSON.stringify(payload), enabled, next ? next.toISOString() : null, timestamp, timestamp,
+              'INSERT INTO scheduled_triggers(id,tenant_id,project_id,workspace_id,created_by,name,kind,schedule,goal,payload_json,enabled,next_run_at,timezone,missed_run_policy,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+              triggerId, user.tenantId, project.id, workspaceId, user.id, name, kind, schedule, goal, JSON.stringify(payload), enabled, next ? next.toISOString() : null, timezone, missedRunPolicy, timestamp, timestamp,
             );
-            db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'trigger.created', 'scheduled_trigger', triggerId, JSON.stringify({ kind, schedule }), timestamp);
+            db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'trigger.created', 'scheduled_trigger', triggerId, JSON.stringify({ kind, schedule, timezone, missedRunPolicy }), timestamp);
           });
           return send(response, 201, triggerView(db.get('SELECT * FROM scheduled_triggers WHERE id=?', triggerId)));
         }
@@ -945,10 +976,18 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
               : trigger.schedule;
             if (input.kind !== undefined || input.schedule !== undefined) { fields.push('kind=?', 'schedule=?'); params.push(kind, schedule); }
             if (input.payload !== undefined && input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)) { fields.push('payload_json=?'); params.push(JSON.stringify(input.payload)); }
+            const timezone = input.timezone !== undefined ? validateText(input.timezone, 'TRIGGER_TIMEZONE', 64) : (trigger.timezone || 'UTC');
+            if (!isValidTimeZone(timezone)) throw new Error('INVALID_TRIGGER_TIMEZONE');
+            if (input.timezone !== undefined) { fields.push('timezone=?'); params.push(timezone); }
+            const missedRunPolicy = input.missedRunPolicy !== undefined ? validateText(input.missedRunPolicy, 'TRIGGER_MISSED_RUN_POLICY', 16) : (trigger.missed_run_policy || 'catchup');
+            if (!MISSED_RUN_POLICIES.includes(missedRunPolicy)) throw new Error('INVALID_TRIGGER_MISSED_RUN_POLICY');
+            if (input.missedRunPolicy !== undefined) { fields.push('missed_run_policy=?'); params.push(missedRunPolicy); }
             const enabled = input.enabled === undefined ? trigger.enabled : (input.enabled ? 1 : 0);
             if (input.enabled !== undefined) { fields.push('enabled=?'); params.push(enabled); }
-            const next = enabled ? computeNextRun({ ...trigger, kind, schedule }, new Date()) : null;
+            const next = enabled ? computeNextRun({ ...trigger, kind, schedule, timezone }, new Date()) : null;
             fields.push('next_run_at=?'); params.push(next ? next.toISOString() : null);
+            // A changed schedule/timezone is a fresh start: clear backoff state.
+            if (input.schedule !== undefined || input.kind !== undefined || input.timezone !== undefined) fields.push('retry_count=0');
             fields.push('updated_at=?'); params.push(now());
             params.push(trigger.id, user.tenantId);
             db.run(`UPDATE scheduled_triggers SET ${fields.join(',')} WHERE id=? AND tenant_id=?`, ...params);
@@ -965,6 +1004,35 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         const projectId = new URL(request.url, 'http://localhost').searchParams.get('projectId') || undefined;
         if (projectId) { const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', projectId, user.tenantId); assertProjectAccess(project, user); }
         return send(response, 200, { reflections: listReflections(db, user.tenantId, { projectId }) });
+      }
+      // --- Evaluation & quality control -------------------------------------
+      // A windowed, reproducible scorecard across this tenant's terminal runs
+      // (optionally scoped to a project). Built from the same durable rows the
+      // observability endpoint reads — no second metrics system.
+      if (method === 'GET' && parts.join('/') === 'evaluation/summary') {
+        const url = new URL(request.url, 'http://localhost');
+        const projectId = url.searchParams.get('projectId') || undefined;
+        if (projectId) { const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', projectId, user.tenantId); assertProjectAccess(project, user); }
+        const windowHours = Math.max(1, Math.min(24 * 90, Number(url.searchParams.get('windowHours')) || 168));
+        const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get('limit')) || 200));
+        const summary = evaluateRuns(db, { tenantId: user.tenantId, projectId, windowHours, limit });
+        // Keep the response bounded: the per-run detail is available on
+        // GET /runs/:id/evaluation.
+        return send(response, 200, { ...summary, runs: summary.runs.slice(0, 50) });
+      }
+      // --- Production safety / degradation ----------------------------------
+      // The active risk policy plus a live graceful-degradation report (which
+      // providers/tools are unavailable right now). Read-only and tenant-scoped.
+      if (method === 'GET' && parts.join('/') === 'safety/status') {
+        const startup = validateStartupConfig(process.env);
+        const degraded = degradedCapabilities({ tools, llm });
+        return send(response, 200, {
+          ok: true,
+          riskPolicy: riskPolicy(),
+          degraded: degraded.degraded,
+          degradation: degraded,
+          startup: { ok: startup.ok, production: startup.production, errors: startup.errors, warnings: startup.warnings },
+        });
       }
       // --- Code intelligence ------------------------------------------------
       // Read-only views over the project index. They never mutate the workspace

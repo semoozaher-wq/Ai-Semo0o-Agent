@@ -45,6 +45,8 @@ export function createWorkerRuntime({ db, llm = createLLMRouter(), codeRunner, s
     leaseMs: Number(leaseMs ?? (process.env.WORKER_LEASE_MS || 900000)),
     maxAttempts: Number(maxAttempts ?? (process.env.WORKER_MAX_ATTEMPTS || 3)),
     concurrency: Number(concurrency ?? (process.env.WORKER_CONCURRENCY || 1)),
+    retryBackoffMs: Number(process.env.WORKER_RETRY_BACKOFF_MS || 1_000),
+    retryBackoffMaxMs: Number(process.env.WORKER_RETRY_BACKOFF_MAX_MS || 60_000),
     // Wire the SAME redaction the server uses. Without this the worker would
     // persist unredacted `result_json` (including thrown-error messages), which
     // is a secret-leak inconsistency between the server and the worker.
@@ -57,7 +59,15 @@ export function createWorkerRuntime({ db, llm = createLLMRouter(), codeRunner, s
     .catch(() => ({ loaded: [], failed: [], skipped: [] }));
   // Scheduled / recurring autonomy: same scheduler as the server, so a dedicated
   // worker process also fires due triggers.
-  const scheduler = new TriggerScheduler(db, { queue, pollMs: Number(process.env.TRIGGER_POLL_MS || 30_000) });
+  const scheduler = new TriggerScheduler(db, {
+    queue,
+    pollMs: Number(process.env.TRIGGER_POLL_MS || 30_000),
+    maxPerTick: Number(process.env.TRIGGER_MAX_PER_TICK || 50),
+    concurrency: Number(process.env.TRIGGER_CONCURRENCY || 5),
+    maxRetries: Number(process.env.TRIGGER_MAX_RETRIES || 3),
+    retryBackoffMs: Number(process.env.TRIGGER_RETRY_BACKOFF_MS || 60_000),
+    retryBackoffMaxMs: Number(process.env.TRIGGER_RETRY_BACKOFF_MAX_MS || 3_600_000),
+  });
   // Long-running autonomy — SAME wiring as the in-process server worker
   // (`createApp`): the continuation supervisor wraps the agent handler so a
   // bounded wall-clock stop (checkpointed mid-plan) is transparently resumed on
