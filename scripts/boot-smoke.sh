@@ -58,6 +58,11 @@ TOKEN="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).session.token
 echo "session token issued (length ${#TOKEN})"
 
 echo "== GET /tools/status (authenticated) =="
-curl -sf "http://${BIND_HOST}:${PORT}/tools/status" -H "authorization: Bearer ${TOKEN}" | head -c 300; echo
+# Capture the full response first, then print a preview. Piping curl straight
+# into `head` makes curl exit 23 (CURLE_WRITE_ERROR / EPIPE) as soon as `head`
+# closes the pipe; under `set -o pipefail` that aborted this smoke gate even
+# though every step had succeeded. Reading into a variable avoids the SIGPIPE.
+TOOLS_STATUS="$(curl -sf "http://${BIND_HOST}:${PORT}/tools/status" -H "authorization: Bearer ${TOKEN}")"
+printf '%s\n' "${TOOLS_STATUS:0:300}"
 
 echo "BOOT SMOKE OK"
