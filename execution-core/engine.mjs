@@ -170,6 +170,20 @@ function validateRevision(revision) {
   return revision;
 }
 
+// A push target is a *named* remote (e.g. `origin`), never a raw URL: the remote
+// is configured by the operator when the task workspace is provisioned, so the
+// agent can never be tricked into pushing to an attacker-controlled endpoint.
+function validateRemoteName(name) {
+  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name.trim())) {
+    throw new ExecutionError('A valid Git remote name is required.', 'INVALID_REMOTE_NAME');
+  }
+  return name.trim();
+}
+
+function isNetworkRemoteUrl(url) {
+  return /^(https?:|git@|ssh:|git:\/\/)/i.test(String(url ?? '').trim());
+}
+
 function commandSummary(command, args) {
   return [command, ...args].join(' ');
 }
@@ -795,6 +809,47 @@ export class RealGit {
     if (!result.ok) throw new ExecutionError('Git rollback failed.', 'GIT_ROLLBACK_FAILED', result);
     await this.evidence.record('git_rollback', { revision: target, result });
     return result;
+  }
+
+  /** Resolve whether a named remote points at a network URL (needs NETWORK). */
+  async #remoteIsNetwork(name) {
+    const result = await this.#run(['remote', 'get-url', name], Capability.GIT_READ);
+    // An unknown remote is treated as network so the stricter capability applies.
+    if (!result.ok) return true;
+    return isNetworkRemoteUrl(result.stdout);
+  }
+
+  /**
+   * Push the current (or named) branch to a configured remote. Pushing the
+   * protected default branch is refused: agent work must always travel through a
+   * dedicated task branch and a pull request, never by writing the integration
+   * line directly. `--force-with-lease` is used when forcing so a concurrent
+   * update to the remote is never silently overwritten.
+   */
+  async push(remote = 'origin', branch, { setUpstream = true, force = false, needsNetwork } = {}) {
+    const remoteName = validateRemoteName(remote);
+    const target = branch ? validateBranchName(branch) : (await this.branch()).branch;
+    if (!target) throw new ExecutionError('No branch to push; the repository has no current branch.', 'GIT_PUSH_NO_BRANCH');
+    if (isDefaultBranch(target)) {
+      throw new ExecutionError(
+        'Refusing to push the protected default branch; push a task branch and open a pull request.',
+        'DEFAULT_BRANCH_FORBIDDEN',
+        { branch: target },
+      );
+    }
+    const args = ['push'];
+    if (force) args.push('--force-with-lease');
+    if (setUpstream) args.push('--set-upstream');
+    args.push(remoteName, `${target}:${target}`);
+    const network = needsNetwork ?? (await this.#remoteIsNetwork(remoteName));
+    const result = await this.#run(args, Capability.GIT_WRITE, {
+      needsNetwork: network,
+      timeoutMs: 180_000,
+      maxOutputBytes: 500_000,
+    });
+    if (!result.ok) throw new ExecutionError('Git push failed.', 'GIT_PUSH_FAILED', result);
+    await this.evidence.record('git_pushed', { remote: remoteName, branch: target, force, network });
+    return { ...result, remote: remoteName, branch: target, pushed: true };
   }
 
   async #run(args, permission, options = {}) {
