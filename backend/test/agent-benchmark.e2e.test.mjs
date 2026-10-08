@@ -41,7 +41,7 @@ test('agent benchmark: the end-to-end benchmark passes every real scenario', asy
   try {
     const { code, stdout, stderr } = await runBenchmark(outFile);
     assert.equal(code, 0, `benchmark exited ${code}\n${stdout}\n${stderr}`);
-    assert.match(stdout, /RESULT: agent-loop=100% multi-agent=100% long-running=100% code-intelligence=100% passed=true/);
+    assert.match(stdout, /RESULT: agent-loop=100% multi-agent=100% long-running=100% code-intelligence=100% self-healing=100% integrations=100% passed=true/);
 
     const report = JSON.parse(await readFile(outFile, 'utf8'));
     assert.equal(report.passed, true);
@@ -49,6 +49,8 @@ test('agent benchmark: the end-to-end benchmark passes every real scenario', asy
     assert.equal(report.multiAgent.summary.passRate, 100);
     assert.equal(report.longRunning.summary.passRate, 100);
     assert.equal(report.codeIntelligence.summary.passRate, 100);
+    assert.equal(report.selfHealing.summary.passRate, 100);
+    assert.equal(report.integrations.summary.passRate, 100);
 
     // The multi-agent scenario really ran a TaskGraph of specialists with evidence.
     const multiAgent = report.steps.find((item) => item.name === 'multi-agent finished');
@@ -64,6 +66,23 @@ test('agent benchmark: the end-to-end benchmark passes every real scenario', asy
     assert.ok(longRunning.continuation.runId, 'continuation run id must be recorded');
     assert.equal(longRunning.continuationContinuation.scheduled, false);
     assert.equal(longRunning.continuationContinuation.reason, 'continuation_limit_reached');
+
+    // The self-healing scenario really diagnosed and repaired a failing call.
+    const selfHealing = report.steps.find((item) => item.name === 'self-healing finished');
+    assert.equal(selfHealing.status, 'completed');
+    assert.ok(selfHealing.repairEvents >= 1, `expected a repair event, got ${selfHealing.repairEvents}`);
+    assert.equal(selfHealing.failedRead, true, 'the first read must have failed');
+    assert.equal(selfHealing.repairedRead, true, 'the repaired read must have succeeded');
+    assert.deepEqual(selfHealing.readOutcomes, [false, true]);
+    assert.ok(selfHealing.evidenceCount >= 2, `expected >=2 evidence rows, got ${selfHealing.evidenceCount}`);
+
+    // The integrations scenario really delivered an email over a live connector.
+    const integrations = report.steps.find((item) => item.name === 'integrations finished');
+    assert.equal(integrations.status, 'completed');
+    assert.ok(integrations.deliveredCount >= 1, `expected a real delivery, got ${integrations.deliveredCount}`);
+    assert.ok(integrations.deliveredTo.includes('ops@example.com'), 'the connector must receive the real recipient');
+    assert.equal(integrations.emailToolOk, true, 'the email.send tool call must report ok');
+    assert.equal(integrations.connectorLive, true, 'the registry must report email.send live');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

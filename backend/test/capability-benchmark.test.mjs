@@ -22,7 +22,7 @@ const ALL_LIVE_TOOLS = ['code.analyze', 'code.impact', 'code.changeset', 'code.r
 
 // A proof object where every wired benchmark passed end-to-end.
 const FULL_PROOF = {
-  agentBenchmark: { passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } } },
+  agentBenchmark: { passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } }, selfHealing: { summary: { passRate: 100 } }, integrations: { summary: { passRate: 100 } } },
   browserE2e: { passed: true },
   capabilityBenchmark: true,
 };
@@ -88,20 +88,24 @@ test('capability: end-to-end proof upgrades wired capabilities to proven', () =>
     integrations: { configured: ['github', 'browser'], total: 8 },
     proof: FULL_PROOF,
   });
-  assert.equal(scorecard.summary.proven, 11);
-  assert.equal(scorecard.summary.wired, 2); // self-healing + integrations have no wired E2E proof
+  assert.equal(scorecard.summary.proven, 13);
+  assert.equal(scorecard.summary.wired, 0); // every capability now has a real end-to-end proof
   assert.equal(scorecard.summary.unwired, 0);
   assert.ok(scorecard.score >= 90, `expected a production score, got ${scorecard.score}`);
   assert.equal(scorecard.level, 'production');
-  assert.ok(scorecard.provenScore >= 80 && scorecard.provenScore < 100, `provenScore=${scorecard.provenScore}`);
+  assert.equal(scorecard.provenScore, 100);
   // Every proven capability carries the proof source in its evidence.
   const browser = scorecard.capabilities.find((capability) => capability.id === 'computer-use');
   assert.equal(browser.status, 'proven');
   assert.ok(browser.evidence.includes('proof:browser-e2e=true'));
   const selfHealing = scorecard.capabilities.find((capability) => capability.id === 'self-healing');
-  assert.equal(selfHealing.status, 'wired');
-  assert.equal(selfHealing.proven, false);
-  assert.match(describeScorecard(scorecard), /11 proven end-to-end/);
+  assert.equal(selfHealing.status, 'proven');
+  assert.equal(selfHealing.proven, true);
+  assert.ok(selfHealing.evidence.includes('proof:agent-benchmark:self-healing=true'));
+  const integrations = scorecard.capabilities.find((capability) => capability.id === 'integrations');
+  assert.equal(integrations.status, 'proven');
+  assert.ok(integrations.evidence.includes('proof:agent-benchmark:integrations=true'));
+  assert.match(describeScorecard(scorecard), /13 proven end-to-end/);
 });
 
 test('capability: a runtime flag override degrades only that capability', () => {
@@ -162,6 +166,8 @@ test('capability: normalizeProof derives honest booleans from raw benchmark repo
   assert.equal(proof.agentBenchmark.scenarios.multiAgent, true);
   assert.equal(proof.agentBenchmark.scenarios.longRunning, true);
   assert.equal(proof.agentBenchmark.scenarios.codeIntelligence, true);
+  assert.equal(proof.agentBenchmark.scenarios.selfHealing, true);
+  assert.equal(proof.agentBenchmark.scenarios.integrations, true);
   assert.equal(proof.browserE2e.passed, true);
   assert.equal(proof.capabilityBenchmark, true);
 
@@ -184,11 +190,13 @@ test('capability: loadProofArtifacts reads the real benchmark reports from a dir
     assert.equal(missing.browserE2e.passed, false);
     assert.equal(missing.capabilityBenchmark, true);
 
-    await writeFile(path.join(dir, 'agent-benchmark.report.json'), JSON.stringify({ passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } } }), 'utf8');
+    await writeFile(path.join(dir, 'agent-benchmark.report.json'), JSON.stringify({ passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } }, selfHealing: { summary: { passRate: 100 } }, integrations: { summary: { passRate: 100 } } }), 'utf8');
     await writeFile(path.join(dir, 'browser-e2e.report.json'), JSON.stringify({ passed: true }), 'utf8');
     const loaded = loadProofArtifacts(dir, { capabilityBenchmark: true });
     assert.equal(loaded.agentBenchmark.passed, true);
     assert.equal(loaded.agentBenchmark.scenarios.multiAgent, true);
+    assert.equal(loaded.agentBenchmark.scenarios.selfHealing, true);
+    assert.equal(loaded.agentBenchmark.scenarios.integrations, true);
     assert.equal(loaded.browserE2e.passed, true);
   } finally {
     await rm(dir, { recursive: true, force: true });
