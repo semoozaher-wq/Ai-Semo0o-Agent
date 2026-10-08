@@ -2,6 +2,14 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { resolveBackendUrl } from './backend-url';
 import { consumeSse } from './sse';
+import { createAccountApi } from '../account/api';
+import type {
+  ApiAccount,
+  ApiAccountDeletion,
+  ApiAccountExport,
+  ApiMfaSetup,
+  DeleteAccountInput,
+} from '../account/api';
 
 export interface ApiUser { id: string; tenantId: string; email: string; role: string }
 export interface ApiSession { token: string; expiresAt: string }
@@ -264,8 +272,17 @@ class BackendApiClient {
   async verifyEmail(token: string): Promise<Record<string, unknown>> { return this.request('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }); }
   async requestPasswordReset(email: string): Promise<Record<string, unknown>> { return this.request('/auth/request-password-reset', { method: 'POST', body: JSON.stringify({ email }) }); }
   async resetPassword(token: string, password: string): Promise<Record<string, unknown>> { return this.request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) }); }
-  async setupMfa(): Promise<{ secret: string; enabled: boolean }> { return this.request('/auth/mfa/setup', { method: 'POST' }); }
-  async confirmMfa(code: string): Promise<{ enabled: boolean }> { return this.request('/auth/mfa/confirm', { method: 'POST', body: JSON.stringify({ code }) }); }
+  // Account endpoints (profile, MFA, data export, deletion) are defined ONCE in
+  // ../account/api and bound to this client's authenticated transport here, so
+  // the wire contract is shared and independently testable.
+  private get account() {
+    return createAccountApi(<T>(path: string, init?: RequestInit) => this.request<T>(path, init));
+  }
+  async getAccount(): Promise<ApiAccount> { return this.account.getAccount(); }
+  async setupMfa(): Promise<ApiMfaSetup> { return this.account.setupMfa(); }
+  async confirmMfa(code: string): Promise<{ enabled: boolean }> { return this.account.confirmMfa(code); }
+  async deleteAccount(input: DeleteAccountInput): Promise<ApiAccountDeletion> { return this.account.deleteAccount(input); }
+  async exportAccount(): Promise<ApiAccountExport> { return this.account.exportAccount(); }
   async inviteMember(email: string, role: 'admin' | 'member' | 'viewer' = 'member'): Promise<{ invitationId: string; expiresAt: string; delivery: string }> { return this.request('/org/invitations', { method: 'POST', body: JSON.stringify({ email, role }) }); }
   async acceptInvitation(token: string): Promise<Record<string, unknown>> { return this.request('/org/invitations/accept', { method: 'POST', body: JSON.stringify({ token }) }); }
   async listMembers(): Promise<{ members: ApiMember[] }> { return this.request<{ members: ApiMember[] }>('/org/members'); }
@@ -355,3 +372,4 @@ class BackendApiClient {
 
 export const backendApi = new BackendApiClient();
 export { BackendApiClient };
+export type { ApiAccount, ApiAccountDeletion, ApiAccountExport, ApiMfaSetup, DeleteAccountInput } from '../account/api';
