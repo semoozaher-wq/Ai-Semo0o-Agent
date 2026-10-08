@@ -155,7 +155,7 @@ export async function runDirector(goal, options = {}) {
 
   // 1. Brief
   emit('stage', { stage: 'brief' });
-  const requested = await buildBrief(goal, { llm: options.llm, model: options.model, signal: options.signal });
+  const requested = await buildBrief(goal, briefOptions(options));
   const res = resolveResolution(requested, options);
   const brief = {
     ...requested,
