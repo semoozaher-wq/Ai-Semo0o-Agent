@@ -9,7 +9,10 @@ import { createMultiAgentOrchestrator } from './multi-agent.mjs';
 import { deliverRun, DELIVERY_EVENTS } from './delivery.mjs';
 import { redactDeep, collectKnownSecrets } from '../secrets/vault.mjs';
 import { loadOverrides } from '../self-improve/store.mjs';
-import { reflectOnRun, loadLessons } from './reflection.mjs';
+import { reflectOnRun } from './reflection.mjs';
+import { loadConsolidatedLessons, consolidateProjectMemory } from '../memory/consolidate.mjs';
+import { normalizeSuccessCriteria, evaluateCompletion, decideAutonomousAction, renderPlanContext } from './goal-completion.mjs';
+import { requiresApproval } from './safety.mjs';
 
 const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
 function addUsage(a = {}, b = {}) { return { promptTokens: (a.promptTokens || 0) + (b.promptTokens || 0), completionTokens: (a.completionTokens || 0) + (b.completionTokens || 0), totalTokens: (a.totalTokens || 0) + (b.totalTokens || 0) }; }
@@ -33,11 +36,16 @@ function writeEvidence(db, run, toolId, args, result, secrets = []) {
   db.run('INSERT INTO tool_calls(id,run_id,tool_id,input_json,output_json,status,created_at) VALUES(?,?,?,?,?,?,?)', id('tool'), run.id, toolId, JSON.stringify(safeArgs), JSON.stringify(safeResult), result.ok === false ? 'failed' : 'completed', now());
   return evidenceId;
 }
-function planPrompt(goal, { allowed = [...TOOL_BY_ID.keys()], hints = [], notes = [] } = {}) {
+function planPrompt(goal, { allowed = [...TOOL_BY_ID.keys()], hints = [], notes = [], taskType = null, criteria = [] } = {}) {
   const guidance = renderGuidance({ hints, notes });
-  return `You are the secure planner for an AI agent. Return ONLY JSON with this shape: {"reasoning":string,"steps":[{"id":string,"title":string,"toolId":string,"args":object}]. The toolId MUST be exactly one of: ${allowed.join(', ')}. Choose only tools that directly help. Never invent a tool name. Never choose email.send, calendar.schedule, image.generate, or image.analyze unless the user explicitly asks and the connector is available. For code delivery, inspect with git.status/git.diff/git.log, snapshot with git.checkpoint, and ship+verify with github.pr.create and github.ci.status. Use memory.search/memory.write for durable project context, web.extract/doc.extract for research, and code.review for LLM code review. Never choose slack.post, teams.post, discord.post, notion.page.create, webhook.post, github.issue.create, github.issue.comment, github.pr.create, git.checkpoint, or memory.write unless the user explicitly asks and the connector is configured.${guidance ? `\nLearned guidance (from verified past runs):\n${guidance}` : ''} Goal:\n${goal}`;
+  // Context-aware planning: instead of a keyword-only guess, the planner is given
+  // an explicit capability map (what the run can actually do) plus the success
+  // criteria it must be able to satisfy. This is appended to the SAME prompt, so
+  // the planner contract is unchanged apart from the new `successCriteria` field.
+  const contextBlock = renderPlanContext({ goal, taskType, toolIds: allowed, criteria, hints, notes });
+  return `You are the secure planner for an AI agent. Return ONLY JSON with this shape: {"reasoning":string,"successCriteria":string[],"steps":[{"id":string,"title":string,"toolId":string,"args":object}]. The toolId MUST be exactly one of: ${allowed.join(', ')}. Choose only tools that directly help. Never invent a tool name. Never choose email.send, calendar.schedule, image.generate, or image.analyze unless the user explicitly asks and the connector is available. For code delivery, inspect with git.status/git.diff/git.log, snapshot with git.checkpoint, and ship+verify with github.pr.create and github.ci.status. Use memory.search/memory.write for durable project context, web.extract/doc.extract for research, and code.review for LLM code review. Never choose slack.post, teams.post, discord.post, notion.page.create, webhook.post, github.issue.create, github.issue.comment, github.pr.create, git.checkpoint, or memory.write unless the user explicitly asks and the connector is configured. Also return "successCriteria": a short list of concrete, checkable criteria that define when the goal is DONE (e.g. "tests pass", "the file is updated", "the change is delivered").${guidance ? `\nLearned guidance (from verified past runs):\n${guidance}` : ''}\n${contextBlock ? `\nPlanning context:\n${contextBlock}\n` : ''} Goal:\n${goal}`;
 }
-function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys()), byId = TOOL_BY_ID) {
+function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys()), byId = TOOL_BY_ID, { taskType = null } = {}) {
   if (!raw || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > 12) throw new Error('PLANNER_INVALID_STEP_COUNT');
   const steps = raw.steps.map((step, index) => {
     const toolId = String(step.toolId || '');
@@ -46,11 +54,15 @@ function normalizePlan(raw, goal, allowed = new Set(TOOL_BY_ID.keys()), byId = T
     if (!step.args || typeof step.args !== 'object' || Array.isArray(step.args)) throw new Error(`PLANNER_INVALID_ARGS:${index}`);
     return { id: String(step.id || `step_${index + 1}`), title: String(step.title || toolId), toolId, args: step.args };
   });
-  return { id: id('plan'), goal, reasoning: String(raw.reasoning || ''), steps };
+  // Explicit success criteria: use the planner's list when usable, otherwise fall
+  // back to deterministic inference from the goal. A plan always carries criteria,
+  // so completion can be checked objectively at the end of the run.
+  const successCriteria = normalizeSuccessCriteria(raw.successCriteria, { goal, taskType });
+  return { id: id('plan'), goal, reasoning: String(raw.reasoning || ''), steps, successCriteria };
 }
 function verify(result) { return result && result.ok !== false && result.output !== undefined && result.output !== null; }
 
-export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resolveEngine, modelRouter = maestroModelRouter, secrets = collectKnownSecrets(), longRunning = false } = {}) {
+export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resolveEngine, modelRouter = maestroModelRouter, secrets = collectKnownSecrets(), longRunning = false, memory = null } = {}) {
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   const knownSecrets = Array.isArray(secrets) ? secrets : [];
   const redact = (value) => redactDeep(value, knownSecrets);
@@ -89,8 +101,10 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
     const context = compileRunContext({ task, workspace, payload, overrides });
     // Cross-run reflection: surface the most recent lessons distilled from this
     // project's previous runs as extra planner guidance (bounded, fail-soft).
+    // When long-term memory is available this also merges the consolidated
+    // knowledge doc, so learning accumulates instead of only looking back N runs.
     try {
-      const lessons = loadLessons(db, { tenantId: run.tenant_id, projectId: task?.project_id, limit: 5 });
+      const lessons = await loadConsolidatedLessons({ db, memory, tenantId: run.tenant_id, projectId: task?.project_id, limit: 8 });
       if (lessons.length) context.notes = [...context.notes, ...lessons];
     } catch { /* reflection is advisory: never block a run on it */ }
     const workspaceRoot = context.workspaceRoot;
@@ -160,6 +174,9 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
     // (the step index is otherwise scoped to the for-loop and invisible here).
     let plan;
     let lastStepIndex = resumeFrom;
+    // The most recent step verification, kept so the end-of-run goal-completion
+    // check can use the REAL verification verdict (not just "the loop finished").
+    let lastVerification = null;
     // Multi-Agent execution strategy: decompose the goal into a DAG of specialist
     // agents over the EXISTING dynamic planner (`phase2-core` TaskGraph) and run it
     // with conflict-checked parallel batches. It reuses the SAME tool registry,
@@ -207,13 +224,13 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       let planner;
       for (let attempt = 1; attempt <= limits.maxRetries; attempt += 1) {
         guard();
-        planner = await complete({ model: requestedModel ?? undefined, messages: [{ role: 'system', content: planPrompt(context.goal, { allowed: [...allowedTools], hints: context.hints, notes: context.notes }) }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
-        try { plan = normalizePlan(parseJson(planner.text), context.goal, allowedTools, view.byId); break; }
+        planner = await complete({ model: requestedModel ?? undefined, messages: [{ role: 'system', content: planPrompt(context.goal, { allowed: [...allowedTools], hints: context.hints, notes: context.notes, taskType: payload.taskType }) }, ...(attempt > 1 ? [{ role: 'user', content: 'Your previous plan was invalid. Re-plan using only the exact allowed tool IDs listed above.' }] : [])], signal });
+        try { plan = normalizePlan(parseJson(planner.text), context.goal, allowedTools, view.byId, { taskType: payload.taskType }); break; }
         catch (error) { emit(RECOVERY_EVENTS.planningFailed, { attempt, error: error.message }); if (attempt === limits.maxRetries) throw error; emit(RECOVERY_EVENTS.selfHealing, { action: 'replan', failureKind: classifyFailure(error, 'PLANNING_FAILURE'), attempt }); }
       }
       if (plan.steps.length > limits.maxSteps) throw new Error('AGENT_STEP_LIMIT_EXCEEDED');
       checkpoint(plan, resumeFrom);
-      emit('planning_completed', { provider: planner.provider, model: planner.model, requestedModel: planner.requestedModel, substituted: planner.substituted === true, routedModel: planner.routedModel, routeTaskType: planner.routeTaskType, routeChain: planner.routeChain, routeAttempts: planner.routeAttempts, steps: plan.steps.length, usage: planner.usage });
+      emit('planning_completed', { provider: planner.provider, model: planner.model, requestedModel: planner.requestedModel, substituted: planner.substituted === true, routedModel: planner.routedModel, routeTaskType: planner.routeTaskType, routeChain: planner.routeChain, routeAttempts: planner.routeAttempts, steps: plan.steps.length, successCriteria: plan.successCriteria.map((criterion) => criterion.text), usage: planner.usage });
       const toolSchemas = view.openAI();
       // Link the agent to the Phase 1 task workspace: resolve the per-task
       // AgentExecutionEngine once per run and hand it to every tool call. When no
@@ -249,7 +266,10 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         const step = plan.steps[index];
         const tool = view.byId.get(step.toolId);
         emit('step_started', { stepId: step.id, title: step.title, toolId: step.toolId });
-        if (view.dangerous.has(step.toolId) && !approvedTools.has(step.toolId)) {
+        // Approval boundary for destructive actions: the catalog's dangerous set
+        // PLUS the shared risk policy (which also gates irreversible/external
+        // side effects the catalog did not flag). Never re-gates an approved tool.
+        if ((view.dangerous.has(step.toolId) || requiresApproval(step.toolId)) && !approvedTools.has(step.toolId)) {
           const approvalId = id('approval');
           db.run('INSERT INTO approvals(id,run_id,requested_by,capability,decision,reason,created_at) VALUES(?,?,?,?,?,?,?)', approvalId, run.id, task.created_by, step.toolId, 'pending', `Agent requests ${step.toolId}: ${step.title}`, now());
           checkpoint(plan, index);
@@ -297,8 +317,21 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
           } catch (error) { throw new Error(`SELF_HEALING_FAILED:${error.message}`); }
         }
         if (stepFailed) {
+          // Bounded autonomous-loop decision: instead of an opaque inline
+          // `if (replans < maxReplans)`, the continue/recover/fail choice is made
+          // by a single, explicit, auditable function. It is bounded by
+          // construction (recover only while replan budget remains), so the loop
+          // can never run away.
+          const decision = decideAutonomousAction({
+            stepFailed: true,
+            failureKind,
+            replans,
+            maxReplans: limits.maxReplans,
+            remainingSteps: plan.steps.length - index - 1,
+          });
+          emit('autonomous_decision', { stepId: step.id, toolId: step.toolId, action: decision.action, reason: decision.reason, failureKind, replans, maxReplans: limits.maxReplans });
           // Recovery / Replan: try to route around the failure before giving up.
-          if (replans < limits.maxReplans) {
+          if (decision.action === 'recover') {
             replans += 1;
             emit(RECOVERY_EVENTS.selfHealing, { stepId: step.id, toolId: step.toolId, action: 'replan', failureKind, attempt: replans, error: toolResult.error });
             const recoverySteps = await planRecovery({ plan, step, error: toolResult.error });
@@ -319,6 +352,7 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
           throw new Error(toolResult.error || `TOOL_FAILED:${step.toolId}`);
         }
         const verification = verify(toolResult) ? { status: 'VERIFIED', evidenceId } : { status: 'UNVERIFIED', evidenceId };
+        lastVerification = verification;
         db.run('INSERT INTO evidence(id,run_id,kind,payload_json,sha256,created_at) VALUES(?,?,?,?,?,?)', id('evidence'), run.id, 'verification', JSON.stringify(verification), hash(JSON.stringify(verification)), now());
         emit('step_completed', { stepId: step.id, toolId: step.toolId, verification: verification.status, evidenceId });
         // Durable progress: persist the NEXT index so a continuation resumes
@@ -358,8 +392,22 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       ], signal });
       const finalModel = final.routedModel || final.model || requestedModel || 'gpt-5-mini';
       db.run('INSERT INTO run_usage(id,run_id,tenant_id,provider,model,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id('usage'), run.id, run.tenant_id, final.routedProvider || final.provider || planner.provider, finalModel, usage.promptTokens || 0, usage.completionTokens || 0, usage.totalTokens || 0, costUsd, now());
-      emit('run_finished', { status: 'completed', usage, costUsd, model: finalModel, routeTaskType: final.routeTaskType, routeAttempts: final.routeAttempts, final: final.text, delivery });
-      return { status: 'completed', final: final.text, plan, outputs, usage, costUsd, model: finalModel, delivery };
+      // Explicit goal-completion check: turn the plan's success criteria into a
+      // machine-readable verdict using ONLY real signals (tool outputs, the last
+      // verification verdict, the delivery outcome and the final answer). The run
+      // is still `completed` (every step verified), but a partially-met goal is
+      // surfaced honestly instead of being silently reported as a full success.
+      const completion = evaluateCompletion({
+        outputs,
+        verification: lastVerification,
+        criteria: plan.successCriteria || [],
+        delivery,
+        status: 'completed',
+        finalAnswer: final.text,
+      });
+      emit('goal_completion', { met: completion.met, score: completion.score, satisfied: completion.satisfied, unmet: completion.unmet, unknown: completion.unknown });
+      emit('run_finished', { status: 'completed', usage, costUsd, model: finalModel, routeTaskType: final.routeTaskType, routeAttempts: final.routeAttempts, final: final.text, delivery, completion: { met: completion.met, score: completion.score } });
+      return { status: 'completed', final: final.text, plan, outputs, usage, costUsd, model: finalModel, delivery, completion };
     } catch (error) {
       // Reroute: surface a clear, auditable event when the router exhausted every
       // provider in the chain, so operators can see it was a routing failure and
@@ -388,6 +436,13 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       if (!input?.run) return;
       const events = db.all('SELECT type,payload_json FROM run_events WHERE run_id=? ORDER BY created_at', input.run.id);
       reflectOnRun({ db, run: input.run, result, events });
+      // Cross-run learning: after distilling this run's lessons, refresh the
+      // project's consolidated knowledge doc so the NEXT run retrieves it. Fire
+      // and forget (bounded, fail-soft) so it can never affect this run.
+      if (memory) {
+        const projectId = input.run.project_id || db.get('SELECT project_id FROM tasks WHERE id=?', input.run.task_id)?.project_id;
+        if (projectId) consolidateProjectMemory({ db, memory, tenantId: input.run.tenant_id, projectId }).catch(() => {});
+      }
     } catch { /* reflection is best-effort */ }
   };
   // The result is persisted verbatim as `runs.result_json`, so it is redacted once

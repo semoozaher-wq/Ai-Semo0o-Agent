@@ -25,8 +25,9 @@
  * approved for the run (`approvedTools`), exactly like the single-agent loop.
  */
 
-import { TaskGraph, executeTaskGraph } from '../../phase2-core/platform.mjs';
+import { TaskGraph, executeTaskGraph, summarizeTaskGraph } from '../../phase2-core/platform.mjs';
 import { TOOL_BY_ID, DANGEROUS_TOOLS, fromProviderToolName } from './catalog.mjs';
+import { requiresApproval } from './safety.mjs';
 
 function addUsage(a = {}, b = {}) {
   return {
@@ -101,12 +102,72 @@ export function roleForKind(kind) {
   return AGENT_ROLES[kind] ?? AGENT_ROLES.task;
 }
 
+// Preference order used when a node's primary role has NO usable capability (all
+// of its allow-listed tools are unavailable): fall back to a role whose tools ARE
+// available so a run degrades gracefully instead of failing on a missing tool.
+const ROLE_FALLBACK_ORDER = Object.freeze(['task', 'retrieval', 'intelligence', 'planning', 'verification', 'implementation', 'delivery', 'report']);
+
+/**
+ * Capability-aware role assignment. Starts from the node's kind-specific role and
+ * keeps it whenever at least one of its tools is available (or the role needs no
+ * tools, e.g. the reporter). Otherwise it picks the first fallback role that has
+ * an available tool. When `availableTools` is not provided the behaviour is
+ * EXACTLY `roleForKind(kind)` (so nothing changes for existing callers).
+ */
+export function selectRoleForNode(node, { availableTools } = {}) {
+  const primary = roleForKind(node?.kind);
+  if (!(availableTools instanceof Set)) return primary;
+  const usable = (role) => role.tools.length === 0 || role.tools.some((toolId) => availableTools.has(toolId));
+  if (usable(primary)) return primary;
+  for (const key of ROLE_FALLBACK_ORDER) {
+    const role = AGENT_ROLES[key];
+    if (role && usable(role)) return role;
+  }
+  return primary;
+}
+
 /** OpenAI-format tool schemas for a role's allow-list (reuses the catalog). */
 export function roleToolSchemas(role) {
   return (role?.tools ?? [])
     .map((toolId) => TOOL_BY_ID.get(toolId))
     .filter(Boolean)
     .map((tool) => ({ type: 'function', function: { name: tool.id.replaceAll('.', '__'), description: tool.description, parameters: tool.parameters } }));
+}
+
+/**
+ * A bounded, shared context/evidence bus for the team. Every completed specialist
+ * node publishes a compact finding plus the evidence ids it produced; every other
+ * node (including the terminal reporter) reads a bounded view of it. This is how
+ * findings and artifacts flow between agents without re-passing the whole graph.
+ */
+export function createTeamBus({ maxFindings = 24, maxEvidence = 64 } = {}) {
+  const findings = [];
+  const evidence = [];
+  const artifacts = [];
+  return {
+    publishFinding(finding) {
+      if (!finding || typeof finding !== 'object') return;
+      findings.push(finding);
+      if (findings.length > maxFindings) findings.splice(0, findings.length - maxFindings);
+    },
+    publishEvidence(evidenceId, meta = {}) {
+      if (!evidenceId) return;
+      evidence.push({ id: evidenceId, ...meta });
+      if (evidence.length > maxEvidence) evidence.splice(0, evidence.length - maxEvidence);
+    },
+    publishArtifact(artifact) {
+      if (!artifact) return;
+      artifacts.push(artifact);
+      if (artifacts.length > maxEvidence) artifacts.splice(0, artifacts.length - maxEvidence);
+    },
+    view() {
+      return {
+        teamFindings: findings.map((finding) => ({ nodeId: finding.nodeId, kind: finding.kind, role: finding.role, summary: String(finding.text ?? '').slice(0, 1_200), tools: finding.tools ?? [] })),
+        evidenceIds: evidence.map((item) => item.id),
+        artifacts: artifacts.slice(-maxEvidence),
+      };
+    },
+  };
 }
 
 /**
@@ -122,7 +183,7 @@ export function roleToolSchemas(role) {
  * @param {number}   [deps.maxTurnsPerAgent] Tool turns per role agent (default 3).
  * @returns {Function} `orchestrate({ goal, run, task, workspaceRoot, engine, model, signal, context, approvedTools })`
  */
-export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costFor = () => 0, maxAttempts = 2, maxTurnsPerAgent = 3 } = {}) {
+export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costFor = () => 0, maxAttempts = 2, maxTurnsPerAgent = 3, maxParallel = 4 } = {}) {
   if (!llm || typeof llm.complete !== 'function') throw new Error('MULTI_AGENT_LLM_REQUIRED');
   if (!tools || typeof tools.run !== 'function') throw new Error('MULTI_AGENT_TOOLS_REQUIRED');
   const emitEvent = typeof emit === 'function' ? emit : () => {};
@@ -138,6 +199,10 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
       .map((dependency) => graph.nodes.find((item) => item.id === dependency))
       .filter(Boolean)
       .map((item) => ({ kind: item.kind, status: item.status, result: item.result ?? null }));
+    // Shared team context: a bounded view of every other agent's findings and the
+    // evidence ids they produced, so a node (especially the terminal reporter)
+    // synthesises over the WHOLE team's work, not only its direct dependencies.
+    const team = ctx.bus?.view?.() ?? { teamFindings: [], evidenceIds: [], artifacts: [] };
 
     for (let turn = 0; turn < maxTurnsPerAgent; turn += 1) {
       const messages = [
@@ -148,6 +213,7 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
             goal: ctx.goal,
             node: { id: node.id, title: node.title, kind: node.kind },
             dependencies: depSummaries,
+            team,
             completed: done.map((item) => ({ toolId: item.toolId, ok: item.result.ok !== false, output: item.result.output, error: item.result.error })),
             instruction: turn === 0
               ? 'Decide the single best next tool call from your allow-list, or return your final result as text.'
@@ -163,8 +229,10 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
 
       const toolId = fromProviderToolName(call.name);
       if (!role.tools.includes(toolId)) throw new Error(`AGENT_TOOL_NOT_ALLOWED:${role.id}:${toolId}`);
-      // Fail closed on a dangerous tool the run was not explicitly approved for.
-      if (DANGEROUS_TOOLS.has(toolId) && !ctx.approvedTools.has(toolId)) throw new Error(`AGENT_APPROVAL_REQUIRED:${toolId}`);
+      // Fail closed on a tool the run was not explicitly approved for. Uses the
+      // shared risk policy so destructive/external actions are gated identically
+      // to the single-agent loop (and plugin dangerous tools stay gated too).
+      if ((DANGEROUS_TOOLS.has(toolId) || requiresApproval(toolId)) && !ctx.approvedTools.has(toolId)) throw new Error(`AGENT_APPROVAL_REQUIRED:${toolId}`);
       const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
       let result;
       try {
@@ -174,6 +242,8 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
       }
       const evidenceId = recordEvidence(toolId, args, result);
       done.push({ toolId, args, result, evidenceId });
+      // Publish this tool's evidence to the shared bus so other agents can cite it.
+      ctx.bus?.publishEvidence?.(evidenceId, { nodeId: node.id, toolId, ok: result.ok !== false });
       emitEvent('multi_agent_tool_completed', { role: role.id, nodeId: node.id, toolId, ok: result.ok !== false, error: result.error, evidenceId });
       // A failed tool aborts the role agent so the graph's retry/replan can react.
       if (result.ok === false) throw new Error(result.error || `TOOL_FAILED:${toolId}`);
@@ -184,22 +254,40 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
   return async function orchestrate({ goal, run, task, workspaceRoot, engine, model, signal, context = {}, approvedTools } = {}) {
     const approved = approvedTools instanceof Set ? approvedTools : new Set(approvedTools ?? []);
     // The DAG is built by the EXISTING dynamic planner — no bespoke scheduling.
-    const graph = TaskGraph.fromGoal(goal, context);
+    // Prefer a dynamic, model-driven decomposition; `decompose` transparently
+    // falls back to the deterministic heuristic plan (`fromGoal`) when the model
+    // is unavailable or its output is unusable, so behaviour never regresses.
+    const graph = await TaskGraph.decompose(goal, context, { llm, model, signal });
     emitEvent('multi_agent_started', {
       goal,
+      planSource: graph.planSource ?? 'heuristic',
       nodes: graph.nodes.map((node) => ({ id: node.id, kind: node.kind, title: node.title, dependsOn: node.dependsOn })),
     });
 
     const outputs = [];
     let usage = {};
     let cost = 0;
+    // Capability-aware role assignment: only roles whose tools are actually
+    // available are eligible, so a missing connector degrades to a capable role
+    // instead of failing the whole node. When the registry exposes no view, this
+    // is exactly `roleForKind`.
+    const availableTools = (() => {
+      try {
+        const view = typeof tools.view === 'function' ? tools.view() : null;
+        if (view?.byId instanceof Map) return new Set(view.byId.keys());
+      } catch { /* fall through to kind-only assignment */ }
+      return null;
+    })();
+    const bus = createTeamBus();
     const runner = async (node, currentGraph) => {
-      const role = roleForKind(node.kind);
+      const role = selectRoleForNode(node, { availableTools });
       emitEvent('multi_agent_node_started', { nodeId: node.id, kind: node.kind, role: role.id, attempt: node.attempts });
-      const result = await runRole(role, node, currentGraph, { goal, run, task, workspaceRoot, engine, model, signal, approvedTools: approved });
+      const result = await runRole(role, node, currentGraph, { goal, run, task, workspaceRoot, engine, model, signal, approvedTools: approved, bus });
       usage = addUsage(usage, result.usage);
       cost += result.cost;
       outputs.push({ nodeId: node.id, kind: node.kind, role: result.role, text: result.text, toolCalls: result.outputs.map((item) => ({ toolId: item.toolId, ok: item.result.ok !== false, evidenceId: item.evidenceId })) });
+      // Publish this node's finding to the shared bus for the rest of the team.
+      bus.publishFinding({ nodeId: node.id, kind: node.kind, role: result.role, text: result.text, tools: result.outputs.map((item) => item.toolId) });
       emitEvent('multi_agent_node_completed', { nodeId: node.id, role: result.role, tools: result.outputs.map((item) => item.toolId), turns: result.turns });
       return { role: result.role, text: result.text, outputs: result.outputs };
     };
@@ -207,13 +295,25 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
       emitEvent('multi_agent_replanned', { nodeId: node.id, error: error instanceof Error ? error.message : String(error) });
     };
 
-    // Parallel batches + conflict detection + bounded retry/replan — all from
-    // the existing executor.
-    const result = await executeTaskGraph(graph, runner, { maxAttempts, replan });
+    // Parallel batches + conflict detection + bounded retry/replan — all from the
+    // existing executor. `maxParallel` keeps concurrent agents (and therefore
+    // concurrent model/tool calls) bounded.
+    const result = await executeTaskGraph(graph, runner, { maxAttempts, replan, maxParallel });
+    // Reconcile the team's outcomes into a single verdict instead of trusting the
+    // first node that finished: counts, failed/pending nodes and whether every
+    // completed node produced a result.
+    const reconciliation = result.summary ?? summarizeTaskGraph(graph);
+    // Final synthesis by the appropriate role: prefer the terminal reporter node's
+    // text; otherwise fall back to the last completed node's text.
+    const reportNode = graph.nodes.find((node) => node.kind === 'report' && node.status === 'completed');
+    const lastCompleted = [...graph.nodes].reverse().find((node) => node.status === 'completed');
+    const synthesis = reportNode?.result?.text ?? lastCompleted?.result?.text ?? null;
+    emitEvent('multi_agent_reconciled', { consistent: reconciliation.consistent, completed: reconciliation.completed, failed: reconciliation.failed, missingResults: reconciliation.missingResults });
     emitEvent('multi_agent_finished', {
       ok: result.ok,
       completed: graph.nodes.filter((node) => node.status === 'completed').length,
       failed: graph.nodes.filter((node) => node.status === 'failed').map((node) => node.id),
+      consistent: reconciliation.consistent,
     });
 
     return {
@@ -221,12 +321,15 @@ export function createMultiAgentOrchestrator({ llm, tools, emit, evidence, costF
       graph: {
         id: graph.id,
         goal: graph.goal,
-        nodes: graph.nodes.map((node) => ({ id: node.id, kind: node.kind, title: node.title, status: node.status, dependsOn: node.dependsOn, attempts: node.attempts, role: roleForKind(node.kind).id, ...(node.error ? { error: node.error } : {}) })),
+        planSource: graph.planSource ?? 'heuristic',
+        nodes: graph.nodes.map((node) => ({ id: node.id, kind: node.kind, title: node.title, status: node.status, dependsOn: node.dependsOn, attempts: node.attempts, role: selectRoleForNode(node, { availableTools }).id, ...(node.error ? { error: node.error } : {}) })),
       },
       events: result.events,
       outputs,
       usage,
       cost,
+      reconciliation,
+      synthesis,
     };
   };
 }
