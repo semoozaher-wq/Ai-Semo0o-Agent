@@ -73,22 +73,22 @@ export const DEFAULT_RUNTIME_FLAGS = Object.freeze({
 });
 
 // Which REAL end-to-end benchmark proves each capability. A capability is only
-// `proven` when its proof rule passes against the supplied proof object. A
-// capability with no rule (self-healing, integrations) can never be reported as
-// proven by the wired benchmarks — it stays honestly `wired`/`partial`.
+// `proven` when its proof rule passes against the supplied proof object. Every
+// capability now has a rule backed by a real benchmark scenario, so the scorecard
+// can reach a fully-proven state without ever granting `proven` from a flag alone.
 export const PROOF_MAP = Object.freeze({
   'codebase-understanding': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
   'dependency-graph': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
   'impact-analysis': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
   'change-intelligence': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
   'long-running': { source: 'agent-benchmark:long-running', test: (proof) => proof?.agentBenchmark?.scenarios?.longRunning === true },
-  'self-healing': null,
+  'self-healing': { source: 'agent-benchmark:self-healing', test: (proof) => proof?.agentBenchmark?.scenarios?.selfHealing === true },
   'deep-reasoning': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
   'multi-step-verification': { source: 'agent-benchmark:agent-loop', test: (proof) => proof?.agentBenchmark?.scenarios?.agentLoop === true },
   'computer-use': { source: 'browser-e2e', test: (proof) => proof?.browserE2e?.passed === true },
   'multi-agent': { source: 'agent-benchmark:multi-agent', test: (proof) => proof?.agentBenchmark?.scenarios?.multiAgent === true },
   'agent-evaluation': { source: 'agent-benchmark:code-intelligence', test: (proof) => proof?.agentBenchmark?.scenarios?.codeIntelligence === true },
-  'integrations': null,
+  'integrations': { source: 'agent-benchmark:integrations', test: (proof) => proof?.agentBenchmark?.scenarios?.integrations === true },
   'capability-benchmarking': { source: 'capability-benchmark', test: (proof) => proof?.capabilityBenchmark === true },
 });
 
@@ -129,6 +129,8 @@ export function normalizeProof(input = {}) {
     multiAgent: agent.multiAgent?.summary?.passRate === 100,
     longRunning: agent.longRunning?.summary?.passRate === 100,
     codeIntelligence: agent.codeIntelligence?.summary?.passRate === 100,
+    selfHealing: agent.selfHealing?.summary?.passRate === 100,
+    integrations: agent.integrations?.summary?.passRate === 100,
   };
   return {
     agentBenchmark: {
@@ -138,6 +140,8 @@ export function normalizeProof(input = {}) {
         multiAgent: scenarios.multiAgent === true,
         longRunning: scenarios.longRunning === true,
         codeIntelligence: scenarios.codeIntelligence === true,
+        selfHealing: scenarios.selfHealing === true,
+        integrations: scenarios.integrations === true,
       },
     },
     browserE2e: { passed: input.browserE2e?.passed === true },
