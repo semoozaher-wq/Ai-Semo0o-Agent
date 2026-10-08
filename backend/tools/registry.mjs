@@ -7,7 +7,7 @@ import { createCodeRunHandler } from '../runners/code-runner.mjs';
 import { BrowserPool } from '../browser/pool.mjs';
 import { runBrowserTask } from '../browser/runner.mjs';
 import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.mjs';
-import { assertSafeUrlResolved, assertWorkspacePath } from '../security/validators.mjs';
+import { assertSafeUrlResolved, assertWorkspacePath, safeFetchText } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
 import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from './connectors.mjs';
 import { buildProjectIntelligence } from '../../phase2-core/platform.mjs';
@@ -69,16 +69,15 @@ async function workspacePath(root, relative) {
   return { safe, resolved: real };
 }
 async function fetchText(args) {
-  const url = await assertSafeUrlResolved(args.url);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, { signal: controller.signal, headers: { 'user-agent': 'Semo0o-Agent/1.0' } });
-    if (!response.ok) throw new Error(`WEB_SCRAPE_HTTP_${response.status}`);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('text/') && !contentType.includes('json') && !contentType.includes('xml')) throw new Error('WEB_SCRAPE_UNSUPPORTED_CONTENT');
-    return { url: url.toString(), content: (await response.text()).replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, Math.min(Number(args.maxChars ?? 30000), 50000)) };
-  } finally { clearTimeout(timer); }
+  // SSRF-hardened fetch: the address validated by the guard is PINNED onto the
+  // socket (via `lookup`), so a rebinding host cannot pass the check and then
+  // resolve to a private IP (DNS rebinding / TOCTOU). Redirects are re-validated
+  // hop by hop by `safeFetchText`.
+  const { url, status, headers, body } = await safeFetchText(args.url, { timeoutMs: 15_000 });
+  if (status < 200 || status >= 300) throw new Error(`WEB_SCRAPE_HTTP_${status}`);
+  const contentType = String(headers['content-type'] ?? '');
+  if (!contentType.includes('text/') && !contentType.includes('json') && !contentType.includes('xml')) throw new Error('WEB_SCRAPE_UNSUPPORTED_CONTENT');
+  return { url, content: body.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, Math.min(Number(args.maxChars ?? 30000), 50000)) };
 }
 async function listFiles(root, scope = '', maxFiles = 500) {
   const start = (await workspacePath(root, scope || '.')).resolved;
