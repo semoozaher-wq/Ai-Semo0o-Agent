@@ -36,6 +36,16 @@ const DEFAULT_COMMANDS = new Set(['git', 'node', 'npm', 'npx']);
 // from checkpoints to keep evidence out of commits across runs.
 const EVIDENCE_CONTAINER = '.semo0o-evidence';
 
+// Deterministic author/committer identity for automated checkpoints. The sandbox
+// pins HOME inside the workspace (buildSandboxEnv), so a fresh task checkout has
+// no global gitconfig; when Git auto-detection is disabled (`user.useConfigOnly`)
+// a bare `git commit` fails with "Author identity unknown" (exit 128). Supplying
+// the identity explicitly keeps the checkpoint self-sufficient and reproducible.
+const CHECKPOINT_IDENTITY = Object.freeze({
+  name: 'semo0o-agent',
+  email: 'semo0o-agent@users.noreply.github.com',
+});
+
 // Environment variables that are safe to forward to sandboxed child processes.
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM'];
 // Names that must never reach a child process: they either let an attacker inject
@@ -736,10 +746,25 @@ export class RealGit {
 
     const add = await this.#run(['add', '--all', '--', '.', ...this.exclude.map((entry) => `:(exclude)${entry}`)], Capability.GIT_WRITE);
     if (!add.ok) throw new ExecutionError('Unable to stage checkpoint changes.', 'GIT_ADD_FAILED', add);
-    const commit = await this.#run(['commit', '--no-gpg-sign', '-m', message.trim()], Capability.GIT_WRITE);
+    // Supply the checkpoint identity explicitly (`-c` must precede the subcommand)
+    // so the commit never depends on an ambient global gitconfig or on Git's
+    // host-based auto-detection, both of which are absent inside the sandbox.
+    const commit = await this.#run(
+      [
+        '-c',
+        `user.name=${CHECKPOINT_IDENTITY.name}`,
+        '-c',
+        `user.email=${CHECKPOINT_IDENTITY.email}`,
+        'commit',
+        '--no-gpg-sign',
+        '-m',
+        message.trim(),
+      ],
+      Capability.GIT_WRITE,
+    );
     if (!commit.ok) throw new ExecutionError('Unable to create checkpoint commit.', 'GIT_COMMIT_FAILED', commit);
     const revision = await this.#run(['rev-parse', 'HEAD'], Capability.GIT_READ);
-    const result = { created: true, revision: revision.stdout.trim(), commit };
+    const result = { created: true, revision: revision.stdout.trim(), author: { ...CHECKPOINT_IDENTITY }, commit };
     await this.evidence.record('git_checkpoint', result);
     return result;
   }
