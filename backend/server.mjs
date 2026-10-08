@@ -16,6 +16,7 @@ import { TOOL_BY_ID } from './agent/catalog.mjs';
 import { listReflections } from './agent/reflection.mjs';
 import { evaluateRun, evaluateRuns, compareRuns } from './agent/evaluation.mjs';
 import { buildExperienceSnapshot, summarizeExperience, recoveryPriorFromSnapshot, strategyPriorFromSnapshot, executionPriorFromSnapshot } from './agent/experience.mjs';
+import { learningSummary } from './agent/learning-loop.mjs';
 import { riskPolicy, degradedCapabilities, validateStartupConfig } from './agent/safety.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
@@ -1166,6 +1167,20 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
             execution: executionPriorFromSnapshot(snapshot),
           },
         });
+      }
+      // --- Unified learning loop -------------------------------------------
+      // One read-only view of the WHOLE closed loop for this tenant: the
+      // EVALUATION scorecard, the EXPERIENCE snapshot summary, the open
+      // SELF-IMPROVE proposals and the latest REFLECTIONS — i.e. all five
+      // components (Experience + Evaluation + Reflection + Memory + Self-Improve)
+      // side by side, so an operator can see what the system has actually learned
+      // and whether it is improving. Pure reads; tenant-scoped; fail-soft.
+      if (method === 'GET' && parts.join('/') === 'learning/summary') {
+        const url = new URL(request.url, 'http://localhost');
+        const projectId = url.searchParams.get('projectId') || undefined;
+        if (projectId) { const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', projectId, user.tenantId); assertProjectAccess(project, user); }
+        const windowHours = Math.max(1, Math.min(24 * 90, Number(url.searchParams.get('windowHours')) || 168));
+        return send(response, 200, learningSummary({ db, tenantId: user.tenantId, projectId, windowHours }));
       }
       // --- Production safety / degradation ----------------------------------
       // The active risk policy plus a live graceful-degradation report (which
