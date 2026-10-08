@@ -93,7 +93,11 @@ export class TaskGraph {
     const verify = add('تشغيل الاختبارات والتحقق من الأدلة', 'verification', { dependsOn: [implement], reads: ['workspace'], writes: ['evidence'] });
     if (/browser|متصفح|موقع|واجهة/.test(text)) add('التحقق من المتصفح والصفحة', 'browser', { dependsOn: [verify], reads: ['browser'], writes: ['evidence'] });
     if (/search|بحث|rag|ذاكرة|memory|وثائق/.test(text)) add('استرجاع السياق من ذاكرة المشروع', 'retrieval', { dependsOn: [inspect], reads: ['rag'], writes: ['context'] });
-    const finalDeps = nodes.filter((node) => ['browser', 'retrieval', 'verification'].includes(node.kind)).map((node) => node.id);
+    // Delivery node: only for goals that explicitly ask to ship the change
+    // (branch / commit / PR / CI / merge). It depends on verification so a PR is
+    // never opened before the change has been verified.
+    if (/pull request|\bpr\b|github|commit|\bci\b|deliver|تسليم|فرع|دمج|طلب دمج|التزام/.test(text)) add('تسليم التغييرات (فرع/PR/CI)', 'delivery', { dependsOn: [verify], reads: ['workspace', 'evidence'], writes: ['delivery'] });
+    const finalDeps = nodes.filter((node) => ['browser', 'retrieval', 'verification', 'delivery'].includes(node.kind)).map((node) => node.id);
     add('تجميع التقرير النهائي', 'report', { dependsOn: finalDeps.length ? finalDeps : [verify], reads: ['evidence', 'context'], writes: ['report'] });
     return new TaskGraph(goal, nodes);
   }
