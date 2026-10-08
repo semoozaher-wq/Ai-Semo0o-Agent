@@ -150,6 +150,54 @@ test('regression: RealGit.checkpoint ignores excluded scratch and reports clean_
   }
 });
 
+test('regression: deliverRun commits even when the checkout has no git identity (auto-detection disabled)', async () => {
+  // The sandbox pins HOME inside the workspace (buildSandboxEnv), so a fresh task
+  // checkout has no global gitconfig. When Git auto-detection is also disabled
+  // (`user.useConfigOnly`), a bare `git commit` exits 128 with "Author identity
+  // unknown" and deliverRun used to fail closed with `checkpoint_failed`. This is
+  // the exact production condition that broke the lifecycle E2E, the deliverRun
+  // test and the production trial, so the checkpoint must supply its own identity.
+  const source = await makeSourceRepo();
+  const base = await mkdtemp(path.join(os.tmpdir(), 'semo0o-delivery-base-'));
+  const handle = await provisionTaskWorkspace({ taskId: 'task_deliver_no_identity', repo: source, baseRoot: base });
+  try {
+    // A fresh clone must not carry the source repo's local identity...
+    let hasLocalIdentity = true;
+    try {
+      git(handle.workspacePath, ['config', '--local', 'user.email']);
+    } catch {
+      hasLocalIdentity = false;
+    }
+    assert.equal(hasLocalIdentity, false, 'the fresh clone must not carry a local identity');
+    // ...and auto-detection is disabled, exactly like the failing environment.
+    git(handle.workspacePath, ['config', '--local', 'user.useConfigOnly', 'true']);
+
+    const headBefore = git(handle.workspacePath, ['rev-parse', 'HEAD']);
+    const mainTip = git(handle.workspacePath, ['rev-parse', 'main']);
+    await writeFile(path.join(handle.workspacePath, 'app.js'), 'module.exports = 4;\n', 'utf8');
+
+    const result = await deliverRun({ engine: handle.engine, goal: 'commit without an ambient identity' });
+    assert.equal(result.delivered, true, JSON.stringify(result));
+    assert.equal(result.branch, 'semo0o/task/task_deliver_no_identity');
+    assert.ok(result.revision, 'a delivery must report the commit revision');
+    assert.notEqual(result.revision, headBefore);
+
+    // The commit really landed on the task branch, authored by the deterministic
+    // checkpoint identity (not by a host-dependent auto-detected identity).
+    assert.equal(git(handle.workspacePath, ['rev-parse', 'HEAD']), result.revision);
+    assert.equal(
+      git(handle.workspacePath, ['log', '-1', '--pretty=%an <%ae>']),
+      'semo0o-agent <semo0o-agent@users.noreply.github.com>',
+    );
+    assert.match(git(handle.workspacePath, ['log', '-1', '--pretty=%s']), /^semo0o: deliver/);
+    // ...and the protected default branch is still untouched.
+    assert.equal(git(handle.workspacePath, ['rev-parse', 'main']), mainTip);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(source, { recursive: true, force: true });
+  }
+});
+
 test('DELIVERY_EVENTS exposes the lifecycle event names', () => {
   assert.equal(DELIVERY_EVENTS.completed, 'delivery_completed');
   assert.equal(DELIVERY_EVENTS.skipped, 'delivery_skipped');
