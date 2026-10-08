@@ -35,13 +35,13 @@
 - [x] Fix accuracy: passing E2E proof establishes proven even when static config flag unset (computer-use now PROVEN)
 
 ## 5. Full verification
-- [x] npm test (297 tests / 296 pass / 0 fail / 1 skip, EXIT=0)
+- [x] npm test (297 tests / 296 pass / 0 fail / 1 skip, EXIT=0) — re-run after final edit, still green
 - [x] typecheck EXIT=0; security:scan EXIT=0; audit:gate PASS
 - [x] agent benchmark PASS (4/4 100%); browser E2E PASS (3/3); capability benchmark 94/100 (11 proven)
-- [ ] red-team + capability tests re-run after final edit
-- [ ] git diff + git status review
+- [x] red-team 12/12 + capability 19/19 + audit-gate 5/5 re-run after final edit
+- [x] git diff + git status review (minimal, linked, no duplication/out-of-scope)
 
 ## 6. Delivery
-- [ ] Build ZIP with ONLY modified/added files at original repo paths
-- [ ] Verify ZIP integrity + contents + paths
-- [ ] Final reports
+- [x] Build ZIP with ONLY modified/added files at original repo paths (15 files)
+- [x] Verify ZIP integrity + contents + paths (unzip -t OK; byte-for-byte match working tree)
+- [x] Final reports
