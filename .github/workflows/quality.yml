@@ -32,9 +32,11 @@ jobs:
       - name: Secret and SAST scan
         run: npm run security:scan
 
-      - name: Dependency audit
-        continue-on-error: true
-        run: npm run audit:production
+      # Dependency-audit release gate. NOT ignored: it fails on any advisory,
+      # newly-affected package or severity escalation outside the reviewed
+      # baseline (scripts/audit-baseline.json). `continue-on-error: true` removed.
+      - name: Dependency audit gate (fails on new advisories)
+        run: npm run audit:gate
 
       # Proves every relative import/require in the backend resolves to a real
       # file. This guards the backend's sibling modules (auth/, queue/, runners/,
@@ -83,6 +85,22 @@ jobs:
 
       - name: Browser integration smoke test
         run: node scripts/browser-smoke.mjs
+
+      # Real Browser E2E: launches a REAL Chromium and drives it over CDP
+      # (navigate -> click -> type -> scroll -> verify -> screenshot) through the
+      # product's own browser path (backend/browser/* -> phase2-core/browser-agent).
+      # CHROMIUM_BIN is set by the step above; BROWSER_NO_SANDBOX is only needed
+      # when running as root (e.g. a container), never on GitHub-hosted runners.
+      # Exits non-zero on any failed scenario, so it is a real release gate.
+      - name: "Browser E2E (real CDP: navigate/click/type/scroll/verify/screenshot)"
+        run: npm run test:browser-e2e
+
+      # Real Agent E2E benchmark: drives the REAL stack (HTTP API -> RunQueue ->
+      # agent runtime -> tools -> evidence) and proves the single-agent loop, the
+      # multi-agent TaskGraph, the long-running continuation, and the
+      # code-intelligence benchmark. Exits non-zero unless every scenario passes.
+      - name: "Agent E2E benchmark (agent-loop, multi-agent, long-running, code-intelligence)"
+        run: npm run benchmark:agent
 
       # Boots the real backend server and exercises the core E2E path:
       #   boot -> /health -> /ready -> POST /auth/register -> GET /tools/status
