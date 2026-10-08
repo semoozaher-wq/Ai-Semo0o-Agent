@@ -198,6 +198,56 @@ export interface ApiSelfImproveEvent { id: string; proposalId: string | null; ph
 export interface ApiOutboxEmail { id: string; to: string; template: string; subject: string; status: string; attempts: number; error: string | null; createdAt: string; sentAt: string | null }
 export interface ApiOutboxResponse { providerConfigured: boolean; emails: ApiOutboxEmail[] }
 
+// --- Creation Studio ---------------------------------------------------------
+// One goal in, a real deliverable out. Mirrors the `/creation/*` backend routes.
+export interface ApiCreationCapabilities {
+  kernel: boolean;
+  localStudio: boolean;
+  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; music: boolean; mediaAnalysis: boolean };
+  formats: string[];
+  resolutions: string[];
+}
+export interface ApiCreationBrief {
+  goal: string; title: string; logline: string; type: string; tone: string; mood: string;
+  audience: string; language: string; format: string; width: number; height: number; fps: number;
+  duration: number; palette: string; paletteColors: { background: string; accent: string; secondary: string; text: string; muted: string };
+  keywords: string[]; keyMessages: string[]; cta: string; captions: boolean; voiceover: boolean; musicMood: string;
+  aspect: string; slug: string; source: string;
+}
+export interface ApiCreationScene { id: string; purpose: string; role: string; headline: string; subhead: string; duration: number; camera: string; transitionIn: string; caption: string; accent: string }
+export interface ApiCreationStoryboard { scenes: ApiCreationScene[]; source: string }
+export interface ApiCreationCritique { score: number; subscores: Record<string, number>; issues: { severity: string; area: string; message: string }[]; directives: { area: string; action: string; detail: string }[]; source: string }
+export interface ApiCreationManifest {
+  title: string; goal: string; width: number; height: number; fps: number; duration: number; frameCount: number;
+  hasAudio: boolean; formats: string[]; score: number; iterations: number;
+  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; music: boolean; mediaAnalysis: boolean };
+  generatedAt: string; elapsedMs: number;
+}
+export interface ApiCreationArtifact { bytes: number; mimeType: string }
+export interface ApiCreationJob {
+  id: string; goal: string; status: string; createdAt: string; updatedAt: string; elapsedMs: number;
+  progress: { stage: string; done: number; total: number };
+  error: string | null;
+  result: null | {
+    brief: ApiCreationBrief; storyboard: ApiCreationStoryboard; bibles: unknown; timeline: unknown;
+    critique: ApiCreationCritique; iterations: { iteration: number; score: number; subscores: Record<string, number> }[];
+    manifest: ApiCreationManifest; assets: string[];
+  };
+  artifacts: { gif: ApiCreationArtifact | null; avi: ApiCreationArtifact | null; bundle: ApiCreationArtifact | null };
+}
+export interface ApiCreationEvent { seq: number; type: string; payload: Record<string, unknown>; at: string }
+export interface ApiCreationPlan { brief: ApiCreationBrief; storyboard: ApiCreationStoryboard; bibles: unknown; prompts: unknown[]; elapsedMs: number }
+export interface ApiCreationJobInput {
+  goal: string;
+  format?: 'landscape' | 'portrait' | 'square' | 'wide';
+  duration?: number;
+  palette?: string;
+  resolution?: 'draft' | 'standard' | 'high' | 'full';
+  fps?: number;
+  bundle?: boolean;
+  model?: string;
+}
+
 type StoredBootstrap = { email: string; password: string };
 
 function randomSecret(): string {
@@ -367,6 +417,24 @@ class BackendApiClient {
   async streamEvents(runId: string, onEvent: (event: ApiEvent) => void, signal?: AbortSignal): Promise<void> {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`, { headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
     await consumeSse(response, ({ data }) => onEvent(data as ApiEvent));
+  }
+  // --- Creation Studio -----------------------------------------------------
+  async getCreationCapabilities(): Promise<ApiCreationCapabilities> { return this.request<ApiCreationCapabilities>('/creation/capabilities'); }
+  async startCreationJob(input: ApiCreationJobInput): Promise<ApiCreationJob> { return this.request<ApiCreationJob>('/creation/jobs', { method: 'POST', body: JSON.stringify(input) }); }
+  async listCreationJobs(): Promise<{ jobs: ApiCreationJob[] }> { return this.request<{ jobs: ApiCreationJob[] }>('/creation/jobs'); }
+  async getCreationJob(id: string): Promise<ApiCreationJob> { return this.request<ApiCreationJob>(`/creation/jobs/${encodeURIComponent(id)}`); }
+  async getCreationEvents(id: string, since = 0): Promise<{ jobId: string; status: string; events: ApiCreationEvent[] }> {
+    return this.request(`/creation/jobs/${encodeURIComponent(id)}/events?since=${encodeURIComponent(String(since))}`);
+  }
+  async cancelCreationJob(id: string): Promise<ApiCreationJob> { return this.request<ApiCreationJob>(`/creation/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
+  async planCreation(input: ApiCreationJobInput): Promise<ApiCreationPlan> { return this.request<ApiCreationPlan>('/creation/plan', { method: 'POST', body: JSON.stringify(input) }); }
+  /** Public (token-free) URL for a job artefact, so it can be opened/downloaded directly. */
+  creationArtifactUrl(id: string, name: 'gif' | 'avi' | 'bundle'): string {
+    return `${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}`;
+  }
+  async streamCreationEvents(id: string, onEvent: (event: ApiCreationEvent) => void, signal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/events`, { headers: { accept: 'text/event-stream', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
+    await consumeSse(response, ({ data }) => onEvent(data as ApiCreationEvent));
   }
 }
 
