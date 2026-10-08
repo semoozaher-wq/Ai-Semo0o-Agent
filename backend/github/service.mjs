@@ -3,9 +3,16 @@
 // Every network call is bounded and the endpoints are hard-coded to github.com
 // so a caller cannot redirect the integration into an SSRF target.
 
+import JSZip from 'jszip';
+
 const GITHUB_API = 'https://api.github.com';
 const GITHUB_OAUTH_AUTHORIZE = 'https://github.com/login/oauth/authorize';
 const GITHUB_OAUTH_TOKEN = 'https://github.com/login/oauth/access_token';
+
+// Hosts GitHub is allowed to redirect a log download to. The initial request is
+// always pinned to api.github.com; this guard stops a spoofed Location header
+// from turning the download into an SSRF/exfil vector.
+const ALLOWED_LOG_HOSTS = /(^|\.)(github\.com|githubusercontent\.com|githubassets\.com)$/i;
 
 export function parseRepoSlug(slug) {
   const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String(slug || '').trim());
@@ -52,6 +59,50 @@ async function githubRequest(token, path, { method = 'GET', body, timeoutMs = 20
       throw new Error(`GITHUB_API_ERROR:${response.status}:${code}`);
     }
     return data ?? {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Download a GitHub-hosted archive (currently only the Actions log bundle, which
+// the API serves as a 302 to a short-lived signed URL). The redirect target is
+// validated against the GitHub host allow-list before it is followed.
+async function githubDownload(token, path, { timeoutMs: ms = 45000, maxBytes = 16 * 1024 * 1024 } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('GITHUB_API_TIMEOUT')), ms);
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'Ai-Semo0o-Agent', ...(token ? { authorization: `Bearer ${token}` } : {}) };
+  try {
+    let response;
+    try {
+      response = await fetch(`${GITHUB_API}${path}`, { headers, redirect: 'manual', signal: controller.signal });
+    } catch {
+      if (controller.signal.aborted) throw new Error('GITHUB_API_TIMEOUT');
+      throw new Error('GITHUB_API_UNREACHABLE');
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location') || '';
+      let parsed;
+      try { parsed = new URL(location); } catch { throw new Error('GITHUB_LOG_REDIRECT_INVALID'); }
+      if (parsed.protocol !== 'https:' || !ALLOWED_LOG_HOSTS.test(parsed.hostname)) throw new Error('GITHUB_LOG_REDIRECT_BLOCKED');
+      let asset;
+      try {
+        asset = await fetch(parsed.toString(), { redirect: 'follow', signal: controller.signal });
+      } catch {
+        if (controller.signal.aborted) throw new Error('GITHUB_API_TIMEOUT');
+        throw new Error('GITHUB_API_UNREACHABLE');
+      }
+      if (!asset.ok) throw new Error(`GITHUB_LOG_HTTP_${asset.status}`);
+      const arrayBuffer = await asset.arrayBuffer();
+      if (arrayBuffer.byteLength > maxBytes) throw new Error('GITHUB_LOG_TOO_LARGE');
+      return { response: asset, buffer: Buffer.from(arrayBuffer) };
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`GITHUB_API_ERROR:${response.status}:${scrub(text.slice(0, 200), [token])}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > maxBytes) throw new Error('GITHUB_LOG_TOO_LARGE');
+    return { response, buffer: Buffer.from(arrayBuffer) };
   } finally {
     clearTimeout(timer);
   }
@@ -122,6 +173,77 @@ export function createGitHubClient({ token, timeoutMs = 20000 } = {}) {
     async listWorkflowRunJobs({ owner, repo, runId }) {
       const data = await githubRequest(token, `/repos/${owner}/${repo}/actions/runs/${Number(runId)}/jobs`, { timeoutMs });
       return (data.jobs ?? []).map((job) => ({ id: job.id, name: job.name, status: job.status, conclusion: job.conclusion ?? null, steps: (job.steps ?? []).map((step) => ({ name: step.name, status: step.status, conclusion: step.conclusion ?? null })) }));
+    },
+    // Download and unzip the Actions run log bundle into per-file text. This is
+    // the raw evidence an autonomous fix loop reads to understand *why* CI failed
+    // (the step-level conclusion alone is not enough to plan a fix).
+    async downloadWorkflowRunLogs({ owner, repo, runId, maxBytes = 4 * 1024 * 1024 }) {
+      const { buffer } = await githubDownload(token, `/repos/${owner}/${repo}/actions/runs/${Number(runId)}/logs`, { timeoutMs: timeoutMs + 25000 });
+      let zip;
+      try { zip = await JSZip.loadAsync(buffer); } catch { throw new Error('GITHUB_LOG_ARCHIVE_INVALID'); }
+      const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir).sort();
+      const files = [];
+      let total = 0;
+      for (const name of names) {
+        if (total >= maxBytes) break;
+        let content = '';
+        try { content = await zip.files[name].async('string'); } catch { continue; }
+        const clipped = content.slice(0, Math.max(0, maxBytes - total));
+        total += clipped.length;
+        files.push({ name, bytes: Buffer.byteLength(content), text: clipped });
+      }
+      return { runId: Number(runId), files, truncated: total >= maxBytes, totalBytes: total };
+    },
+    async rerunWorkflowRun({ owner, repo, runId }) {
+      await githubRequest(token, `/repos/${owner}/${repo}/actions/runs/${Number(runId)}/rerun`, { method: 'POST', timeoutMs });
+      return { runId: Number(runId), rerun: true };
+    },
+    async rerunFailedJobs({ owner, repo, runId }) {
+      await githubRequest(token, `/repos/${owner}/${repo}/actions/runs/${Number(runId)}/rerun-failed-jobs`, { method: 'POST', timeoutMs });
+      return { runId: Number(runId), rerunFailedJobs: true };
+    },
+    async listPullRequestReviews({ owner, repo, number }) {
+      const data = await githubRequest(token, `/repos/${owner}/${repo}/pulls/${Number(number)}/reviews`, { timeoutMs });
+      return data.map((review) => ({ id: review.id, user: review.user?.login ?? null, state: review.state, body: String(review.body ?? '').slice(0, 2000), submittedAt: review.submitted_at ?? null }));
+    },
+    async getPullRequestFiles({ owner, repo, number, limit = 100 }) {
+      const data = await githubRequest(token, `/repos/${owner}/${repo}/pulls/${Number(number)}/files?per_page=${Math.min(Math.max(limit, 1), 100)}`, { timeoutMs });
+      return data.map((file) => ({ filename: file.filename, status: file.status, additions: file.additions ?? 0, deletions: file.deletions ?? 0, changes: file.changes ?? 0 }));
+    },
+    async mergePullRequest({ owner, repo, number, method = 'squash', commitTitle }) {
+      const mergeMethod = ['merge', 'squash', 'rebase'].includes(method) ? method : 'squash';
+      const body = { merge_method: mergeMethod };
+      if (commitTitle) body.commit_title = String(commitTitle).slice(0, 256);
+      const data = await githubRequest(token, `/repos/${owner}/${repo}/pulls/${Number(number)}/merge`, { method: 'PUT', body, timeoutMs });
+      return { merged: Boolean(data.merged), sha: data.sha ?? null, message: data.message ?? null };
+    },
+    // Composite verification: PR state + reviews + checks + changed files. The
+    // autonomous loop calls this to decide whether a PR is truly ready to merge.
+    async verifyPullRequest({ owner, repo, number }) {
+      const pr = await this.getPullRequest({ owner, repo, number });
+      const ref = pr.head ?? 'HEAD';
+      const [reviews, files, combined, checks] = await Promise.all([
+        this.listPullRequestReviews({ owner, repo, number }).catch(() => []),
+        this.getPullRequestFiles({ owner, repo, number }).catch(() => []),
+        this.getCombinedStatus({ owner, repo, ref }).catch(() => null),
+        this.listCheckRuns({ owner, repo, ref }).catch(() => null),
+      ]);
+      const approvals = reviews.filter((review) => review.state === 'APPROVED').length;
+      const changesRequested = reviews.filter((review) => review.state === 'CHANGES_REQUESTED').map((review) => review.user);
+      const checkRuns = checks?.checkRuns ?? [];
+      const failing = checkRuns.filter((run) => run.conclusion && !['success', 'neutral', 'skipped'].includes(run.conclusion)).map((run) => run.name);
+      const pending = checkRuns.filter((run) => run.status && run.status !== 'completed').map((run) => run.name);
+      const green = combined?.state === 'success' && failing.length === 0 && pending.length === 0;
+      const mergeable = pr.mergeable !== false && pr.state === 'open';
+      let verdict = 'ready';
+      if (pr.merged) verdict = 'merged';
+      else if (pr.state !== 'open') verdict = 'closed';
+      else if (changesRequested.length > 0) verdict = 'changes_requested';
+      else if (!mergeable) verdict = 'conflicts';
+      else if (failing.length > 0) verdict = 'failing';
+      else if (pending.length > 0 || (combined && combined.state === 'pending')) verdict = 'pending';
+      else if (!green) verdict = 'unknown';
+      return { number: pr.number, state: pr.state, merged: pr.merged, mergeable, head: pr.head, base: pr.base, approvals, changesRequested, reviews, files, combinedState: combined?.state ?? 'unknown', checkRuns, failing, pending, green, verdict, url: pr.url };
     },
   };
 }
