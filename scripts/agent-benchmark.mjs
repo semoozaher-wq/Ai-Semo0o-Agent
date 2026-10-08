@@ -13,6 +13,11 @@
  *                        transparently resumed by the ContinuationSupervisor
  *   4. code-intelligence — the code-intelligence agent benchmark
  *                        (backend/ops/capability-benchmark.mjs) over the real index
+ *   5. self-healing    — a step whose FIRST tool call fails, is diagnosed by the
+ *                        real recovery loop, repaired, and then succeeds
+ *   6. integrations    — a REAL `email.send` tool call delivered over a local
+ *                        HTTP connector (EMAIL_PROVIDER=webhook) and reported
+ *                        `live` by the live tool registry
  *
  * Nothing is mocked except the LLM: the planner is deterministic so the
  * benchmark is reproducible without network or API keys, while still exercising
@@ -24,6 +29,7 @@
  * Exit code is non-zero when the benchmark does not pass.
  */
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,18 +72,44 @@ function deterministicLLM({ plannerDelayMs = 0 } = {}) {
     async complete({ messages = [] } = {}) {
       const system = messages.find((message) => message.role === 'system')?.content ?? '';
       const user = messages.find((message) => message.role === 'user')?.content ?? '';
-      // --- Single-agent planner ---
-      if (system.includes('secure planner')) {
-        if (delay) await sleep(delay);
+      // --- Recovery re-plan (checked BEFORE the planner branch: the recovery
+      // prompt embeds the planner prompt plus a "previous step FAILED" note) ---
+      if (system.includes('A previous step FAILED')) {
         return {
           provider: 'benchmark',
           text: JSON.stringify({
-            reasoning: 'Scan the workspace and analyze a source file to gather evidence.',
-            steps: [
-              { id: 'step_1', title: 'Scan workspace', toolId: 'files.scan', args: { scope: '.', maxFiles: 50 } },
-              { id: 'step_2', title: 'Analyze app.js', toolId: 'code.analyze', args: { path: 'app.js' } },
-            ],
+            reasoning: 'Route around the failed step with a safe read of the known file.',
+            steps: [{ id: 'recovery_1', title: 'Read app.js instead', toolId: 'files.read', args: { path: 'app.js' } }],
           }),
+          toolCalls: [],
+          usage: usage(8, 16),
+        };
+      }
+      // --- Self-healing diagnosis: the real runtime asks the model to repair a
+      // failed tool call. The repair points the read at a file that exists. ---
+      if (system.includes('Diagnose the failed tool call')) {
+        return { provider: 'benchmark', text: JSON.stringify({ action: 'retry', args: { path: 'app.js' } }), toolCalls: [], usage: usage(6, 12) };
+      }
+      // --- Single-agent planner (goal-scoped so each scenario plans its own work) ---
+      if (system.includes('secure planner')) {
+        if (delay) await sleep(delay);
+        const steps = system.includes('SELF_HEAL')
+          ? [
+              { id: 'step_1', title: 'Read the missing input', toolId: 'files.read', args: { path: 'missing-input.txt' } },
+              { id: 'step_2', title: 'Analyze app.js', toolId: 'code.analyze', args: { path: 'app.js' } },
+            ]
+          : system.includes('INTEGRATE')
+            ? [
+                { id: 'step_1', title: 'Read app.js', toolId: 'files.read', args: { path: 'app.js' } },
+                { id: 'step_2', title: 'Email the summary', toolId: 'email.send', args: { to: 'ops@example.com', subject: 'Benchmark integration proof', body: 'delivered by the live email connector' } },
+              ]
+            : [
+                { id: 'step_1', title: 'Scan workspace', toolId: 'files.scan', args: { scope: '.', maxFiles: 50 } },
+                { id: 'step_2', title: 'Analyze app.js', toolId: 'code.analyze', args: { path: 'app.js' } },
+              ];
+        return {
+          provider: 'benchmark',
+          text: JSON.stringify({ reasoning: 'Gather evidence with the allowed tools.', steps }),
           toolCalls: [],
           usage: usage(12, 24),
         };
@@ -172,6 +204,44 @@ function longRunningBenchmark() {
   });
 }
 
+// Score the real self-healing outcome: a failing tool call is diagnosed,
+// repaired, and the SAME tool then succeeds \u2014 all inside the real runtime.
+function selfHealingBenchmark() {
+  return defineBenchmark({
+    name: 'self-healing',
+    tasks: [{ id: 'repair', name: 'failing tool call -> diagnosis -> repair -> success', weight: 1 }],
+    evaluators: [
+      evaluator('completed', (result) => ({ passed: result?.status === 'completed', detail: `status=${result?.status}` })),
+      evaluator('repair-recorded', (result) => ({ passed: (result?.repairEvents ?? 0) >= 1, detail: `repair_events=${result?.repairEvents ?? 0}` })),
+      evaluator('failed-then-succeeded', (result) => ({
+        passed: result?.failedRead === true && result?.repairedRead === true,
+        detail: `failed_read=${result?.failedRead} repaired_read=${result?.repairedRead}`,
+      })),
+      evaluator('has-evidence', (result) => ({ passed: (result?.evidenceCount ?? 0) >= 2, detail: `evidence=${result?.evidenceCount ?? 0}` })),
+      evaluator('has-final', (result) => ({ passed: typeof result?.final === 'string' && result.final.length > 0, detail: result?.final ? 'ok' : 'no final answer' })),
+    ],
+  });
+}
+
+// Score the real integrations outcome: a live `email.send` tool call performs a
+// REAL HTTP round-trip to a local connector and the registry reports it live.
+function integrationsBenchmark() {
+  return defineBenchmark({
+    name: 'integrations',
+    tasks: [{ id: 'email-connector', name: 'live email.send delivered over a real connector', weight: 1 }],
+    evaluators: [
+      evaluator('completed', (result) => ({ passed: result?.status === 'completed', detail: `status=${result?.status}` })),
+      evaluator('email-delivered', (result) => ({
+        passed: (result?.deliveredCount ?? 0) >= 1 && (result?.deliveredTo ?? []).includes('ops@example.com'),
+        detail: `delivered=${result?.deliveredCount ?? 0} to=${(result?.deliveredTo ?? []).join(',')}`,
+      })),
+      evaluator('email-tool-ok', (result) => ({ passed: result?.emailToolOk === true, detail: `email_tool_ok=${result?.emailToolOk}` })),
+      evaluator('connector-live', (result) => ({ passed: result?.connectorLive === true, detail: `email.send live=${result?.connectorLive}` })),
+      evaluator('has-evidence', (result) => ({ passed: (result?.evidenceCount ?? 0) >= 1, detail: `evidence=${result?.evidenceCount ?? 0}` })),
+    ],
+  });
+}
+
 async function main() {
   const workspace = await makeWorkspace();
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-agent-bench-db-'));
@@ -203,6 +273,8 @@ async function main() {
   };
 
   let exitCode = 0;
+  let emailServer = null;
+  const emailReceived = [];
   try {
     const registered = await request('/auth/register', { method: 'POST', body: { email: 'bench@agent.test', password: PASSWORD, tenantName: 'Benchmark' } });
     const token = registered.body.session.token;
@@ -270,23 +342,93 @@ async function main() {
     const { report: ciReport, workspace: ciWorkspace } = await runAgentBenchmark({ tools, root: workspace, intelligence });
     step('code-intelligence benchmark', { workspace: ciWorkspace, summary: ciReport.summary, tasks: ciReport.tasks.map((task) => ({ id: task.id, ok: task.ok, score: task.score })) });
 
+    // ---- Scenario 5: self-healing (real failing call -> diagnosis -> repair) ----
+    const shCreated = await enqueue({ goal: 'SELF_HEAL: read the missing input then analyze app.js' });
+    step('enqueue self-healing run', { status: shCreated.status, runId: shCreated.body.runId });
+    if (shCreated.status !== 202) throw new Error(`POST /runs (self-healing) failed: ${JSON.stringify(shCreated.body)}`);
+    const shFinished = await waitTerminal(token, shCreated.body.runId);
+    const shToolEvents = (shFinished.events ?? [])
+      .filter((event) => event.type === 'tool_completed')
+      .map((event) => { try { return JSON.parse(event.payload_json); } catch { return {}; } });
+    const shReads = shToolEvents.filter((event) => event.toolId === 'files.read');
+    const selfHealingResult = {
+      status: shFinished.status,
+      final: shFinished.result?.final ?? null,
+      selfHealingEvents: (shFinished.events ?? []).filter((event) => event.type === 'self_healing').length,
+      repairEvents: (shFinished.events ?? []).filter((event) => event.type === 'self_healing' && String(event.payload_json).includes('"repair"')).length,
+      readOutcomes: shReads.map((event) => event.ok === true),
+      failedRead: shReads.some((event) => event.ok === false),
+      repairedRead: shReads.some((event) => event.ok === true),
+      toolResultEvents: shToolEvents.length,
+      evidenceCount: (shFinished.evidence ?? []).length,
+    };
+    step('self-healing finished', selfHealingResult);
+    const shReport = await runBenchmark(selfHealingBenchmark(), async () => selfHealingResult);
+    step('self-healing benchmark', { summary: shReport.summary });
+
+    // ---- Scenario 6: integrations (a live email.send over a real connector) ----
+    emailServer = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (chunk) => { raw += chunk; });
+      req.on('end', () => {
+        let payload = {};
+        try { payload = JSON.parse(raw); } catch { /* ignore a non-JSON body */ }
+        emailReceived.push(payload);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ id: `msg-${emailReceived.length}` }));
+      });
+    });
+    await new Promise((resolve) => emailServer.listen(0, '127.0.0.1', resolve));
+    const emailPort = emailServer.address().port;
+    process.env.EMAIL_PROVIDER = 'webhook';
+    process.env.EMAIL_WEBHOOK_URL = `http://127.0.0.1:${emailPort}/email`; // security-scan:allow private-url-literal (local loopback connector)
+    const igCreated = await enqueue({ goal: 'INTEGRATE: read app.js and email the summary', approvedTools: ['email.send'] });
+    step('enqueue integrations run', { status: igCreated.status, runId: igCreated.body.runId });
+    if (igCreated.status !== 202) throw new Error(`POST /runs (integrations) failed: ${JSON.stringify(igCreated.body)}`);
+    const igFinished = await waitTerminal(token, igCreated.body.runId);
+    const igToolEvents = (igFinished.events ?? [])
+      .filter((event) => event.type === 'tool_completed')
+      .map((event) => { try { return JSON.parse(event.payload_json); } catch { return {}; } });
+    const emailToolEvent = igToolEvents.find((event) => event.toolId === 'email.send');
+    const toolsStatus = await request('/tools/status', { token });
+    const integrationsResult = {
+      status: igFinished.status,
+      final: igFinished.result?.final ?? null,
+      deliveredCount: emailReceived.length,
+      deliveredTo: emailReceived.map((payload) => payload.to),
+      emailToolOk: emailToolEvent?.ok === true,
+      emailMessageId: emailToolEvent?.output?.messageId ?? null,
+      connectorLive: (toolsStatus.body.live ?? []).includes('email.send'),
+      evidenceCount: (igFinished.evidence ?? []).length,
+    };
+    step('integrations finished', integrationsResult);
+    const igReport = await runBenchmark(integrationsBenchmark(), async () => integrationsResult);
+    step('integrations benchmark', { summary: igReport.summary });
+
     report.finishedAt = new Date().toISOString();
     report.agentLoop = loopReport;
     report.multiAgent = maReport;
     report.longRunning = lrReport;
     report.codeIntelligence = ciReport;
+    report.selfHealing = shReport;
+    report.integrations = igReport;
     report.passed = loopReport.summary.passRate === 100
       && maReport.summary.passRate === 100
       && lrReport.summary.passRate === 100
-      && ciReport.summary.passRate === 100;
+      && ciReport.summary.passRate === 100
+      && shReport.summary.passRate === 100
+      && igReport.summary.passRate === 100;
 
     await writeFile(outFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
     process.stdout.write(`\nReport written to ${outFile}\n`);
-    process.stdout.write(`RESULT: agent-loop=${loopReport.summary.passRate}% multi-agent=${maReport.summary.passRate}% long-running=${lrReport.summary.passRate}% code-intelligence=${ciReport.summary.passRate}% passed=${report.passed}\n`);
+    process.stdout.write(`RESULT: agent-loop=${loopReport.summary.passRate}% multi-agent=${maReport.summary.passRate}% long-running=${lrReport.summary.passRate}% code-intelligence=${ciReport.summary.passRate}% self-healing=${shReport.summary.passRate}% integrations=${igReport.summary.passRate}% passed=${report.passed}\n`);
     exitCode = report.passed ? 0 : 1;
   } finally {
     queue.stop();
     await new Promise((resolve) => app.server.close(resolve));
+    if (emailServer) await new Promise((resolve) => emailServer.close(resolve));
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.EMAIL_WEBHOOK_URL;
     db.close();
     if (!keep) {
       await rm(dir, { recursive: true, force: true });
