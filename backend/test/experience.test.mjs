@@ -213,8 +213,18 @@ test('modelPriorFromSnapshot exposes the smoothed rate + confidence the router c
     const seed = seedHistory(db);
     const prior = modelPriorFromSnapshot(buildExperienceSnapshot(db, { tenantId: seed.tenantId, now: fixedNow }));
 
-    assert.deepEqual(prior.code['claude-sonnet-4-6'], { successRate: 0.75, confidence: 0.4, attempts: 2 });
-    assert.deepEqual(prior.code['gpt-5'], { successRate: 0.3333, confidence: 0, attempts: 1 });
+    // v3: the prior now also carries the graded reward (0..1). Both claude runs
+    // completed cleanly -> reward 1; the single gpt-5 run failed -> reward 0.
+    const claude = prior.code['claude-sonnet-4-6'];
+    assert.equal(claude.successRate, 0.75);
+    assert.equal(claude.confidence, 0.4);
+    assert.equal(claude.attempts, 2);
+    assert.equal(claude.reward, 1);
+    const gpt = prior.code['gpt-5'];
+    assert.equal(gpt.successRate, 0.3333);
+    assert.equal(gpt.confidence, 0);
+    assert.equal(gpt.attempts, 1);
+    assert.equal(gpt.reward, 0);
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });

@@ -233,6 +233,29 @@ test('director: planCreation returns a plan without rendering', async () => {
   assert.ok(typeof plan.elapsedMs === 'number');
 });
 
+test('director: runDirector honors explicit brief overrides (format/duration/palette/cta)', async () => {
+  // Regression: the full pipeline used to drop caller overrides (only planCreation
+  // forwarded them), so an explicit format/duration was silently ignored.
+  const result = await runDirector('Launch video for a smart water bottle', {
+    resolution: 'draft',
+    format: 'portrait',
+    duration: 12,
+    palette: 'neon',
+    cta: 'Preorder now',
+    captions: false,
+    bundle: false,
+    formats: false,
+  });
+  assert.equal(result.status, 'completed');
+  assert.equal(result.brief.format, 'portrait');
+  assert.equal(result.brief.requestedWidth, 720);
+  assert.equal(result.brief.requestedHeight, 1280);
+  assert.equal(result.brief.duration, 12);
+  assert.equal(result.brief.palette, 'neon');
+  assert.equal(result.brief.cta, 'Preorder now');
+  assert.equal(result.brief.captions, false);
+});
+
 test('director: cancellation aborts the run honestly', async () => {
   const controller = new AbortController();
   controller.abort();

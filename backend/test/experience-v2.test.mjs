@@ -246,7 +246,7 @@ test('buildExperienceSnapshot aggregates recovery, strategy and execution famili
     }
 
     const snapshot = buildExperienceSnapshot(db, { tenantId: seed.tenantId });
-    assert.equal(snapshot.version, 2);
+    assert.equal(snapshot.version, 3);
     assert.equal(snapshot.sampleSize.runs, 6);
     assert.equal(snapshot.sampleSize.recoveryObservations, 6);
     assert.equal(snapshot.sampleSize.strategyObservations, 6);
