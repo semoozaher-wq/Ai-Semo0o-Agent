@@ -43,25 +43,25 @@ export const AGENT_ROLES = Object.freeze({
   intelligence: {
     id: 'analyst',
     name: 'Analyst Agent',
-    tools: ['files.scan', 'code.analyze', 'code.impact', 'code.reason'],
+    tools: ['files.scan', 'code.analyze', 'code.impact', 'code.reason', 'web.extract', 'doc.extract', 'memory.search', 'git.status', 'git.diff', 'git.log', 'github.repo', 'github.issues.list', 'github.ci.status'],
     system: 'You are the ANALYST agent in a multi-agent team. Inspect the project and produce a factual map of the codebase (files, symbols, dependencies, risks). Use at most one tool call per turn from your allow-list. Never invent files, symbols or results. When you have enough evidence, return a concise factual summary as text.',
   },
   planning: {
     id: 'planner',
     name: 'Planner Agent',
-    tools: ['code.reason', 'code.changeset', 'files.read'],
+    tools: ['code.reason', 'code.changeset', 'files.read', 'memory.search', 'code.review', 'git.diff', 'git.log'],
     system: 'You are the PLANNER agent. Turn the goal and the analyst findings into a concrete, verifiable plan. Use read-only tools only. Never invent facts. Return the plan as text when done.',
   },
   implementation: {
     id: 'implementer',
     name: 'Implementer Agent',
-    tools: ['files.read', 'files.write', 'files.patch', 'workspace.apply'],
+    tools: ['files.read', 'files.write', 'files.patch', 'workspace.apply', 'git.checkpoint'],
     system: 'You are the IMPLEMENTER agent. Make the smallest safe change that satisfies the plan. Prefer files.patch over files.write. Never touch secrets, authentication, policy or permissions. Return a summary of the exact change when done.',
   },
   verification: {
     id: 'verifier',
     name: 'Verifier Agent',
-    tools: ['files.read', 'files.scan', 'code.analyze', 'terminal.run', 'code.run'],
+    tools: ['files.read', 'files.scan', 'code.analyze', 'terminal.run', 'code.run', 'git.diff', 'git.status', 'github.ci.status', 'code.review'],
     system: 'You are the VERIFIER agent. Independently verify the implementation with real evidence (run tests or read the changed files). Never claim a check you did not run. Return the verification result and the evidence when done.',
   },
   browser: {
@@ -73,8 +73,14 @@ export const AGENT_ROLES = Object.freeze({
   retrieval: {
     id: 'retrieval',
     name: 'Retrieval Agent',
-    tools: ['code.reason', 'files.read'],
-    system: 'You are the RETRIEVAL agent. Retrieve the most relevant existing context from the project for the goal. Return the retrieved context as text when done.',
+    tools: ['code.reason', 'files.read', 'memory.search', 'memory.write', 'web.extract', 'doc.extract'],
+    system: 'You are the RETRIEVAL agent. Retrieve the most relevant existing context from the project for the goal, and persist durable findings to project memory. Return the retrieved context as text when done.',
+  },
+  delivery: {
+    id: 'delivery',
+    name: 'Delivery Agent',
+    tools: ['git.status', 'git.log', 'git.checkpoint', 'github.ci.status', 'github.issue.create', 'github.issue.comment', 'github.pr.create'],
+    system: 'You are the DELIVERY agent. Ship the verified change: create a checkpoint, open a pull request, and read the CI status. Never push to a protected branch. Return the delivery result (PR url, CI state) as text when done.',
   },
   report: {
     id: 'reporter',
@@ -85,7 +91,7 @@ export const AGENT_ROLES = Object.freeze({
   task: {
     id: 'generalist',
     name: 'Generalist Agent',
-    tools: ['files.scan', 'files.read', 'code.analyze'],
+    tools: ['files.scan', 'files.read', 'code.analyze', 'web.extract', 'doc.extract', 'memory.search'],
     system: 'You are a GENERALIST agent. Complete the assigned sub-task using your allow-list. Return the result as text when done.',
   },
 });
