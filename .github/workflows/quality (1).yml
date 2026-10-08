@@ -1,0 +1,122 @@
+name: Quality
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          # Pinned to the production runtime (see render.yaml / backend/Dockerfile).
+          # node:sqlite requires Node >= 22.5.0.
+          node-version: '22.11.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Secret and SAST scan
+        run: npm run security:scan
+
+      # Dependency-audit release gate. NOT ignored: it fails on any advisory,
+      # newly-affected package or severity escalation outside the reviewed
+      # baseline (scripts/audit-baseline.json). `continue-on-error: true` removed.
+      - name: Dependency audit gate (fails on new advisories)
+        run: npm run audit:gate
+
+      # Proves every relative import/require in the backend resolves to a real
+      # file. This guards the backend's sibling modules (auth/, queue/, runners/,
+      # and the self-improve/notifications/org/observability/ops modules).
+      # Scoped to backend/ on purpose: legacy/ and test/ contain string literals
+      # that look like imports to the scanner (false positives), and the frontend
+      # import graph is already validated by `npm run typecheck`.
+      - name: Verify backend relative imports resolve
+        run: node scripts/verify-imports.mjs backend
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # `pdf.extract` shells out to poppler's `pdftotext`; install it so the
+      # pdf.extract regression test runs for real (it self-skips when absent).
+      - name: Install poppler-utils (pdftotext for the pdf.extract tool test)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Tests (unit + integration + backend + pain-map)
+        run: npm test
+
+      - name: Expo doctor
+        run: npm run doctor
+
+      - name: Web export
+        run: npm run build
+
+      # The browser smoke test shells out to a Chromium-based binary. Prefer a
+      # preinstalled one (ubuntu-latest ships google-chrome); otherwise install it.
+      - name: Ensure a Chromium-based browser is available
+        run: |
+          set -euo pipefail
+          for bin in chromium chromium-browser google-chrome google-chrome-stable; do
+            if command -v "$bin" >/dev/null 2>&1; then
+              echo "CHROMIUM_BIN=$bin" >> "$GITHUB_ENV"
+              echo "Using preinstalled browser: $bin"
+              exit 0
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser
+          echo "CHROMIUM_BIN=chromium" >> "$GITHUB_ENV"
+
+      - name: Browser integration smoke test
+        run: node scripts/browser-smoke.mjs
+
+      # Real Browser E2E: launches a REAL Chromium and drives it over CDP
+      # (navigate -> click -> type -> scroll -> verify -> screenshot) through the
+      # product's own browser path (backend/browser/* -> phase2-core/browser-agent).
+      # CHROMIUM_BIN is set by the step above; BROWSER_NO_SANDBOX is only needed
+      # when running as root (e.g. a container), never on GitHub-hosted runners.
+      # Exits non-zero on any failed scenario, so it is a real release gate.
+      - name: "Browser E2E (real CDP: navigate/click/type/scroll/verify/screenshot)"
+        run: npm run test:browser-e2e
+
+      # Real Agent E2E benchmark: drives the REAL stack (HTTP API -> RunQueue ->
+      # agent runtime -> tools -> evidence) and proves the single-agent loop, the
+      # multi-agent TaskGraph, the long-running continuation, and the
+      # code-intelligence benchmark. Exits non-zero unless every scenario passes.
+      - name: "Agent E2E benchmark (agent-loop, multi-agent, long-running, code-intelligence)"
+        run: npm run benchmark:agent
+
+      # Boots the real backend server and exercises the core E2E path:
+      #   boot -> /health -> /ready -> POST /auth/register -> GET /tools/status
+      # (see scripts/boot-smoke.sh). /ready returns 503 when no LLM provider is
+      # configured, so it is reported but not treated as a failure.
+      - name: "Backend boot smoke (E2E: health + auth + tools)"
+        env:
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
+        run: npm run smoke:backend
+
+      # Drives the full self-improvement lifecycle through the real REST API
+      # (signals -> analyze -> approve -> monitor -> rollback) against real run
+      # telemetry, and asserts the safety guarantees: RBAC (owner/admin only),
+      # tenant isolation, and fail-closed automatic rollback on regression.
+      # See scripts/production-trial.mjs.
+      - name: Production trial (self-improvement pipeline)
+        env:
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }}
+        run: npm run trial:self-improve
