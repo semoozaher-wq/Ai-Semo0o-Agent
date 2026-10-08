@@ -14,6 +14,7 @@ import { SectionHeader } from '../components/composite/SectionHeader';
 import { ListRow } from '../components/composite/ListRow';
 import { SystemStatusCard } from '../components/composite/SystemStatusCard';
 import { IntegrationsCard } from '../components/composite/IntegrationsCard';
+import { AccountSecurityCard } from '../components/composite/AccountSecurityCard';
 import { Card } from '../components/ui/Card';
 import { Text } from '../components/ui/Text';
 import { Chip } from '../components/ui/Chip';
@@ -234,6 +235,15 @@ export function Settings() {
             />
           </View>
         </Card>
+
+        {/* Account security — real MFA enrollment, data export, deletion */}
+        <SectionHeader
+          title="الأمان والحساب"
+          subtitle="المصادقة الثنائية · تصدير البيانات · حذف الحساب — تُنفّذ فعليًا على الخادم"
+          icon="shield-checkmark-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <AccountSecurityCard />
 
         {/* About */}
         <SectionHeader title="حول التطبيق" icon="information-circle-outline" style={{ marginTop: theme.spacing.xl }} />
