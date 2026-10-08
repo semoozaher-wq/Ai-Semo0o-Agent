@@ -35,11 +35,53 @@ export class MemoryStore {
     });
     return this.db.get('SELECT id,tenant_id,project_id,source,created_at FROM documents WHERE id=?', id);
   }
-  async search({ tenantId, projectId, query, limit = 5 }) {
+  /**
+   * Insert or refresh a document identified by (project, source). Used by memory
+   * consolidation so re-running it updates the single consolidated knowledge doc
+   * instead of piling up duplicates. Re-embeds on every write so retrieval stays
+   * accurate. Returns the row plus `updated` (true when an existing doc was
+   * replaced, false when a new one was created).
+   */
+  async upsertDocument({ tenantId, projectId, source, content }) {
+    this.assertProject(tenantId, projectId);
+    const existing = this.db.get('SELECT id FROM documents WHERE tenant_id=? AND project_id=? AND source=? ORDER BY created_at DESC LIMIT 1', tenantId, projectId, source);
+    const created = new Date().toISOString();
+    const vector = await this.embedText(content);
+    if (existing) {
+      this.db.transaction(() => {
+        this.db.run('UPDATE documents SET content=?, created_at=? WHERE id=?', content, created, existing.id);
+        this.db.run('UPDATE embeddings SET vector_json=?, model=?, created_at=? WHERE document_id=?', JSON.stringify(vector), this.model, created, existing.id);
+      });
+      return { ...this.db.get('SELECT id,tenant_id,project_id,source,created_at FROM documents WHERE id=?', existing.id), updated: true };
+    }
+    const id = `doc_${randomUUID()}`;
+    this.db.transaction(() => {
+      this.db.run('INSERT INTO documents(id,tenant_id,project_id,source,content,created_at) VALUES(?,?,?,?,?,?)', id, tenantId, projectId, source, content, created);
+      this.db.run('INSERT INTO embeddings(id,document_id,vector_json,model,created_at) VALUES(?,?,?,?,?)', `emb_${randomUUID()}`, id, JSON.stringify(vector), this.model, created);
+    });
+    return { ...this.db.get('SELECT id,tenant_id,project_id,source,created_at FROM documents WHERE id=?', id), updated: false };
+  }
+  /**
+   * Hybrid lexical + semantic search. `recencyWeight` (default 0) adds a
+   * time-decayed boost so freshly consolidated knowledge ranks above stale notes;
+   * it is opt-in, so the default scoring is unchanged for existing callers.
+   */
+  async search({ tenantId, projectId, query, limit = 5, recencyWeight = 0, now: referenceIso = null }) {
     this.assertProject(tenantId, projectId);
     const q = await this.embedText(query); const queryTokens = new Set(tokens(query));
-    return this.db.all('SELECT d.id,d.source,d.content,e.vector_json FROM documents d JOIN embeddings e ON e.document_id=d.id WHERE d.tenant_id=? AND d.project_id=?', tenantId, projectId)
-      .map((row) => { const lexical = tokens(row.content).filter((token) => queryTokens.has(token)).length; const semantic = cosine(q, JSON.parse(row.vector_json)); return { id: row.id, source: row.source, content: row.content, score: semantic + lexical * 0.05 }; })
+    const weight = Number.isFinite(recencyWeight) && recencyWeight > 0 ? recencyWeight : 0;
+    const reference = referenceIso ? new Date(referenceIso).getTime() : Date.now();
+    return this.db.all('SELECT d.id,d.source,d.content,d.created_at,e.vector_json FROM documents d JOIN embeddings e ON e.document_id=d.id WHERE d.tenant_id=? AND d.project_id=?', tenantId, projectId)
+      .map((row) => {
+        const lexical = tokens(row.content).filter((token) => queryTokens.has(token)).length;
+        const semantic = cosine(q, JSON.parse(row.vector_json));
+        let score = semantic + lexical * 0.05;
+        if (weight) {
+          const ageDays = Math.max(0, (reference - new Date(row.created_at).getTime()) / 86_400_000);
+          score += weight / (1 + ageDays);
+        }
+        return { id: row.id, source: row.source, content: row.content, createdAt: row.created_at, score };
+      })
       .sort((a, b) => b.score - a.score).slice(0, Math.max(1, Math.min(limit, 50)));
   }
   exportProject(tenantId, projectId) {
