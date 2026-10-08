@@ -24,9 +24,20 @@ const PNG_MAGIC = '89504e470d0a1a0a';
 
 function runBrowserE2e(outFile, screenshotFile) {
   return new Promise((resolve, reject) => {
+    // When the test runs as root (e.g. inside a container) Chromium refuses to
+    // start without --no-sandbox, so the spawned E2E would fail with
+    // BROWSER_EXITED_EARLY. Mirror the red-team test's convention and enable it
+    // for this subprocess only, when root and not already set. The product
+    // default stays opt-in: backend/browser/launcher.mjs only adds --no-sandbox
+    // when BROWSER_NO_SANDBOX is explicitly 'true' (CI runners are non-root and
+    // never need this).
+    const env = { ...process.env };
+    if (typeof process.getuid === 'function' && process.getuid() === 0 && env.BROWSER_NO_SANDBOX === undefined) {
+      env.BROWSER_NO_SANDBOX = 'true';
+    }
     const child = spawn(process.execPath, ['--experimental-sqlite', SCRIPT, '--out', outFile, '--screenshot', screenshotFile], {
       cwd: REPO_ROOT,
-      env: { ...process.env },
+      env,
     });
     let stdout = '';
     let stderr = '';
