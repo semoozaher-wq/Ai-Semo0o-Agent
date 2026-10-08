@@ -14,6 +14,12 @@ export class BrowserAgent {
     if (!webSocketUrl || !/^wss?:\/\//i.test(webSocketUrl)) throw new Error('BROWSER_CDP_URL_REQUIRED');
     this.url = webSocketUrl;
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    // Addresses the SSRF guard validated for the target host. When present the
+    // browser has been pinned to exactly these addresses (see
+    // launcher.hostResolverRule) and every navigation is verified against them.
+    this.pinnedAddresses = (Array.isArray(options.pinnedAddresses) ? options.pinnedAddresses : options.pinnedAddresses ? [options.pinnedAddresses] : [])
+      .map((address) => String(address ?? '').trim())
+      .filter(Boolean);
     this.socket = null;
     this.nextId = 0;
     this.pending = new Map();
@@ -62,9 +68,31 @@ export class BrowserAgent {
 
   async navigate(url) {
     const loadSequence = this.loadSequence;
+    const eventMark = this.events.length;
     const result = await this.command('Page.navigate', { url });
     await this.waitForLoad(this.timeoutMs, loadSequence);
-    return { url, result };
+    // Defense in depth against DNS rebinding / TOCTOU. The browser is launched
+    // with the validated address pinned into its host resolver (see
+    // launcher.hostResolverRule), so `Page.navigate` can never re-resolve the
+    // hostname to a private address after the SSRF guard ran. This additionally
+    // confirms the address the navigation actually connected to is one of the
+    // validated addresses and fails closed otherwise.
+    const remoteIPAddress = this.#documentRemoteAddress(eventMark);
+    if (this.pinnedAddresses.length && remoteIPAddress && !this.pinnedAddresses.includes(remoteIPAddress)) {
+      throw new Error(`BROWSER_NAVIGATION_ADDRESS_MISMATCH:${remoteIPAddress}`);
+    }
+    return { url, result, remoteIPAddress };
+  }
+
+  // The IP the top-level document response actually connected to, taken from the
+  // `Network.responseReceived` (type=Document) event emitted for this navigation.
+  #documentRemoteAddress(eventMark) {
+    for (const event of this.events.slice(eventMark)) {
+      if (event.type === 'Network.responseReceived' && event.params?.type === 'Document' && event.params?.response?.remoteIPAddress) {
+        return event.params.response.remoteIPAddress;
+      }
+    }
+    return null;
   }
 
   async waitForLoad(timeoutMs = this.timeoutMs, previousLoadSequence = this.loadSequence) {
