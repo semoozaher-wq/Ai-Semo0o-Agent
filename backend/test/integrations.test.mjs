@@ -46,7 +46,7 @@ test('connectors fail closed when nothing is configured', () => {
   assert.equal(createDiscordProvider(env), null);
   assert.equal(createNotionProvider(env), null);
   assert.equal(createWebhookProvider(env), null);
-  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false });
+  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, audio: false, mediaAnalysis: false });
 });
 
 test('image.generate performs a real OpenAI-compatible call and returns bytes', async () => {
@@ -288,6 +288,11 @@ test('integrations status route reports configured connectors live and never lea
     DISCORD_WEBHOOK_URL: 'https://hooks.example.test/discord-secret',
     NOTION_API_KEY: 'notion-live-secret', NOTION_DATABASE_ID: 'db-live',
     GENERIC_WEBHOOK_URL: 'https://hooks.example.test/generic-secret',
+    STT_HTTP_URL: 'https://media.example.test/stt', STT_HTTP_SECRET: 'stt-secret',
+    TTS_HTTP_URL: 'https://media.example.test/tts', TTS_HTTP_SECRET: 'tts-secret',
+    VIDEO_HTTP_URL: 'https://media.example.test/video', VIDEO_HTTP_SECRET: 'video-secret',
+    AUDIO_HTTP_URL: 'https://media.example.test/audio', AUDIO_HTTP_SECRET: 'audio-secret',
+    MEDIA_ANALYZE_HTTP_URL: 'https://media.example.test/analyze', MEDIA_ANALYZE_HTTP_SECRET: 'analyze-secret',
     TAVILY_API_KEY: 'tvly-live-secret',
     BROWSER_CDP_URL: 'ws://127.0.0.1:9222',
     GITHUB_TOKEN: 'ghp_live_secret',

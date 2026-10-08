@@ -165,9 +165,14 @@ test('connectors stay fail-closed with no credentials (no fake success)', async 
       SLACK_WEBHOOK_URL: undefined, SLACK_BOT_TOKEN: undefined, TEAMS_WEBHOOK_URL: undefined,
       DISCORD_WEBHOOK_URL: undefined, NOTION_API_KEY: undefined, NOTION_DATABASE_ID: undefined, NOTION_PAGE_ID: undefined,
       GENERIC_WEBHOOK_URL: undefined,
+      STT_PROVIDER: undefined, STT_API_KEY: undefined, STT_HTTP_URL: undefined,
+      TTS_PROVIDER: undefined, TTS_API_KEY: undefined, TTS_HTTP_URL: undefined, ELEVENLABS_API_KEY: undefined,
+      VIDEO_PROVIDER: undefined, VIDEO_HTTP_URL: undefined,
+      AUDIO_PROVIDER: undefined, AUDIO_HTTP_URL: undefined,
+      MEDIA_ANALYZE_HTTP_URL: undefined,
     },
     async () => {
-      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false });
+      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, audio: false, mediaAnalysis: false });
       assert.equal(createImageProvider(process.env), null);
       assert.equal(createCalendarProvider(process.env), null);
       assert.equal(createEmailSendProvider(process.env), null);
