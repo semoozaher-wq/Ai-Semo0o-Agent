@@ -1,0 +1,48 @@
+{
+  "$comment": "Reviewed dependency-audit baseline for the release security gate (scripts/audit-gate.mjs). Every entry here is an advisory that has been explicitly reviewed and accepted; the gate FAILS on any advisory, package or severity that is not listed. See backend/audit-report.txt for the full analysis.",
+  "reviewedAt": "2026-01-01",
+  "policy": "npm audit --omit=dev; the gate fails on any NEW advisory id, any newly-affected package, or any severity escalation beyond this baseline.",
+  "acceptedAdvisories": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "severity": "high",
+      "reason": "No patched release exists upstream (advisory marks <=3.0.3 vulnerable, first_patched_version: null). Pulled in via micromatch <- metro-file-map <- @expo/metro <- expo. Build-time toolchain only; not shipped in the backend runtime."
+    },
+    {
+      "id": "GHSA-86w9-cpqp-85rv",
+      "package": "node-forge",
+      "severity": "high",
+      "reason": "No patched release exists upstream (advisory marks <=1.4.0 vulnerable, first_patched_version: null). Pulled in via @expo/code-signing-certificates <- @expo/cli <- expo. Build-time toolchain only."
+    },
+    {
+      "id": "GHSA-vcc3-ghjq-m6fr",
+      "package": "decode-uri-component",
+      "severity": "moderate",
+      "reason": "The only patched version (0.5.0) is ESM-only and would throw ERR_REQUIRE_ESM for its CommonJS consumer query-string@7.1.3 on Node < 22.12 (repo floor is 22.5). Fixing it would be a breaking regression. Build-time toolchain only."
+    }
+  ],
+  "acceptedPackages": [
+    { "package": "@expo/cli", "severity": "high" },
+    { "package": "@expo/code-signing-certificates", "severity": "high" },
+    { "package": "@expo/metro", "severity": "high" },
+    { "package": "@expo/metro-config", "severity": "high" },
+    { "package": "@react-native/community-cli-plugin", "severity": "high" },
+    { "package": "@react-native/metro-config", "severity": "high" },
+    { "package": "@react-native/virtualized-lists", "severity": "high" },
+    { "package": "braces", "severity": "high" },
+    { "package": "decode-uri-component", "severity": "moderate" },
+    { "package": "expo", "severity": "high" },
+    { "package": "expo-router", "severity": "moderate" },
+    { "package": "metro", "severity": "high" },
+    { "package": "metro-config", "severity": "high" },
+    { "package": "metro-file-map", "severity": "high" },
+    { "package": "metro-transform-worker", "severity": "high" },
+    { "package": "micromatch", "severity": "high" },
+    { "package": "node-forge", "severity": "high" },
+    { "package": "query-string", "severity": "moderate" },
+    { "package": "react-native", "severity": "high" },
+    { "package": "react-native-reanimated", "severity": "high" },
+    { "package": "react-native-worklets", "severity": "high" }
+  ]
+}

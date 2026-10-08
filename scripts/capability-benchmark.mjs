@@ -8,8 +8,15 @@
  * shared eval engine (phase2-core/eval.mjs). Nothing is asserted that is not
  * backed by a live signal.
  *
+ * It also folds in the outcome of the REAL end-to-end benchmarks: the agent E2E
+ * benchmark (scripts/agent-benchmark.mjs -> agent-benchmark.report.json) and the
+ * browser E2E (scripts/browser-e2e.mjs -> browser-e2e.report.json). A capability
+ * is reported as `proven` ONLY when one of those benchmarks actually passed for
+ * it; otherwise it stays `wired` (exists in code, not proven end-to-end). This is
+ * what stops the scorecard from making flag-only claims.
+ *
  * Usage:
- *   node --experimental-sqlite scripts/capability-benchmark.mjs [--out scorecard.json] [--min 70]
+ *   node --experimental-sqlite scripts/capability-benchmark.mjs [--out scorecard.json] [--min 70] [--proof-dir <dir>]
  * Exit code is non-zero when the score is below `--min` (default 0 = report only).
  */
 import path from 'node:path';
@@ -22,9 +29,9 @@ import { githubStatus } from '../backend/github/service.mjs';
 import { embeddingStatus } from '../backend/memory/embeddings.mjs';
 import { errorTrackerStatus } from '../backend/observability/error-tracking.mjs';
 import {
-  buildCapabilityScorecard,
   collectCapabilitySignals,
   describeScorecard,
+  loadProofArtifacts,
   runCapabilityBenchmark,
 } from '../backend/ops/capability-benchmark.mjs';
 
@@ -37,6 +44,7 @@ function arg(name, fallback) {
 }
 const outFile = arg('--out', path.join(REPO_ROOT, 'capability-scorecard.json'));
 const min = Number(arg('--min', '0')) || 0;
+const proofDir = path.resolve(arg('--proof-dir', REPO_ROOT));
 
 // Mirror the server's `/integrations/status` view (minus the tenant-scoped DB
 // connection, which a CLI has no session for). Same building blocks, same truth.
@@ -65,15 +73,21 @@ async function main() {
   const llm = safeRouter();
   const integrations = integrationView(tools);
 
-  const signals = collectCapabilitySignals({ tools, llm, integrations });
+  // Real end-to-end proof from the release benchmarks (missing reports => not
+  // proven, never a fabricated pass). The capability benchmark itself running is
+  // itself proof that "capability benchmarking" works.
+  const proof = loadProofArtifacts(proofDir, { capabilityBenchmark: true });
+
+  const signals = collectCapabilitySignals({ tools, llm, integrations, proof });
   const { scorecard, report } = await runCapabilityBenchmark(signals);
-  const output = { scorecard, benchmark: report };
+  const output = { scorecard, benchmark: report, proof };
 
   process.stdout.write(`${describeScorecard(scorecard)}\n\n`);
   for (const capability of scorecard.capabilities) {
-    process.stdout.write(`  [${String(capability.score).padStart(3)}] ${capability.status.padEnd(8)} ${capability.name}\n`);
+    const mark = capability.proven ? 'PROVEN' : capability.wired ? 'wired ' : capability.status;
+    process.stdout.write(`  [${String(capability.score).padStart(3)}] ${mark.padEnd(8)} ${capability.name}\n`);
   }
-  process.stdout.write(`\nbenchmark: ${report.summary.passed}/${report.summary.total} passed (score ${report.summary.score})\n`);
+  process.stdout.write(`\nbenchmark: ${report.summary.passed}/${report.summary.total} available (score ${report.summary.score}); ${scorecard.summary.proven}/${scorecard.summary.total} proven end-to-end\n`);
 
   const { writeFile } = await import('node:fs/promises');
   await writeFile(outFile, `${JSON.stringify(output, null, 2)}\n`, 'utf8');

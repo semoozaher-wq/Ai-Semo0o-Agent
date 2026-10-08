@@ -41,10 +41,23 @@ const LINE_ALLOW = /security-scan:allow(?!-file)(?:\s+([a-z][a-z-]*))?/;
 // legitimate occurrence of a pattern is annotated inline with
 // `security-scan:allow <rule>` (see the file header) so the rules stay strict
 // for the whole codebase and every exception is visible in code review.
+//
+// The benchmark *report artifacts* below are generated output (produced by
+// scripts/agent-benchmark.mjs, scripts/browser-e2e.mjs and
+// scripts/capability-benchmark.mjs), exactly like `dist/`. They are skipped by
+// name so a legitimate loopback URL recorded inside a generated report does not
+// mask the scan of real source files; the source that produces them is still
+// scanned in full.
+const GENERATED_ARTIFACTS = new Set([
+  'agent-benchmark.report.json',
+  'browser-e2e.report.json',
+  'capability-scorecard.json',
+]);
 const SKIP = (file) =>
   file.startsWith('test/') ||
   file.startsWith('backend/test/') ||
-  file.startsWith('dist/');
+  file.startsWith('dist/') ||
+  GENERATED_ARTIFACTS.has(file);
 
 for (const file of files) {
   if (SKIP(file)) continue;
