@@ -21,8 +21,8 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify(next.json ?? {}));
   });
 });
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = `http://127.0.0.1:${server.address().port}/v1`;
+await new Promise((r) => server.listen(0, '127.0.0.1', r)); // security-scan:allow private-url-literal
+const base = `http://127.0.0.1:${server.address().port}/v1`; // security-scan:allow private-url-literal
 
 const env = { OPENAI_API_KEY: 'test-key', OPENAI_API_BASE: base, OPENAI_MODEL: 'gpt-5-mini' };
 

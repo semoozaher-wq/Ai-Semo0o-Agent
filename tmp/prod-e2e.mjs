@@ -34,7 +34,7 @@ function startMockOpenAI() {
       return reply({ choices: [{ message: { content: 'تم فحص مساحة العمل فعليًا مع دليل من أداة الملفات.' } }], usage });
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, state, baseUrl: `http://127.0.0.1:${server.address().port}/v1` })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, state, baseUrl: `http://127.0.0.1:${server.address().port}/v1` }))); // security-scan:allow private-url-literal
 }
 
 async function waitFor(url, { tries = 60, ms = 300 } = {}) {
@@ -65,9 +65,9 @@ const env = {
   OPENAI_API_BASE: mock.baseUrl,
   DISABLE_WORKER: '0',
   PORT: String(PORT),
-  BIND_HOST: '127.0.0.1',
+  BIND_HOST: '127.0.0.1', // security-scan:allow private-url-literal
   LOG_FORMAT: 'json',
-  METRICS_TOKEN: 'prod-e2e-metrics-token',
+  METRICS_TOKEN: 'prod-e2e-metrics-token', // security-scan:allow possible-hardcoded-secret
 };
 
 const child = spawn(process.execPath, ['--experimental-sqlite', 'backend/server.mjs'], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -75,7 +75,7 @@ let serverLog = '';
 child.stdout.on('data', (d) => { serverLog += d; });
 child.stderr.on('data', (d) => { serverLog += d; });
 
-const base = `http://127.0.0.1:${PORT}`;
+const base = `http://127.0.0.1:${PORT}`; // security-scan:allow private-url-literal
 const req = async (route, { method = 'GET', token, body, headers = {} } = {}) => {
   const r = await fetch(`${base}${route}`, {
     method,
