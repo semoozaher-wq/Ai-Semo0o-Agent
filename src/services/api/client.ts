@@ -132,11 +132,12 @@ export interface ApiCapabilityEntry { id: string; name: string; weight: number; 
 export interface ApiCapabilityScorecard {
   generatedAt: string;
   score: number;
+  provenScore: number;
   level: string;
   models: { configured: number; healthy: number; total: number };
   integrations: { configured: string[]; total: number };
   capabilities: ApiCapabilityEntry[];
-  summary: { total: number; live: number; partial: number; unwired: number; failed: number };
+  summary: { total: number; proven: number; wired: number; partial: number; unwired: number; failed: number };
   description: string;
 }
 export interface ApiBenchmarkTask {
