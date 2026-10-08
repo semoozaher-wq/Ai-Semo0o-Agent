@@ -642,7 +642,6 @@ function ArtifactRow({
   artifact: { bytes: number; mimeType: string } | null;
   onPress: () => void;
 }) {
-  const theme = useTheme();
   if (!artifact) {
     return (
       <View style={[styles.between, { opacity: 0.5 }]}>
