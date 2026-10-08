@@ -441,3 +441,53 @@ CREATE TABLE IF NOT EXISTS github_connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_github_connections_tenant ON github_connections(tenant_id, updated_at);
+
+-- ===========================================================================
+-- Scheduled / recurring autonomy (Trigger Scheduler).
+-- A trigger is a durable, tenant-scoped definition of *when* to start a run
+-- ("every Monday 09:00", "every 15m", "once at <ISO>"). The scheduler creates an
+-- ordinary task + queued run on each fire, so scheduled work flows through the
+-- same RunQueue/worker as everything else.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS scheduled_triggers (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('cron','interval','once')),
+  schedule TEXT NOT NULL,
+  goal TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_triggers_due ON scheduled_triggers(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_triggers_tenant ON scheduled_triggers(tenant_id, created_at);
+
+-- ===========================================================================
+-- Cross-run reflection & episodic lessons.
+-- After a run reaches a terminal state the runtime distils a bounded set of
+-- lessons from the run's own events and stores them here; the next run for the
+-- same project surfaces them as "Learned guidance" in the planner prompt.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS agent_reflections (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  lessons_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_reflections_project ON agent_reflections(tenant_id, project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_reflections_run ON agent_reflections(run_id);

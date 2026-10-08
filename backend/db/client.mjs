@@ -157,10 +157,42 @@ export class Database {
     return rows.length > 0 ? rows[0] : null;
   }
   all(sql, ...params) { return this.db.prepare(sql).all(...params); }
+  // Re-entrant transaction helper. A top-level call takes the write lock eagerly
+  // with BEGIN IMMEDIATE (exactly as before). A *nested* call — e.g. the Trigger
+  // Scheduler wrapping the RunQueue's own `enqueue` — uses a SAVEPOINT instead of
+  // issuing a second BEGIN, which SQLite forbids ("cannot start a transaction
+  // within a transaction"). This makes composable, atomic multi-step operations
+  // safe across the whole platform without changing single-level behaviour.
   transaction(fn) {
+    const depth = this._txDepth || 0;
+    if (depth > 0) {
+      const savepoint = `semo_sp_${depth}`;
+      this.db.exec(`SAVEPOINT ${savepoint}`);
+      this._txDepth = depth + 1;
+      try {
+        const value = fn(this);
+        this.db.exec(`RELEASE ${savepoint}`);
+        return value;
+      } catch (error) {
+        try { this.db.exec(`ROLLBACK TO ${savepoint}`); this.db.exec(`RELEASE ${savepoint}`); }
+        catch { /* preserve the original error */ }
+        throw error;
+      } finally {
+        this._txDepth = depth;
+      }
+    }
     this.db.exec('BEGIN IMMEDIATE');
-    try { const value = fn(this); this.db.exec('COMMIT'); return value; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    this._txDepth = 1;
+    try {
+      const value = fn(this);
+      this.db.exec('COMMIT');
+      return value;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    } finally {
+      this._txDepth = 0;
+    }
   }
   close() { this.db.close(); }
 }
