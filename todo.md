@@ -1,42 +1,47 @@
-# Ai-Semo0o-Agent — Four-Point Completion Plan
+# Task: Implement the last 4 review points
 
-Scope: ONLY the four points below, on the CURRENT repo. Use existing code only —
-no rebuild, no duplication, no stubs, no fake tests. Test every change, run full
-tests + typecheck + security/verification. Deliver: new/modified files only + ZIP
-+ DELETE LIST + final report with evidence. FORBIDDEN to modify anything outside
-the four points.
+1. CI Security Gate (no ignore, no CI break)
+2. Browser E2E Release Integration
+3. Agent Benchmark Release Integration
+4. Capability Scorecard Accuracy + SSRF Hardening
 
-## Point 1 — Unify Long-Running between server and worker
-- [x] Read server.mjs + worker.mjs + long-running.mjs (confirmed divergence)
-- [x] Wire createContinuationSupervisor + longRunning:true + AGENT_MAX_CONTINUATIONS into worker.mjs
-- [x] Fix dead continuation branch in agent/runtime.mjs (lastStepIndex + catch-block hand-off)
-- [x] Add regression test proving worker agent.run schedules a continuation
-- [x] Update outdated maestro "time budget fails closed" test to the real long-running contract
-- [x] Verify parity (server vs worker handler wiring) — 273 backend tests green
+## 0. Baseline & architecture analysis
+- [x] Baseline: full test suite 283 tests / 282 pass / 0 fail / 1 skip (EXIT=0); agent bench PASS 100%x4; browser E2E PASS 3/3; capability 91/100; security:scan FAIL (report artifact); audit:production FAIL (21 advisories)
+- [x] Map call graph: ci.yml+quality.yml, release:gate (vercel), security-scan, audit, scorecard consumers (server.mjs, scripts/*), SSRF consumers (registry.mjs fetchText/browser.run)
+- [x] Confirm undici NOT importable -> DNS pinning must use node:http/https `lookup`
 
-## Point 2 — Complete real Multi-Agent on top of EXISTING TaskGraph
-- [x] Read phase2-core/platform.mjs TaskGraph/executeTaskGraph + existing tests
-- [x] Implement real multi-agent orchestration ON TOP of TaskGraph (backend/agent/multi-agent.mjs)
-- [x] Wire it into the agent runtime (payload.multiAgent) + scorecard comment
-- [x] Add tests (roles, real tools+evidence, parallel, replan, security, turn budget, HTTP E2E) — 281 backend green
+## 1. CI Security Gate
+- [x] Add scripts/audit-baseline.json (reviewed accepted advisories)
+- [x] Add scripts/audit-gate.mjs (fail on NEW advisory/package/severity; pass on baseline)
+- [x] Wire audit:gate into package.json + ci.yml + quality.yml; remove continue-on-error
+- [x] Fix security-scan false-positive on generated report artifacts
+- [ ] Verify: security:scan green, audit gate green on baseline, red on injected new advisory
 
-## Point 3 — Real End-to-End Agent Benchmark
-- [x] Read scripts/agent-benchmark.mjs + ops/capability-benchmark.mjs
-- [x] Extend benchmark to cover all 3 execution strategies E2E (single-agent, multi-agent, long-running) + code-intelligence
-- [x] Add test (backend/test/agent-benchmark.e2e.test.mjs) that runs the benchmark and guards its contract
-- [x] Run it and capture real evidence (agent-benchmark.report.json — all 4 scenarios 100%)
+## 2. Browser E2E Release Integration
+- [ ] Wire existing scripts/browser-e2e.mjs into quality.yml (after browser ensured) with env
+- [ ] Verify: browser E2E runs in release flow with real evidence
 
-## Point 4 — Add and run real Browser E2E
-- [x] Read scripts/browser-smoke.mjs + backend/browser/* (found launcher returns browser-level ws — BrowserAgent needs a page target)
-- [x] Fix launcher: return a PAGE target ws + honest browserBinaryAvailable() + opt-in BROWSER_NO_SANDBOX
-- [x] Add real Browser E2E (scripts/browser-e2e.mjs): BrowserAgent over CDP + runBrowserTask + browser.run tool
-- [x] Add test (backend/test/browser-e2e.test.mjs) — runs real browser, skips honestly without one
-- [x] Run it and capture real evidence (browser-e2e.report.json + browser-e2e.screenshot.png — 3/3 scenarios)
+## 3. Agent Benchmark Release Integration
+- [ ] Wire existing scripts/agent-benchmark.mjs into quality.yml
+- [ ] Prove agent-loop, multi-agent, long-running, code-intelligence
+- [ ] Verify: benchmark runs in release flow, non-zero on failure
 
-## Verification & Delivery
-- [x] Run full test suite (all green) — 520 tests, 0 fail (legacy 80 + execution 69 + phase1 43 + frontend 22 + phase2 23 + backend 283)
-- [x] Run typecheck + security scan — typecheck EXIT 0; security-scan 323 files, no findings
-- [x] Extra verification — verify-imports backend 281/0 broken; boot smoke OK; capability scorecard 97/100 (12 live, 1 partial, 0 unwired); trial:self-improve 9/9
-- [x] ZIP of new/modified files only
-- [x] DELETE LIST
-- [x] Final report (evidence + results)
+## 4. Capability Scorecard Accuracy + SSRF Hardening
+- [x] Scorecard: status proven vs wired; no flag-only claims; add proof input + provenScore
+- [x] Feed real proof from agent benchmark + browser E2E into scorecard (scripts/capability-benchmark.mjs)
+- [x] SSRF: resolveSafeUrl + pinnedLookup + pinnedRequest + safeFetchText (DNS pinning, redirect re-validation)
+- [x] registry.mjs fetchText uses safeFetchText
+- [x] Update capability-benchmark.test.mjs + red-team.test.mjs with real tests
+- [x] Fix accuracy: passing E2E proof establishes proven even when static config flag unset (computer-use now PROVEN)
+
+## 5. Full verification
+- [x] npm test (297 tests / 296 pass / 0 fail / 1 skip, EXIT=0)
+- [x] typecheck EXIT=0; security:scan EXIT=0; audit:gate PASS
+- [x] agent benchmark PASS (4/4 100%); browser E2E PASS (3/3); capability benchmark 94/100 (11 proven)
+- [ ] red-team + capability tests re-run after final edit
+- [ ] git diff + git status review
+
+## 6. Delivery
+- [ ] Build ZIP with ONLY modified/added files at original repo paths
+- [ ] Verify ZIP integrity + contents + paths
+- [ ] Final reports

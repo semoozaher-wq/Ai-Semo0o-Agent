@@ -22,6 +22,7 @@
     "doctor": "expo-doctor",
     "security:scan": "node scripts/security-scan.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high",
+    "audit:gate": "node scripts/audit-gate.mjs",
     "test": "npm run test:legacy-harness && npm run test:execution && npm run test:phase1 && npm run test:frontend && npm run test:phase2 && npm run test:backend && npm run validate:pain-map",
     "test:legacy-harness": "tsx test/harness.ts",
     "test:execution": "node --experimental-sqlite --test test/*.test.mjs",
