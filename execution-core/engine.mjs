@@ -639,6 +639,25 @@ export class RealGit {
     return { ...result, branch: result.stdout.trim() };
   }
 
+  /**
+   * Bounded, read-only commit history. An explicit tab separator keeps the parse
+   * unambiguous regardless of the commit subject content.
+   */
+  async log({ limit = 20, ref } = {}) {
+    const count = Number.isInteger(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 200) : 20;
+    const args = ['log', `--max-count=${count}`, '--pretty=format:%H%x09%an%x09%aI%x09%s'];
+    if (ref) args.push(validateRevision(ref));
+    const result = await this.#run(args, Capability.GIT_READ, { maxOutputBytes: 1_000_000 });
+    const entries = result.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, author, date, ...rest] = line.split('\t');
+        return { sha, author, date, subject: rest.join('\t') };
+      });
+    return { ...result, entries };
+  }
+
   async listBranches() {
     const result = await this.#run(['branch', '--format=%(refname:short)'], Capability.GIT_READ);
     return { ...result, branches: result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) };
