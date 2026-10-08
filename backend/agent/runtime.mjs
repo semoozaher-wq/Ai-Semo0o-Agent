@@ -1,7 +1,7 @@
 import { id, now, hash } from '../db/client.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG, fromProviderToolName, openAITools } from './catalog.mjs';
 import { normalizeModelId } from '../models/catalog.mjs';
-import { maestroModelRouter, isRoutingSentinel } from '../models/task-router.mjs';
+import { maestroModelRouter, isRoutingSentinel, classifyTask } from '../models/task-router.mjs';
 import { compileRunContext, renderGuidance, sanitizeDeep } from './context.mjs';
 import { classifyFailure, RECOVERY_EVENTS } from './recovery.mjs';
 import { isBoundedLimitError } from './long-running.mjs';
@@ -13,6 +13,11 @@ import { reflectOnRun } from './reflection.mjs';
 import { loadConsolidatedLessons, consolidateProjectMemory } from '../memory/consolidate.mjs';
 import { normalizeSuccessCriteria, evaluateCompletion, decideAutonomousAction, renderPlanContext } from './goal-completion.mjs';
 import { requiresApproval } from './safety.mjs';
+import {
+  buildExperienceSnapshot, modelPriorFromSnapshot, experienceGuidance, summarizeExperience,
+  recoveryPriorFromSnapshot, strategyPriorFromSnapshot, executionPriorFromSnapshot,
+  recommendRecoveryAction, recommendStrategy, recommendRetryBudget, RECOVERY_MIN_CONFIDENCE,
+} from './experience.mjs';
 
 const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
 function addUsage(a = {}, b = {}) { return { promptTokens: (a.promptTokens || 0) + (b.promptTokens || 0), completionTokens: (a.completionTokens || 0) + (b.completionTokens || 0), totalTokens: (a.totalTokens || 0) + (b.totalTokens || 0) }; }
@@ -66,6 +71,29 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
   if (!db || !tools || !llm) throw new Error('AGENT_RUNTIME_DEPENDENCIES_REQUIRED');
   const knownSecrets = Array.isArray(secrets) ? secrets : [];
   const redact = (value) => redactDeep(value, knownSecrets);
+  // Experience Engine: a short-TTL, per-tenant cache of the observed-outcome
+  // snapshot so every run learns from real history without re-querying on each
+  // step. Bounded (30-day window, 500 runs) and fail-soft.
+  const experienceEnabled = process.env.AGENT_EXPERIENCE !== 'false';
+  // v2: experience may also steer the run's STRATEGY (single vs multi-agent) and
+  // its EXECUTION/RECOVERY method. Both are additive and gated by strong,
+  // recency-weighted evidence; these switches let an operator pin the legacy
+  // behaviour if ever needed (default: on).
+  const experienceStrategyEnabled = process.env.AGENT_EXPERIENCE_STRATEGY !== 'false';
+  const experienceTtlMs = Math.max(0, Number(process.env.AGENT_EXPERIENCE_TTL_MS || 60_000));
+  const experienceCache = new Map();
+  const experienceFor = (tenantId) => {
+    if (!experienceEnabled || !tenantId) return null;
+    const cached = experienceCache.get(tenantId);
+    const stamp = Date.now();
+    if (cached && stamp - cached.at < experienceTtlMs) return cached.snapshot;
+    let snapshot = null;
+    try {
+      snapshot = buildExperienceSnapshot(db, { tenantId, windowHours: Number(process.env.AGENT_EXPERIENCE_WINDOW_HOURS || 24 * 30), limit: 500 });
+    } catch { snapshot = null; }
+    experienceCache.set(tenantId, { at: stamp, snapshot });
+    return snapshot;
+  };
   const runAgent = async ({ run, payload, signal }) => {
     // The merged tool view: the compiled-in catalog PLUS any plugin tools the
     // operator registered at boot (backend/tools/plugins.mjs). When no registry
@@ -203,9 +231,49 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       emit('run_finished', { status, multiAgent: true, nodes: result.graph.nodes.length, usage: result.usage, costUsd: result.cost || 0 });
       return { status, multiAgent: true, graph: result.graph, outputs: result.outputs, usage: result.usage, costUsd: result.cost || 0 };
     };
+    // ---------------------------------------------------------------------
+    // Experience Engine: inject this tenant's REAL observed outcomes into the
+    // run's decisions. Beyond model/tool selection (v1), the SAME evidence now
+    // also steers the run's STRATEGY, its execution/retry method and its
+    // recovery. Fully additive and fail-soft: with no history the router is
+    // byte-for-byte unchanged and nothing is added to the prompt.
+    // ---------------------------------------------------------------------
+    let recoveryPrior = null;
+    let executionPrior = null;
+    let strategyPrior = null;
+    let resolvedTaskType = null;
+    try { resolvedTaskType = classifyTask({ ...criteria, taskType: payload.taskType }); } catch { resolvedTaskType = null; }
     try {
-      // Multi-Agent mode is an explicit, opt-in execution strategy for this run.
-      if (payload.multiAgent === true) return await runMultiAgent();
+      const snapshot = experienceFor(run.tenant_id);
+      if (snapshot && (snapshot.sampleSize.runs > 0 || snapshot.sampleSize.toolCalls > 0)) {
+        const prior = modelPriorFromSnapshot(snapshot);
+        if (typeof runRouter.setExperience === 'function') runRouter.setExperience(prior);
+        const guidance = experienceGuidance(snapshot);
+        if (guidance.length) context.notes = [...context.notes, ...guidance];
+        recoveryPrior = recoveryPriorFromSnapshot(snapshot);
+        strategyPrior = strategyPriorFromSnapshot(snapshot);
+        executionPrior = executionPriorFromSnapshot(snapshot);
+        emit('experience_applied', { ...summarizeExperience(snapshot), guidanceLines: guidance.length });
+      }
+    } catch { /* experience is advisory: never block a run on it */ }
+    // Strategy selection: the run is multi-agent when the caller explicitly asks
+    // for it OR when the tenant's own history shows multi-agent reliably beats
+    // single-agent for THIS task type (strong evidence + a real margin). An
+    // explicit `multiAgent:false` always opts out, and with no history nothing
+    // changes (single-agent, exactly as before).
+    let useMultiAgent = payload.multiAgent === true;
+    if (!useMultiAgent && payload.multiAgent !== false && experienceStrategyEnabled && strategyPrior && resolvedTaskType) {
+      try {
+        const rec = recommendStrategy(strategyPrior, resolvedTaskType);
+        if (rec && rec.strategy === 'multi-agent') {
+          useMultiAgent = true;
+          emit('strategy_selected', { strategy: 'multi-agent', taskType: resolvedTaskType, confidence: rec.confidence, margin: rec.margin, successRate: rec.successRate, source: 'experience' });
+        }
+      } catch { /* strategy is advisory */ }
+    }
+    try {
+      // Multi-Agent mode is an execution strategy for this run (explicit or learned).
+      if (useMultiAgent) return await runMultiAgent();
       // Record the routing decision up-front so the run stream shows which task
       // type was detected and which cross-provider chain will be used.
       try {
@@ -216,6 +284,8 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
           chain: honorRequestedModel ? [requestedModel, ...decision.chain.filter((candidate) => candidate !== requestedModel)] : decision.chain,
           requestedModel,
           honorRequestedModel,
+          experienceApplied: decision.experienceApplied === true,
+          experience: decision.experience ?? null,
         });
       } catch (error) {
         emit(RECOVERY_EVENTS.routingDecision, { requestedModel, honorRequestedModel, error: error instanceof Error ? error.message : String(error) });
@@ -290,7 +360,14 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
         seenCalls.add(fingerprint);
         // A self-improvement retry policy may raise retries for a specific tool, but
         // never beyond the hard ceiling of 5.
-        const toolRetries = Math.min(Number(overrides.retryPolicy[step.toolId] ?? overrides.retryPolicy['*'] ?? limits.maxRetries), 5);
+        const baseRetries = Math.min(Number(overrides.retryPolicy[step.toolId] ?? overrides.retryPolicy['*'] ?? limits.maxRetries), 5);
+        // Execution method: if this tool is PROVEN flaky for this task type, do not
+        // burn retries that historically never help — fail fast to the replan path.
+        // Conservative + evidence-gated; otherwise the base budget is unchanged.
+        const toolRetries = executionPrior
+          ? recommendRetryBudget({ executionPrior, taskType: resolvedTaskType, toolId: step.toolId, base: baseRetries })
+          : baseRetries;
+        if (toolRetries !== baseRetries) emit('execution_guided', { stepId: step.id, toolId: step.toolId, taskType: resolvedTaskType, base: baseRetries, retries: toolRetries, source: 'experience' });
         let toolResult;
         let evidenceId;
         let stepFailed = false;
@@ -304,6 +381,20 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
           emit('tool_completed', { stepId: step.id, toolId: step.toolId, ok: toolResult.ok !== false, output: toolResult.output, error: toolResult.error, evidenceId, attempt });
           if (toolResult.ok !== false) break;
           failureKind = classifyFailure(toolResult.error, 'TOOL_FAILURE');
+          // Recovery: if evidence shows that repairing (retrying with modified
+          // args) rarely rescues THIS failure kind while replanning does, skip the
+          // futile repair and go straight to the bounded replan path. Only when a
+          // replan budget remains; otherwise the static behaviour is unchanged.
+          if (attempt === 1 && recoveryPrior && replans < limits.maxReplans) {
+            try {
+              const rec = recommendRecoveryAction(recoveryPrior, failureKind, { allowed: ['repair', 'replan'] });
+              if (rec && rec.action === 'replan' && rec.confidence >= RECOVERY_MIN_CONFIDENCE) {
+                emit('recovery_guided', { stepId: step.id, toolId: step.toolId, failureKind, action: 'replan', confidence: rec.confidence, successRate: rec.successRate, source: 'experience' });
+                stepFailed = true;
+                break;
+              }
+            } catch { /* recovery guidance is advisory */ }
+          }
           if (attempt === toolRetries) { stepFailed = true; break; }
           const diagnosis = await complete({ model: requestedModel ?? undefined, messages: [
             { role: 'system', content: 'Diagnose the failed tool call. Return ONLY JSON: {"action":"retry","args":object}. Never change security, authentication, policy, or permissions.' },
@@ -329,7 +420,14 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
             maxReplans: limits.maxReplans,
             remainingSteps: plan.steps.length - index - 1,
           });
-          emit('autonomous_decision', { stepId: step.id, toolId: step.toolId, action: decision.action, reason: decision.reason, failureKind, replans, maxReplans: limits.maxReplans });
+          // Surface the learned recovery recommendation on the decision event so
+          // operators can see WHY recovery was chosen (advisory; never changes the
+          // bounded recover/fail gate itself).
+          let recoveryHint = null;
+          if (recoveryPrior) {
+            try { recoveryHint = recommendRecoveryAction(recoveryPrior, failureKind, { allowed: ['repair', 'replan'] }); } catch { recoveryHint = null; }
+          }
+          emit('autonomous_decision', { stepId: step.id, toolId: step.toolId, action: decision.action, reason: decision.reason, failureKind, replans, maxReplans: limits.maxReplans, recoveryHint: recoveryHint ? { action: recoveryHint.action, confidence: recoveryHint.confidence, successRate: recoveryHint.successRate } : null });
           // Recovery / Replan: try to route around the failure before giving up.
           if (decision.action === 'recover') {
             replans += 1;
