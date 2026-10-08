@@ -9,7 +9,10 @@ import { runBrowserTask } from '../browser/runner.mjs';
 import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.mjs';
 import { assertSafeUrlResolved, assertWorkspacePath, safeFetchText } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
-import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from './connectors.mjs';
+import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, connectorStatus } from './connectors.mjs';
+import { createGitHubClient, githubStatus, parseRepoSlug } from '../github/service.mjs';
+import { resolveGitHubToken } from '../github/connections.mjs';
+import { MemoryStore } from '../memory/store.mjs';
 import { buildProjectIntelligence } from '../../phase2-core/platform.mjs';
 import { analyzeImpact, describeImpact } from '../../phase2-core/impact.mjs';
 import { buildChangeSet, describeChangeSet } from '../../phase2-core/changeset.mjs';
@@ -120,14 +123,139 @@ function profile(content, file) {
   return { format: 'json', rows: rows.length, columns: keys.map((key) => ({ name: key, nonEmpty: rows.filter((row) => row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '').length })) };
 }
 
-export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, engineAvailable = false, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || (() => { throw new Error('WORKSPACE_ROOT_REQUIRED'); })() } = {}) {
+// Decode the handful of HTML entities that matter for text extraction, then
+// collapse whitespace. Bounded input is assumed by callers.
+function stripTags(value) {
+  return String(value)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Structured extraction from an HTML document: metadata, headings, bounded
+// links and JSON-LD. Everything is derived from the real fetched bytes.
+export function extractStructured(url, html, { maxLinks = 50, maxChars = 30000 } = {}) {
+  const source = String(html);
+  const pick = (regex) => { const match = source.match(regex); return match ? stripTags(match[1]) : null; };
+  const title = pick(/<title[^>]*>([\s\S]*?)<\/title>/i) || pick(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  const description = pick(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || pick(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
+  const canonical = pick(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
+  const headings = [...source.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi)]
+    .slice(0, 40)
+    .map((match) => ({ level: Number(match[1]), text: stripTags(match[2]).slice(0, 200) }))
+    .filter((heading) => heading.text);
+  const linkLimit = Math.min(Math.max(Number(maxLinks) || 50, 1), 200);
+  const links = [];
+  for (const match of source.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    if (links.length >= linkLimit) break;
+    const href = match[1].trim();
+    if (!href || href.startsWith('#') || href.startsWith('javascript:')) continue;
+    links.push({ href, text: stripTags(match[2]).slice(0, 120) });
+  }
+  const jsonLd = [];
+  for (const match of source.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { jsonLd.push(JSON.parse(match[1].trim())); } catch { /* ignore malformed JSON-LD */ }
+    if (jsonLd.length >= 10) break;
+  }
+  const text = stripTags(source.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')).slice(0, Math.min(Number(maxChars) || 30000, 50000));
+  return { url, title, description, canonical, headings, links, jsonLd, text };
+}
+
+// Run an external extractor with a bounded output buffer. Resolves with the
+// (possibly truncated) stdout; rejects only when nothing usable was produced.
+function runCommand(command, args, { maxChars = 200000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = ''; let err = '';
+    child.stdout.on('data', (chunk) => { out += chunk; if (out.length > maxChars) child.kill('SIGTERM'); });
+    child.stderr.on('data', (chunk) => { err += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => ((code === 0 || out) ? resolve(out.slice(0, maxChars)) : reject(new Error(err || `${command}_FAILED`))));
+  });
+}
+
+// Strip XML tags while preserving paragraph breaks (docx / odt bodies).
+function stripXml(xml) {
+  return String(xml)
+    .replace(/<\/(?:w:p|text:p)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Extract text from a workspace document using the real installed extractors.
+async function extractDocument(file, maxChars) {
+  const ext = path.extname(file).toLowerCase();
+  if (['.txt', '.md', '.markdown', '.json', '.csv', '.log', '.yaml', '.yml', '.xml', '.html', '.htm'].includes(ext)) {
+    return { method: 'read', text: (await readFile(file, 'utf8')).slice(0, maxChars) };
+  }
+  if (ext === '.docx') {
+    const xml = await runCommand('unzip', ['-p', file, 'word/document.xml'], { maxChars: 5_000_000 });
+    return { method: 'unzip', text: stripXml(xml).slice(0, maxChars) };
+  }
+  if (ext === '.odt') {
+    const xml = await runCommand('unzip', ['-p', file, 'content.xml'], { maxChars: 5_000_000 });
+    return { method: 'unzip', text: stripXml(xml).slice(0, maxChars) };
+  }
+  if (ext === '.rtf') return { method: 'unrtf', text: (await runCommand('unrtf', ['--text', file], { maxChars })).slice(0, maxChars) };
+  if (ext === '.doc') {
+    try { return { method: 'antiword', text: (await runCommand('antiword', [file], { maxChars })).slice(0, maxChars) }; }
+    catch { return { method: 'catdoc', text: (await runCommand('catdoc', [file], { maxChars })).slice(0, maxChars) }; }
+  }
+  return { method: 'read', text: (await readFile(file, 'utf8')).slice(0, maxChars) };
+}
+
+export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TAVILY_API_KEY ? createTavilySearchTool() : null, llm, engineAvailable = false, getWorkspaceRoot = () => process.env.WORKSPACE_ROOT || (() => { throw new Error('WORKSPACE_ROOT_REQUIRED'); })(), memory } = {}) {
   const tools = new Map();
+  // Long-term project memory: reuse the EXISTING MemoryStore (hybrid lexical +
+  // semantic). Created from `db` when a store is not injected, so the agent can
+  // read/write durable project context without any new storage layer.
+  const memoryStore = memory ?? (db ? new MemoryStore(db) : null);
+  // Git lifecycle tools run through the per-task engine's RealGit (permissions +
+  // evidence + protected-branch refusal). They fail closed with ENGINE_REQUIRED
+  // when no engine is supplied.
+  const withGit = (fn) => async (args = {}, context = {}) => {
+    const git = context?.engine?.git;
+    if (!git) throw new Error('ENGINE_REQUIRED');
+    return fn(git, args, context);
+  };
+  // GitHub tools resolve the tenant token from the stored (encrypted) connection,
+  // then fall back to an operator GITHUB_TOKEN. They fail closed when nothing is
+  // configured so an unavailable integration is never mistaken for a ready one.
+  const githubClientFor = (context = {}) => {
+    let token = null;
+    if (db) { try { token = resolveGitHubToken(db, context?.run?.tenant_id); } catch { token = null; } }
+    if (!token) token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
+    if (!token) throw new Error('GITHUB_NOT_CONFIGURED');
+    return createGitHubClient({ token });
+  };
+  const repoArgs = (args) => parseRepoSlug(args.repo);
+  // Connector-backed tools share one shape: resolve the provider from the env and
+  // fail closed with TOOL_CONNECTOR_NOT_CONFIGURED:<id> when nothing is set.
+  const connectorTool = (toolId, factory, invoke) => async (args = {}) => {
+    const provider = factory();
+    if (!provider) throw new Error(`TOOL_CONNECTOR_NOT_CONFIGURED:${toolId}`);
+    return { output: await invoke(provider, args) };
+  };
   // Engine-backed handlers compose the EXISTING AgentExecutionEngine. When a
   // per-task engine is present in the tool context, file edits / scans /
   // commands / transactional applies run through it (permissions + evidence +
   // atomic writes). Engine-only tools fail closed when no engine is supplied.
   const engineTools = createEngineToolHandlers();
-  const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply']);
+  const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply', 'git.status', 'git.diff', 'git.log', 'git.checkpoint']);
   // Code-intelligence tools degrade (rather than fail closed) when no per-task
   // engine is supplied, so they are reported `partial` instead of `live`.
   const enginePartial = new Set(['code.changeset']);
@@ -272,6 +400,130 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     const result = await provider.send({ to: args.to, subject: bounded(args.subject, 500, 'SUBJECT'), body: bounded(args.body, 100000, 'BODY') });
     return { output: { delivered: true, provider: result.provider, messageId: result.messageId } };
   });
+  // --- Git lifecycle (reuse engine.git; never reaches push/merge/master) -----
+  tools.set('git.status', withGit(async (git) => {
+    const result = await git.status();
+    const entries = result.entries ?? [];
+    const branchEntry = entries.find((entry) => String(entry).startsWith('##')) ?? '';
+    const branch = branchEntry.replace(/^##\s*/, '').split(/[.\s]/)[0] || null;
+    return { output: { branch, entries: entries.filter((entry) => !String(entry).startsWith('##')), raw: String(result.stdout ?? '').slice(0, 20000) } };
+  }));
+  tools.set('git.diff', withGit(async (git, args) => {
+    const result = await git.diff();
+    const maxChars = Math.min(Math.max(Number(args.maxChars ?? 100000), 100), 200000);
+    const stdout = String(result.stdout ?? '');
+    return { output: { diff: stdout.slice(0, maxChars), truncated: stdout.length > maxChars, exitCode: result.exitCode ?? null } };
+  }));
+  tools.set('git.log', withGit(async (git, args) => {
+    if (typeof git.log !== 'function') throw new Error('GIT_LOG_UNAVAILABLE');
+    const result = await git.log({ limit: Number(args.limit ?? 20), ref: args.ref });
+    return { output: { entries: result.entries ?? [] } };
+  }));
+  tools.set('git.checkpoint', withGit(async (git, args) => {
+    const message = bounded(args.message, 240, 'CHECKPOINT_MESSAGE');
+    if (message.trim().length < 3) throw new Error('CHECKPOINT_MESSAGE_TOO_SHORT');
+    const result = await git.checkpoint(message);
+    return { output: { created: result.created, revision: result.revision ?? null, reason: result.reason ?? null } };
+  }));
+  // --- GitHub automation (task -> PR -> CI -> fix) ---------------------------
+  tools.set('github.repo', async (args, context) => {
+    const client = githubClientFor(context);
+    return { output: await client.getRepo(repoArgs(args)) };
+  });
+  tools.set('github.issues.list', async (args, context) => {
+    const client = githubClientFor(context);
+    const issues = await client.listIssues({ ...repoArgs(args), state: args.state || 'open', limit: Number(args.limit ?? 20) });
+    return { output: { issues } };
+  });
+  tools.set('github.issue.create', async (args, context) => {
+    const client = githubClientFor(context);
+    const labels = Array.isArray(args.labels) ? args.labels.slice(0, 20).map((label) => String(label).slice(0, 64)) : [];
+    const issue = await client.createIssue({ ...repoArgs(args), title: bounded(args.title, 256, 'TITLE'), body: typeof args.body === 'string' ? args.body.slice(0, 100000) : '', labels });
+    return { output: issue };
+  });
+  tools.set('github.issue.comment', async (args, context) => {
+    const client = githubClientFor(context);
+    const comment = await client.commentOnIssue({ ...repoArgs(args), issueNumber: Number(args.number), body: bounded(args.body, 100000, 'BODY') });
+    return { output: comment };
+  });
+  tools.set('github.pr.create', async (args, context) => {
+    const client = githubClientFor(context);
+    let head = args.head ? String(args.head) : null;
+    if (!head && context?.engine?.git) { try { head = (await context.engine.git.branch()).branch; } catch { head = null; } }
+    if (!head) throw new Error('GITHUB_PR_HEAD_REQUIRED');
+    const pr = await client.createPullRequest({ ...repoArgs(args), title: bounded(args.title, 256, 'TITLE'), head, base: bounded(args.base, 256, 'BASE'), body: typeof args.body === 'string' ? args.body.slice(0, 100000) : '', draft: args.draft === true });
+    return { output: { ...pr, head } };
+  });
+  tools.set('github.ci.status', async (args, context) => {
+    const client = githubClientFor(context);
+    const { owner, repo } = repoArgs(args);
+    let ref = args.ref ? String(args.ref) : null;
+    if (!ref && context?.engine?.git) { try { ref = (await context.engine.git.branch()).branch; } catch { ref = null; } }
+    if (!ref) ref = 'HEAD';
+    const [combined, checks, runs] = await Promise.all([
+      client.getCombinedStatus({ owner, repo, ref }).catch(() => null),
+      client.listCheckRuns({ owner, repo, ref }).catch(() => null),
+      client.listWorkflowRuns({ owner, repo, branch: args.branch || ref, limit: 10 }).catch(() => null),
+    ]);
+    const checkRuns = checks?.checkRuns ?? [];
+    const failing = checkRuns.filter((run) => run.conclusion && !['success', 'neutral', 'skipped'].includes(run.conclusion));
+    const workflowRuns = runs?.runs ?? [];
+    const failedRuns = workflowRuns.filter((run) => run.conclusion === 'failure');
+    const green = combined?.state === 'success' && failing.length === 0 && failedRuns.length === 0;
+    return { output: { ref, state: combined?.state ?? 'unknown', combined, checkRuns, workflowRuns, failing: failing.map((run) => run.name), failedRuns: failedRuns.map((run) => run.name), green } };
+  });
+  // --- Research / content ----------------------------------------------------
+  tools.set('web.extract', async (args) => {
+    const { url, status, headers, body } = await safeFetchText(args.url, { timeoutMs: 15000 });
+    if (status < 200 || status >= 300) throw new Error(`WEB_EXTRACT_HTTP_${status}`);
+    const contentType = String(headers['content-type'] ?? '');
+    if (!contentType.includes('text/') && !contentType.includes('json') && !contentType.includes('xml')) throw new Error('WEB_EXTRACT_UNSUPPORTED_CONTENT');
+    return { output: extractStructured(url, body, { maxLinks: Number(args.maxLinks ?? 50), maxChars: Number(args.maxChars ?? 30000) }) };
+  });
+  tools.set('doc.extract', async (args, context) => {
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const maxChars = Math.min(Math.max(Number(args.maxChars ?? 200000), 100), 200000);
+    const result = await extractDocument(resolved, maxChars);
+    return { output: { path: safe, method: result.method, text: result.text } };
+  });
+  // --- Long-term memory ------------------------------------------------------
+  tools.set('memory.search', async (args, context) => {
+    if (!memoryStore) throw new Error('MEMORY_UNAVAILABLE');
+    const tenantId = context?.run?.tenant_id;
+    const projectId = context?.task?.project_id;
+    if (!tenantId || !projectId) throw new Error('MEMORY_CONTEXT_REQUIRED');
+    const results = await memoryStore.search({ tenantId, projectId, query: bounded(args.query, 500, 'QUERY'), limit: Number(args.limit ?? 5) });
+    return { output: { results } };
+  });
+  tools.set('memory.write', async (args, context) => {
+    if (!memoryStore) throw new Error('MEMORY_UNAVAILABLE');
+    const tenantId = context?.run?.tenant_id;
+    const projectId = context?.task?.project_id;
+    if (!tenantId || !projectId) throw new Error('MEMORY_CONTEXT_REQUIRED');
+    const document = await memoryStore.addDocument({ tenantId, projectId, source: typeof args.source === 'string' ? args.source.slice(0, 200) : 'agent', content: bounded(args.content, 200000, 'CONTENT') });
+    return { output: { id: document.id, source: document.source, createdAt: document.created_at } };
+  });
+  // --- Code review (LLM reasoning over the real diff) ------------------------
+  tools.set('code.review', async (args, context) => {
+    if (!llm) throw new Error('SERVER_LLM_REQUIRED');
+    let diff = typeof args.diff === 'string' ? args.diff : '';
+    if (!diff && context?.engine?.git) { try { diff = String((await context.engine.git.diff()).stdout ?? ''); } catch { diff = ''; } }
+    if (!diff && args.path && context?.workspaceRoot) { const { resolved } = await workspacePath(context.workspaceRoot, args.path); diff = (await readFile(resolved, 'utf8')).slice(0, 120000); }
+    if (!diff) throw new Error('CODE_REVIEW_NO_INPUT');
+    const response = await llm.complete({ model: context.model, messages: [
+      { role: 'system', content: 'You are a rigorous senior code reviewer. Return ONLY JSON: {"summary":string,"findings":[{"severity":"high|medium|low","file":string,"issue":string,"suggestion":string}],"verdict":"approve|request_changes"}. Base every finding on the provided diff only; never invent files or lines.' },
+      { role: 'user', content: `Focus: ${args.focus || 'general correctness, security and maintainability'}\n\nDiff:\n${diff.slice(0, 120000)}` },
+    ], signal: context.signal });
+    let parsed = null;
+    try { parsed = JSON.parse(String(response.text).match(/\{[\s\S]*\}/)?.[0] ?? ''); } catch { parsed = null; }
+    return { output: { review: parsed ?? response.text, usage: response.usage } };
+  });
+  // --- Notification / knowledge connectors -----------------------------------
+  tools.set('slack.post', connectorTool('slack.post', createSlackProvider, (provider, args) => provider.post({ text: bounded(args.text, 40000, 'TEXT'), channel: args.channel })));
+  tools.set('teams.post', connectorTool('teams.post', createTeamsProvider, (provider, args) => provider.post({ text: bounded(args.text, 40000, 'TEXT'), title: args.title })));
+  tools.set('discord.post', connectorTool('discord.post', createDiscordProvider, (provider, args) => provider.post({ text: bounded(args.text, 2000, 'TEXT'), username: args.username })));
+  tools.set('notion.page.create', connectorTool('notion.page.create', createNotionProvider, (provider, args) => provider.createPage({ title: bounded(args.title, 200, 'TITLE'), content: typeof args.content === 'string' ? args.content.slice(0, 100000) : '', databaseId: args.databaseId, pageId: args.pageId })));
+  tools.set('webhook.post', connectorTool('webhook.post', createWebhookProvider, (provider, args) => provider.post({ text: bounded(args.text, 40000, 'TEXT'), event: args.event, data: args.data })));
   return {
     has(toolId) { return tools.has(toolId); },
     async run(toolId, args = {}, context = {}) {
@@ -299,7 +551,16 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
         ['image.analyze', { ok: connectors.vision, reason: 'vision_provider_not_configured' }],
         ['calendar.schedule', { ok: connectors.calendar, reason: 'calendar_provider_not_configured' }],
         ['email.send', { ok: connectors.email, reason: 'email_provider_not_configured' }],
+        ['slack.post', { ok: connectors.slack, reason: 'slack_provider_not_configured' }],
+        ['teams.post', { ok: connectors.teams, reason: 'teams_provider_not_configured' }],
+        ['discord.post', { ok: connectors.discord, reason: 'discord_provider_not_configured' }],
+        ['notion.page.create', { ok: connectors.notion, reason: 'notion_provider_not_configured' }],
+        ['webhook.post', { ok: connectors.webhook, reason: 'webhook_provider_not_configured' }],
       ]);
+      // GitHub tools are ready when an operator token exists or any tenant has a
+      // stored (encrypted) connection; otherwise they report unwired.
+      let githubReady = githubStatus().configured;
+      if (!githubReady && db) { try { githubReady = Boolean(db.get('SELECT 1 AS ok FROM github_connections LIMIT 1')); } catch { githubReady = false; } }
       for (const toolId of tools.keys()) {
         const gate = connectorGated.get(toolId);
         if (gate && !gate.ok) mark(toolId, 'unwired', gate.reason);
@@ -308,8 +569,10 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
           else if (process.env.BROWSER_LAUNCH_LOCAL === 'true') mark(toolId, 'unwired', 'browser_binary_not_found');
           else mark(toolId, 'unwired', 'browser_cdp_not_configured');
         }
+        else if (toolId.startsWith('github.') && !githubReady) mark(toolId, 'unwired', 'github_not_configured');
         else if (engineGated.has(toolId) && !engineAvailable) mark(toolId, 'partial', 'engine_required');
-        else if ((toolId === 'doc.summarize' || toolId === 'translate') && !llm) mark(toolId, 'partial', 'server_llm_optional');
+        else if ((toolId === 'doc.summarize' || toolId === 'translate' || toolId === 'code.review') && !llm) mark(toolId, 'partial', 'server_llm_optional');
+        else if (toolId.startsWith('memory.') && !memoryStore) mark(toolId, 'partial', 'memory_unavailable');
         else mark(toolId, 'live');
       }
       // Catalog tools that were never registered (e.g. web.search without a key).

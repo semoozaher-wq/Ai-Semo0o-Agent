@@ -402,6 +402,145 @@ async function webhookSend(config, { to, subject, body }, env) {
   return { provider: config.id, messageId: result?.id ?? result?.messageId ?? null };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Chat / notification connectors (Slack, Teams, Discord)                    */
+/* -------------------------------------------------------------------------- */
+
+function slackWebhookConfig(env) {
+  if (!env.SLACK_WEBHOOK_URL) return null;
+  return { id: 'slack', mode: 'webhook', url: env.SLACK_WEBHOOK_URL };
+}
+function slackBotConfig(env) {
+  if (!env.SLACK_BOT_TOKEN) return null;
+  return { id: 'slack', mode: 'bot', token: env.SLACK_BOT_TOKEN, channel: env.SLACK_CHANNEL || '' };
+}
+/** Resolve a Slack provider (incoming webhook or bot token). @returns {{id:string, post:Function}|null} */
+export function createSlackProvider(env = process.env) {
+  const explicit = String(env.SLACK_PROVIDER || '').toLowerCase();
+  const builders = [['webhook', slackWebhookConfig], ['bot', slackBotConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    return { id: 'slack', post: (input) => (name === 'bot' ? slackBotPost(config, input, env) : slackWebhookPost(config, input, env)) };
+  }
+  return null;
+}
+
+async function slackWebhookPost(config, { text, blocks }, env) {
+  const body = JSON.stringify({ text: String(text ?? ''), ...(Array.isArray(blocks) ? { blocks } : {}) });
+  const { response, text: raw } = await fetchWithTimeout(config.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }, { timeoutMs: timeoutMs(env, 'SLACK_TIMEOUT_MS', 30_000) });
+  if (!response.ok) throw new Error(`CONNECTOR_HTTP_${response.status}`);
+  return { provider: 'slack', delivered: true, response: raw.slice(0, 200) };
+}
+
+async function slackBotPost(config, { text, channel, blocks }, env) {
+  const target = String(channel || config.channel || '').trim();
+  if (!target) throw new Error('SLACK_CHANNEL_REQUIRED');
+  const body = JSON.stringify({ channel: target, text: String(text ?? ''), ...(Array.isArray(blocks) ? { blocks } : {}) });
+  const { response, text: raw } = await fetchWithTimeout('https://slack.com/api/chat.postMessage', { method: 'POST', headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' }, body }, { timeoutMs: timeoutMs(env, 'SLACK_TIMEOUT_MS', 30_000) });
+  const payload = await readJson(response, raw, config);
+  if (payload.ok === false) throw new Error(`SLACK_API_ERROR:${scrubSecrets(String(payload.error ?? 'unknown'), config)}`);
+  return { provider: 'slack', delivered: true, channel: payload.channel ?? target, ts: payload.ts ?? null };
+}
+
+function teamsWebhookConfig(env) {
+  if (!env.TEAMS_WEBHOOK_URL) return null;
+  return { id: 'teams', url: env.TEAMS_WEBHOOK_URL };
+}
+/** Resolve a Microsoft Teams provider (incoming webhook). @returns {{id:string, post:Function}|null} */
+export function createTeamsProvider(env = process.env) {
+  const config = teamsWebhookConfig(env);
+  if (!config) return null;
+  return { id: 'teams', post: (input) => teamsPost(config, input, env) };
+}
+
+async function teamsPost(config, { text, title }, env) {
+  // Adaptive card so both legacy and modern Teams webhooks render the message.
+  const body = JSON.stringify({ type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4', body: [...(title ? [{ type: 'TextBlock', weight: 'Bolder', text: String(title) }] : []), { type: 'TextBlock', wrap: true, text: String(text ?? '') }] } }] });
+  const { response } = await fetchWithTimeout(config.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }, { timeoutMs: timeoutMs(env, 'TEAMS_TIMEOUT_MS', 30_000) });
+  if (!response.ok) throw new Error(`CONNECTOR_HTTP_${response.status}`);
+  return { provider: 'teams', delivered: true };
+}
+
+function discordWebhookConfig(env) {
+  if (!env.DISCORD_WEBHOOK_URL) return null;
+  return { id: 'discord', url: env.DISCORD_WEBHOOK_URL };
+}
+/** Resolve a Discord provider (channel webhook). @returns {{id:string, post:Function}|null} */
+export function createDiscordProvider(env = process.env) {
+  const config = discordWebhookConfig(env);
+  if (!config) return null;
+  return { id: 'discord', post: (input) => discordPost(config, input, env) };
+}
+
+async function discordPost(config, { text, username }, env) {
+  const content = String(text ?? '').slice(0, 1900); // Discord hard limit is 2000 chars
+  const body = JSON.stringify({ content, ...(username ? { username: String(username).slice(0, 80) } : {}) });
+  const { response } = await fetchWithTimeout(config.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }, { timeoutMs: timeoutMs(env, 'DISCORD_TIMEOUT_MS', 30_000) });
+  if (!response.ok) throw new Error(`CONNECTOR_HTTP_${response.status}`);
+  return { provider: 'discord', delivered: true };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Notion (page creation)                                                    */
+/* -------------------------------------------------------------------------- */
+
+function notionConfig(env) {
+  const apiKey = env.NOTION_API_KEY;
+  if (!apiKey) return null;
+  const databaseId = env.NOTION_DATABASE_ID || '';
+  const pageId = env.NOTION_PAGE_ID || '';
+  if (!databaseId && !pageId) return null;
+  return { id: 'notion', apiKey, databaseId, pageId, version: env.NOTION_VERSION || '2022-06-28' };
+}
+/** Resolve a Notion provider (database or page parent). @returns {{id:string, createPage:Function}|null} */
+export function createNotionProvider(env = process.env) {
+  const config = notionConfig(env);
+  if (!config) return null;
+  return { id: 'notion', createPage: (input) => notionCreatePage(config, input, env) };
+}
+
+async function notionCreatePage(config, { title, content, databaseId, pageId }, env) {
+  const parent = databaseId || config.databaseId
+    ? { database_id: databaseId || config.databaseId }
+    : { page_id: pageId || config.pageId };
+  const properties = parent.database_id
+    ? { title: { title: [{ text: { content: String(title ?? 'Untitled').slice(0, 200) } }] } }
+    : { title: { title: [{ text: { content: String(title ?? 'Untitled').slice(0, 200) } }] } };
+  const children = content
+    ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: String(content).slice(0, 1900) } }] } }]
+    : [];
+  const body = JSON.stringify({ parent, properties, children });
+  const { response, text: raw } = await fetchWithTimeout('https://api.notion.com/v1/pages', { method: 'POST', headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json', 'notion-version': config.version }, body }, { timeoutMs: timeoutMs(env, 'NOTION_TIMEOUT_MS', 30_000) });
+  const payload = await readJson(response, raw, config);
+  return { provider: 'notion', pageId: payload.id ?? null, url: payload.url ?? null };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Generic outbound webhook                                                  */
+/* -------------------------------------------------------------------------- */
+
+function webhookConfig(env) {
+  if (!env.GENERIC_WEBHOOK_URL) return null;
+  return { id: 'webhook', url: env.GENERIC_WEBHOOK_URL, secret: env.GENERIC_WEBHOOK_SECRET || '' };
+}
+/** Resolve a generic outbound webhook provider. @returns {{id:string, post:Function}|null} */
+export function createWebhookProvider(env = process.env) {
+  const config = webhookConfig(env);
+  if (!config) return null;
+  return { id: 'webhook', post: (input) => webhookPost(config, input, env) };
+}
+
+async function webhookPost(config, { text, event, data }, env) {
+  const body = JSON.stringify({ event: event ? String(event).slice(0, 120) : 'agent.notification', text: String(text ?? ''), data: data ?? null, at: new Date().toISOString() });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text: raw } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'WEBHOOK_TIMEOUT_MS', 30_000) });
+  const payload = await readJson(response, raw, config);
+  return { provider: 'webhook', delivered: true, id: payload?.id ?? null };
+}
+
 /** Report which connector families are configured (for honest status output). */
 export function connectorStatus(env = process.env) {
   return {
@@ -409,5 +548,10 @@ export function connectorStatus(env = process.env) {
     vision: Boolean(createVisionProvider(env)),
     calendar: Boolean(createCalendarProvider(env)),
     email: Boolean(createEmailSendProvider(env)),
+    slack: Boolean(createSlackProvider(env)),
+    teams: Boolean(createTeamsProvider(env)),
+    discord: Boolean(createDiscordProvider(env)),
+    notion: Boolean(createNotionProvider(env)),
+    webhook: Boolean(createWebhookProvider(env)),
   };
 }
