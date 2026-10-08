@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -8,6 +8,8 @@ import path from 'node:path';
 import { redactSecrets } from '../secrets/vault.mjs';
 import { assertSafeUrl, assertSafeUrlResolved, assertWorkspacePath, isPrivateAddress, pinnedLookup, pinnedRequest, resolveSafeUrl, safeFetchText } from '../security/validators.mjs';
 import { createLiveToolRegistry } from '../tools/registry.mjs';
+import { browserBinaryAvailable, resolveCdpEndpoint } from '../browser/launcher.mjs';
+import { BrowserAgent } from '../../phase2-core/browser-agent.mjs';
 
 test('red-team blocks SSRF targets and URL credential exfiltration', () => {
   for (const url of [
@@ -142,5 +144,86 @@ test('red-team safeFetchText pins the validated address and re-validates redirec
   } finally {
     await new Promise((resolve) => server.close(resolve));
     ipCommand(['addr', 'del', `${alias}/32`, 'dev', 'lo']);
+  }
+});
+
+// DNS rebinding / TOCTOU protection for the BROWSER path (browser.run), not just
+// safeFetchText. The browser is launched with the validated address pinned into
+// its host resolver (`--host-resolver-rules`), so `Page.navigate` can never
+// re-resolve the hostname to a different address after the SSRF guard ran.
+//
+// Needs a real browser + root (to add a loopback alias and write /etc/hosts);
+// it skips honestly when either is unavailable instead of faking a pass.
+test('red-team browser.run pins the validated address against DNS rebinding / TOCTOU', async (t) => {
+  if (!browserBinaryAvailable()) { t.skip('no local browser binary (set CHROME_BIN/CHROMIUM_BIN/BROWSER_BIN)'); return; }
+  if (typeof process.getuid === 'function' && process.getuid() !== 0) { t.skip('needs root to write /etc/hosts'); return; }
+  const alias = '203.0.113.11';   // TEST-NET-3: public per the classifier, served on lo
+  const rebound = '198.51.100.9'; // TEST-NET-2: the address a rebinding name would flip to
+  const host = 'rebind.test';
+  ipCommand(['addr', 'del', `${alias}/32`, 'dev', 'lo']); // idempotent: ignore if absent
+  if (!ipCommand(['addr', 'add', `${alias}/32`, 'dev', 'lo'])) { t.skip('cannot add a loopback alias (needs root/iproute2)'); return; }
+
+  const originalHosts = await readFile('/etc/hosts', 'utf8');
+  const setHosts = async (ip) => {
+    const lines = originalHosts.split('\n').filter((line) => !line.includes(host));
+    lines.push(`${ip} ${host}`);
+    await writeFile('/etc/hosts', `${lines.join('\n')}\n`);
+  };
+  const saved = { local: process.env.BROWSER_LAUNCH_LOCAL, sandbox: process.env.BROWSER_NO_SANDBOX };
+  const env = { ...process.env, BROWSER_LAUNCH_LOCAL: 'true' };
+  process.env.BROWSER_NO_SANDBOX = 'true'; // root/container: Chromium needs --no-sandbox
+  const server = createServer((request, response) => { response.writeHead(200, { 'content-type': 'text/plain' }); response.end('PINNED-OK'); });
+  try {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, alias, resolve); });
+    const target = `http://${host}:${server.address().port}/`;
+
+    // (1) The guard validates the OS-resolved (public) address and returns it for pinning.
+    await setHosts(alias);
+    const validated = await resolveSafeUrl(target);
+    assert.deepEqual(validated.addresses, [alias]);
+
+    // (2) DNS rebinding / TOCTOU: the name now resolves to a DIFFERENT address than
+    // the one that was validated. Because the browser is PINNED to the validated
+    // address, the navigation still lands on it and never on the rebound address.
+    await setHosts(rebound);
+    const pinned = await resolveCdpEndpoint(env, { targetHost: host, pinnedAddresses: validated.addresses });
+    assert.equal(pinned.pinned, true, 'the validated address must be pinned into the browser host resolver');
+    try {
+      const agent = new BrowserAgent(pinned.webSocketUrl, { timeoutMs: 20_000, pinnedAddresses: validated.addresses });
+      await agent.connect();
+      try {
+        const navigation = await agent.navigate(target);
+        assert.equal(navigation.remoteIPAddress, alias, 'navigation must use the pinned validated address, not the rebound OS address');
+      } finally { await agent.close(); }
+    } finally { if (pinned.launcher) await pinned.launcher.close(); }
+
+    // (3) Defense in depth: if a navigation ever lands on an address that was NOT the
+    // validated one, the agent fails closed instead of returning a false success.
+    await setHosts(alias);
+    const guarded = await resolveCdpEndpoint(env, { targetHost: host, pinnedAddresses: [alias] });
+    try {
+      const agent = new BrowserAgent(guarded.webSocketUrl, { timeoutMs: 20_000, pinnedAddresses: [rebound] });
+      await agent.connect();
+      try {
+        await assert.rejects(() => agent.navigate(target), /BROWSER_NAVIGATION_ADDRESS_MISMATCH/);
+      } finally { await agent.close(); }
+    } finally { if (guarded.launcher) await guarded.launcher.close(); }
+
+    // (4) The real browser.run tool wires guard -> pin -> navigation end to end.
+    await setHosts(alias);
+    process.env.BROWSER_LAUNCH_LOCAL = 'true';
+    const tools = createLiveToolRegistry({ getWorkspaceRoot: () => os.tmpdir() });
+    const result = await tools.run('browser.run', {
+      url: target,
+      checks: [{ id: 'pinned', description: 'served the pinned marker', expression: 'document.body.textContent.includes("PINNED-OK")' }],
+    }, {});
+    assert.equal(result.ok, true);
+    assert.equal(result.output.results[0].remoteIPAddress, alias, 'browser.run must navigate to the pinned validated address');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await writeFile('/etc/hosts', originalHosts);
+    ipCommand(['addr', 'del', `${alias}/32`, 'dev', 'lo']);
+    if (saved.local === undefined) delete process.env.BROWSER_LAUNCH_LOCAL; else process.env.BROWSER_LAUNCH_LOCAL = saved.local;
+    if (saved.sandbox === undefined) delete process.env.BROWSER_NO_SANDBOX; else process.env.BROWSER_NO_SANDBOX = saved.sandbox;
   }
 });
