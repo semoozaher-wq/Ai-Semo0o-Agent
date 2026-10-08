@@ -15,6 +15,7 @@ import { loadPluginsFromEnv } from './tools/plugins.mjs';
 import { TOOL_BY_ID } from './agent/catalog.mjs';
 import { listReflections } from './agent/reflection.mjs';
 import { evaluateRun, evaluateRuns, compareRuns } from './agent/evaluation.mjs';
+import { buildExperienceSnapshot, summarizeExperience, recoveryPriorFromSnapshot, strategyPriorFromSnapshot, executionPriorFromSnapshot } from './agent/experience.mjs';
 import { riskPolicy, degradedCapabilities, validateStartupConfig } from './agent/safety.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
@@ -1140,6 +1141,31 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         // Keep the response bounded: the per-run detail is available on
         // GET /runs/:id/evaluation.
         return send(response, 200, { ...summary, runs: summary.runs.slice(0, 50) });
+      }
+      // --- Experience Engine (learned, outcome-driven priors) ---------------
+      // The per-tenant scorecard derived from REAL runs: which model succeeds for
+      // each task type, which tools are reliable, which RECOVERY action works for
+      // each failure kind, which STRATEGY wins for each task type, and which tool
+      // to prefer. This is the exact prior the Maestro loop consumes, exposed
+      // read-only for operators. All priors are recency-weighted + Wilson-bounded.
+      if (method === 'GET' && parts.join('/') === 'experience/summary') {
+        const url = new URL(request.url, 'http://localhost');
+        const windowHours = Math.max(1, Math.min(24 * 180, Number(url.searchParams.get('windowHours')) || 24 * 30));
+        const limit = Math.max(1, Math.min(2000, Number(url.searchParams.get('limit')) || 500));
+        const snapshot = buildExperienceSnapshot(db, { tenantId: user.tenantId, windowHours, limit });
+        return send(response, 200, {
+          ...summarizeExperience(snapshot),
+          models: snapshot.models,
+          tools: snapshot.tools,
+          recovery: snapshot.recovery,
+          strategies: snapshot.strategies,
+          execution: snapshot.execution,
+          derived: {
+            recovery: recoveryPriorFromSnapshot(snapshot),
+            strategies: strategyPriorFromSnapshot(snapshot),
+            execution: executionPriorFromSnapshot(snapshot),
+          },
+        });
       }
       // --- Production safety / degradation ----------------------------------
       // The active risk policy plus a live graceful-degradation report (which
