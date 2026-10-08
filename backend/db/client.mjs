@@ -138,6 +138,11 @@ export class Database {
       'ALTER TABLE scheduled_triggers ADD COLUMN missed_run_policy TEXT',
       'ALTER TABLE scheduled_triggers ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE scheduled_triggers ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3',
+      // Learning loop (backend/agent/reflection.mjs + backend/agent/learning-loop.mjs):
+      // a reflection now carries the GRADED evaluation of the run it reflects on,
+      // so Experience + Evaluation + Reflection share one outcome scale.
+      'ALTER TABLE agent_reflections ADD COLUMN quality_score REAL',
+      'ALTER TABLE agent_reflections ADD COLUMN reward REAL',
     ]) {
       try { this.db.exec(statement); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
     }

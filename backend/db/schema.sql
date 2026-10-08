@@ -486,6 +486,8 @@ CREATE TABLE IF NOT EXISTS agent_reflections (
   status TEXT NOT NULL,
   summary TEXT NOT NULL,
   lessons_json TEXT NOT NULL DEFAULT '[]',
+  quality_score REAL,
+  reward REAL,
   created_at TEXT NOT NULL
 );
 
