@@ -73,7 +73,7 @@ export function composeQualityScore({ successScore = 0, evidenceCompleteness = 0
  * Evaluate a single run from its durable rows. Returns null when the run does
  * not exist (or is not visible to `tenantId`). Never throws.
  */
-export function evaluateRun(db, runId, { tenantId } = {}) {
+export function evaluateRun(db, runId, { tenantId, statusOverride = null } = {}) {
   if (!db || !runId) return null;
   let run;
   try {
@@ -82,6 +82,13 @@ export function evaluateRun(db, runId, { tenantId } = {}) {
       : db.get('SELECT * FROM runs WHERE id=?', runId);
   } catch { return null; }
   if (!run) return null;
+  // The learning loop scores a run the instant it reaches a terminal state, which
+  // is BEFORE the queue persists that state onto `runs` (the handler still sees
+  // `status='running'`). Callers that already KNOW the authoritative terminal
+  // status pass it here so the outcome/reward is scored from the real status
+  // instead of the stale row. Only a genuine terminal status is honoured; any
+  // other value falls back to the persisted row (fully backward compatible).
+  const effectiveStatus = (statusOverride && TERMINAL_STATES.includes(statusOverride)) ? statusOverride : run.status;
 
   const tools = db.all('SELECT status FROM tool_calls WHERE run_id=?', runId);
   const evidence = db.all('SELECT kind,payload_json FROM evidence WHERE run_id=?', runId);
@@ -113,10 +120,10 @@ export function evaluateRun(db, runId, { tenantId } = {}) {
   let evidenceCompleteness;
   if (totalChecks > 0) evidenceCompleteness = verifiedSteps / totalChecks;
   else if (totalCalls > 0) evidenceCompleteness = toolSuccessRatio;
-  else evidenceCompleteness = SUCCESS.has(run.status) ? 1 : 0;
+  else evidenceCompleteness = SUCCESS.has(effectiveStatus) ? 1 : 0;
 
-  const success = SUCCESS.has(run.status);
-  const successScore = OUTCOME_SCORES[run.status] ?? 0.5;
+  const success = SUCCESS.has(effectiveStatus);
+  const successScore = OUTCOME_SCORES[effectiveStatus] ?? 0.5;
   const tokens = Number(usage?.tokens) || 0;
   const costUsd = Number(usage?.cost) || 0;
   const created = Date.parse(run.created_at);
@@ -134,9 +141,9 @@ export function evaluateRun(db, runId, { tenantId } = {}) {
     runId: run.id,
     tenantId: run.tenant_id,
     taskId: run.task_id,
-    status: run.status,
+    status: effectiveStatus,
     success,
-    outcome: { status: run.status, success, successScore: round(successScore) },
+    outcome: { status: effectiveStatus, success, successScore: round(successScore) },
     toolUse: { totalCalls, failedCalls, successRatio: round(toolSuccessRatio), replans, loopDetected },
     cost: { tokens, costUsd: round(costUsd, 6), latencyMs, costPerSuccess: success ? round(costUsd, 6) : null },
     verification: { evidenceCount: evidence.length, verifiedSteps, unverifiedSteps, completeness: round(evidenceCompleteness) },

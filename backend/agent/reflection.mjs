@@ -77,8 +77,13 @@ export function summarizeRunOutcome({ run, result = {}, events = [] } = {}) {
  * Persist a reflection for a terminal run. Returns the stored reflection or null
  * when the run is not terminal / there is nothing worth remembering. Never throws
  * for expected conditions.
+ *
+ * v3: the caller may pass the GRADED evaluation of the run (`quality` 0..100 and
+ * `reward` 0..1 from `agent/evaluation.mjs`). Storing it makes the reflection the
+ * durable join between the evaluation layer and the learning loop, so the loop's
+ * own history can be scored and measured instead of only described in prose.
  */
-export function reflectOnRun({ db, run, result = {}, events = [] } = {}) {
+export function reflectOnRun({ db, run, result = {}, events = [], quality = null, reward = null } = {}) {
   if (!db || !run) return null;
   const outcome = summarizeRunOutcome({ run, result, events });
   if (!TERMINAL.has(outcome.status)) return null;
@@ -87,11 +92,13 @@ export function reflectOnRun({ db, run, result = {}, events = [] } = {}) {
     || null;
   const reflectionId = id('refl');
   const timestamp = now();
+  const qualityScore = Number.isFinite(Number(quality)) ? Number(quality) : null;
+  const rewardValue = Number.isFinite(Number(reward)) ? Number(reward) : null;
   db.run(
-    'INSERT INTO agent_reflections(id,tenant_id,project_id,run_id,status,summary,lessons_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
-    reflectionId, run.tenant_id, projectId, run.id, outcome.status, outcome.summary, JSON.stringify(outcome.lessons), timestamp,
+    'INSERT INTO agent_reflections(id,tenant_id,project_id,run_id,status,summary,lessons_json,quality_score,reward,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+    reflectionId, run.tenant_id, projectId, run.id, outcome.status, outcome.summary, JSON.stringify(outcome.lessons), qualityScore, rewardValue, timestamp,
   );
-  return { id: reflectionId, tenantId: run.tenant_id, projectId, runId: run.id, ...outcome, createdAt: timestamp };
+  return { id: reflectionId, tenantId: run.tenant_id, projectId, runId: run.id, ...outcome, qualityScore, reward: rewardValue, createdAt: timestamp };
 }
 
 /** Load the most recent, de-duplicated lessons for a project (newest first). */
@@ -124,6 +131,7 @@ export function listReflections(db, tenantId, { projectId, limit = 50 } = {}) {
     : db.all('SELECT * FROM agent_reflections WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?', tenantId, Math.min(200, limit));
   return rows.map((row) => ({
     id: row.id, tenantId: row.tenant_id, projectId: row.project_id, runId: row.run_id,
-    status: row.status, summary: row.summary, lessons: parseJsonSafe(row.lessons_json, []), createdAt: row.created_at,
+    status: row.status, summary: row.summary, lessons: parseJsonSafe(row.lessons_json, []),
+    qualityScore: row.quality_score ?? null, reward: row.reward ?? null, createdAt: row.created_at,
   }));
 }

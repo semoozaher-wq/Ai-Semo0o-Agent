@@ -9,8 +9,8 @@ import { createMultiAgentOrchestrator } from './multi-agent.mjs';
 import { deliverRun, DELIVERY_EVENTS } from './delivery.mjs';
 import { redactDeep, collectKnownSecrets } from '../secrets/vault.mjs';
 import { loadOverrides } from '../self-improve/store.mjs';
-import { reflectOnRun } from './reflection.mjs';
-import { loadConsolidatedLessons, consolidateProjectMemory } from '../memory/consolidate.mjs';
+import { finalizeRunLearning, runLearningCycle } from './learning-loop.mjs';
+import { loadConsolidatedLessons } from '../memory/consolidate.mjs';
 import { normalizeSuccessCriteria, evaluateCompletion, decideAutonomousAction, renderPlanContext } from './goal-completion.mjs';
 import { requiresApproval } from './safety.mjs';
 import {
@@ -525,23 +525,45 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       throw error;
     }
   };
-  // After a run reaches a terminal state, distil a bounded set of lessons from
-  // its OWN events and persist them so the NEXT run for the project can plan
-  // around them. This is strictly advisory: it runs after the result is computed
-  // and any failure is swallowed, so it can never change or break a run.
+  // After a run reaches a terminal state, close the WHOLE learning loop from one
+  // place (backend/agent/learning-loop.mjs): EVALUATE the run (graded outcome +
+  // 0..100 quality) -> REFLECT (persist bounded lessons WITH the graded score) ->
+  // CONSOLIDATE memory -> feed the graded score back into the Experience Engine
+  // (cache invalidated below) -> a bounded, rate-limited SELF-IMPROVE pass.
+  //
+  // The synchronous core (`finalizeRunLearning`) runs inline so the reflection and
+  // graded reward are durable BEFORE the handler returns (preserving the exact
+  // timing of the previous reflect-on-run call). The async remainder is fire and
+  // forget. Everything is fail-soft: learning can never change or break a run.
   const reflect = (input, result) => {
     try {
       if (!input?.run) return;
-      const events = db.all('SELECT type,payload_json FROM run_events WHERE run_id=? ORDER BY created_at', input.run.id);
-      reflectOnRun({ db, run: input.run, result, events });
-      // Cross-run learning: after distilling this run's lessons, refresh the
-      // project's consolidated knowledge doc so the NEXT run retrieves it. Fire
-      // and forget (bounded, fail-soft) so it can never affect this run.
-      if (memory) {
-        const projectId = input.run.project_id || db.get('SELECT project_id FROM tasks WHERE id=?', input.run.task_id)?.project_id;
-        if (projectId) consolidateProjectMemory({ db, memory, tenantId: input.run.tenant_id, projectId }).catch(() => {});
-      }
-    } catch { /* reflection is best-effort */ }
+      const run = input.run;
+      const events = db.all('SELECT type,payload_json FROM run_events WHERE run_id=? ORDER BY created_at', run.id);
+      // The result status is authoritative here: the queue persists the terminal
+      // status only AFTER this returns, so we must pass it explicitly or the
+      // evaluation would read the still-'running' row and mis-score the outcome.
+      const summary = finalizeRunLearning({ db, run, result, events, status: result?.status ?? null });
+      // A non-terminal outcome (e.g. a 'continuation' handoff that leaves the run
+      // outstanding) has nothing to learn from yet — stop here.
+      if (!summary) return;
+      // Invalidate this tenant's experience snapshot so the NEXT run learns from
+      // THIS run's graded outcome immediately instead of waiting for the TTL.
+      if (run.tenant_id) experienceCache.delete(run.tenant_id);
+      // Auditable, bounded learning event (redacted like every other event).
+      try {
+        event(db, run.id, run.tenant_id, 'learning_cycle', {
+          status: summary?.status ?? null,
+          qualityScore: summary?.qualityScore ?? null,
+          reward: summary?.reward ?? null,
+          lessons: summary?.lessons ?? 0,
+        }, knownSecrets);
+      } catch { /* event is best-effort */ }
+      // Async remainder: memory consolidation + bounded self-improve. Fire and
+      // forget (bounded, fail-soft) so it can never affect this run.
+      const projectId = run.project_id || db.get('SELECT project_id FROM tasks WHERE id=?', run.task_id)?.project_id || null;
+      runLearningCycle({ db, memory, run, result, events, projectId, finalize: false }).catch(() => {});
+    } catch { /* learning is best-effort */ }
   };
   // The result is persisted verbatim as `runs.result_json`, so it is redacted once
   // more on the way out — covering the final answer and the collected outputs.

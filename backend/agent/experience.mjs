@@ -9,10 +9,21 @@
 // real-world evidence back into its own decisions.
 //
 // v1 fed evidence back into ONE decision: model + tool selection (adaptive
-// routing). v2 (this file) raises the ceiling: the SAME evidence now also
-// informs the run's STRATEGY, its PLAN/EXECUTION METHOD and its RECOVERY, and
-// every prior is derived through a single, robust, recency-aware estimator so
-// the engine can never be fooled by thin, stale or lucky evidence.
+// routing). v2 raised the ceiling: the SAME evidence now also informs the run's
+// STRATEGY, its PLAN/EXECUTION METHOD and its RECOVERY, and every prior is
+// derived through a single, robust, recency-aware estimator so the engine can
+// never be fooled by thin, stale or lucky evidence.
+//
+// v3 (this file) UNIFIES the learning loop with the evaluation layer. Until now
+// the engine learned from a BINARY signal (`run.status` was success or not),
+// while `backend/agent/evaluation.mjs` already produced a GRADED outcome
+// (`OUTCOME_SCORES`: completed=1.0, completed_with_warnings=0.7, unverified=0.5,
+// blocked=0.2, cancelled=0.1, failed=0). v3 feeds that SAME graded reward back
+// into every prior, so a run that only *partially* succeeded counts as a partial
+// success instead of a full one. This is the single change that turns
+// Experience + Evaluation into one shared outcome scale. It is strictly
+// additive: with `rewardMode: 'binary'` (or when a caller passes no reward) the
+// engine is byte-for-byte the v2 engine.
 //
 // It turns durable rows into a per-tenant scorecard with five prior families:
 //
@@ -48,11 +59,11 @@
 //     runner-up by a real margin, so near-ties never flip a decision on noise.
 // =============================================================================
 
-import { SUCCESS_STATES, TERMINAL_STATES } from './evaluation.mjs';
+import { SUCCESS_STATES, TERMINAL_STATES, OUTCOME_SCORES } from './evaluation.mjs';
 import { SUPPORTED_MODELS } from '../models/catalog.mjs';
 import { FAILURE_KINDS } from './recovery.mjs';
 
-export const EXPERIENCE_VERSION = 2;
+export const EXPERIENCE_VERSION = 3;
 export const DEFAULT_EXPERIENCE_WINDOW_HOURS = 24 * 30; // 30 days
 // Observations needed before a model/tool is treated as fully "known".
 export const CONFIDENCE_SATURATION = 5;
@@ -70,6 +81,18 @@ const PRIOR_STRENGTH = 2;
 export const DEFAULT_DECAY_HALF_LIFE_HOURS = Number(process.env.AGENT_EXPERIENCE_HALF_LIFE_HOURS ?? 24 * 14);
 // z for a 95% one-sided Wilson lower bound.
 export const WILSON_Z = 1.96;
+
+// --- v3: graded reward (unify Experience with Evaluation) --------------------
+// How a run's outcome is turned into a per-observation reward in [0, 1].
+//   * 'graded' (default): the SAME scale `evaluation.mjs` uses for
+//     `outcome.successScore` (OUTCOME_SCORES), so a warning/unverified/blocked
+//     outcome counts as a partial success instead of a full one.
+//   * 'binary': the legacy v2 behaviour (success ? 1 : 0), kept for operators who
+//     want to pin the old behaviour via `AGENT_EXPERIENCE_REWARD=binary`.
+export const REWARD_MODES = Object.freeze(['graded', 'binary']);
+export const DEFAULT_REWARD_MODE = REWARD_MODES.includes(String(process.env.AGENT_EXPERIENCE_REWARD).toLowerCase())
+  ? String(process.env.AGENT_EXPERIENCE_REWARD).toLowerCase()
+  : 'graded';
 // A recovery/strategy recommendation is only trusted above these gates.
 export const RECOVERY_MIN_CONFIDENCE = 0.5;
 export const RECOVERY_MIN_MARGIN = 0.15;
@@ -128,41 +151,77 @@ export function wilsonLowerBound(successes, n, z = WILSON_Z) {
 }
 
 /**
- * The single, shared estimator every v2 prior is derived through. It applies
+ * Turn a terminal run status into a reward in [0, 1]. In 'graded' mode this is
+ * EXACTLY the outcome score `evaluation.mjs` reports (`outcome.successScore`), so
+ * the two layers share one definition of "how good was this run". Unknown
+ * statuses fall back to the neutral 0.5 that evaluation also uses.
+ */
+export function gradedReward(status, mode = DEFAULT_REWARD_MODE) {
+  if (mode === 'binary') return SUCCESS.has(status) ? 1 : 0;
+  return clamp01(OUTCOME_SCORES[status] ?? 0.5);
+}
+
+/**
+ * The single, shared estimator every v2/v3 prior is derived through. It applies
  * recency weighting, the effective-sample confidence gate and the Wilson lower
  * bound in one place, so the data-quality guarantees cannot be forgotten.
+ *
+ * v3: each observation may carry a `reward` in [0, 1]. When present (graded
+ * mode) the Wilson lower bound is computed over the *fractional* success mass
+ * (`Σ w·reward`), so a run that only partially succeeded moves the estimate by
+ * exactly that fraction. When absent (or `rewardMode: 'binary'`) the behaviour is
+ * identical to v2.
  */
-export function weightedStats(observations = [], { halfLifeHours = DEFAULT_DECAY_HALF_LIFE_HOURS, nowMs = Date.now(), saturation = CONFIDENCE_SATURATION } = {}) {
+export function weightedStats(observations = [], { halfLifeHours = DEFAULT_DECAY_HALF_LIFE_HOURS, nowMs = Date.now(), saturation = CONFIDENCE_SATURATION, rewardMode = DEFAULT_REWARD_MODE } = {}) {
   let nEff = 0;
-  let sEff = 0;
+  let sEffBinary = 0;  // decayed BINARY success mass (keeps the v2 field meaning)
+  let sEffGraded = 0;  // decayed GRADED reward mass (v3)
   let rawSuccesses = 0;
+  let rawRewardSum = 0;
   for (const obs of observations) {
     const atMs = Number(obs?.atMs);
     const ageMs = Number.isFinite(atMs) ? Math.max(0, nowMs - atMs) : 0;
     const w = decayWeight(ageMs, halfLifeHours);
+    const success = obs?.success ? 1 : 0;
+    const reward = rewardMode === 'binary' ? success : clamp01(obs?.reward ?? success);
     nEff += w;
-    if (obs?.success) { sEff += w; rawSuccesses += 1; }
+    sEffBinary += w * success;
+    sEffGraded += w * reward;
+    rawRewardSum += reward;
+    if (obs?.success) rawSuccesses += 1;
   }
   const attempts = observations.length;
-  const pHat = nEff > 0 ? sEff / nEff : 0;
-  const lower = wilsonLowerBound(sEff, nEff, WILSON_Z);
+  // `decayedSuccessRate` keeps its v2 meaning (binary), so consumers that read it
+  // are unchanged; `decayedReward` is the new graded rate. In binary mode the two
+  // masses coincide, so behaviour is byte-for-byte v2.
+  const decayedSuccessRate = nEff > 0 ? sEffBinary / nEff : 0;
+  const decayedReward = nEff > 0 ? sEffGraded / nEff : 0;
+  // The Wilson lower bound is computed over the GRADED mass (identical to the
+  // binary mass in binary mode), so a partial success moves the estimate by
+  // exactly the fraction it earned.
+  const lower = wilsonLowerBound(sEffGraded, nEff, WILSON_Z);
   const confidence = nEff >= MIN_OBSERVATIONS ? clamp01(nEff / saturation) : 0;
   return {
     attempts,
     successes: rawSuccesses,
     successRate: round(attempts ? rawSuccesses / attempts : 0),
+    // v3 graded fields: the reward mass the Wilson bound is now computed over.
+    meanReward: round(attempts ? rawRewardSum / attempts : 0),
     effectiveSamples: round(nEff, 3),
-    decayedSuccessRate: round(pHat),
+    decayedSuccessRate: round(decayedSuccessRate),
+    decayedReward: round(decayedReward),
     wilsonLowerBound: round(lower),
     confidence: round(confidence),
+    rewardMode,
   };
 }
 
-function emptySnapshot({ windowHours, tenantId, generatedAt }) {
+function emptySnapshot({ windowHours, tenantId, generatedAt, rewardMode = DEFAULT_REWARD_MODE }) {
   return {
     version: EXPERIENCE_VERSION,
     generatedAt,
     windowHours,
+    rewardMode,
     tenantId: tenantId ?? null,
     sampleSize: { runs: 0, modelObservations: 0, toolCalls: 0, recoveryObservations: 0, strategyObservations: 0 },
     models: {},
@@ -183,12 +242,12 @@ function payloadDetails(payload) {
  * Build a per-tenant experience snapshot from durable rows. Never throws; a
  * missing table or malformed payload degrades to an empty (but valid) snapshot.
  */
-export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EXPERIENCE_WINDOW_HOURS, limit = 500, halfLifeHours = DEFAULT_DECAY_HALF_LIFE_HOURS, now: nowFn = () => new Date() } = {}) {
+export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EXPERIENCE_WINDOW_HOURS, limit = 500, halfLifeHours = DEFAULT_DECAY_HALF_LIFE_HOURS, rewardMode = DEFAULT_REWARD_MODE, now: nowFn = () => new Date() } = {}) {
   const nowDate = nowFn();
   const nowMs = nowDate.getTime();
   const generatedAt = nowDate.toISOString();
   const boundedWindow = Math.max(1, Number(windowHours) || DEFAULT_EXPERIENCE_WINDOW_HOURS);
-  if (!db || !tenantId) return emptySnapshot({ windowHours: boundedWindow, tenantId, generatedAt });
+  if (!db || !tenantId) return emptySnapshot({ windowHours: boundedWindow, tenantId, generatedAt, rewardMode });
   const since = new Date(nowMs - boundedWindow * 3_600_000).toISOString();
   const maxRows = Math.min(5000, Math.max(1, Number(limit) || 500));
   const placeholders = TERMINAL_STATES.map(() => '?').join(',');
@@ -255,6 +314,7 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
   for (const run of runsById.values()) {
     const taskType = run.taskType || 'general';
     const success = SUCCESS.has(run.status);
+    const reward = gradedReward(run.status, rewardMode);
     const latency = Date.parse(run.updatedAt) - Date.parse(run.createdAt);
     const atMs = Date.parse(run.createdAt);
     for (const usage of usageByRun.get(run.id) ?? []) {
@@ -265,14 +325,14 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
       if (success) bucket.successes += 1;
       bucket.tokens += usage.tokens;
       bucket.costUsd += usage.cost;
-      bucket.obs.push({ success, atMs });
+      bucket.obs.push({ success, reward, atMs });
       if (Number.isFinite(latency) && latency >= 0) { bucket.latencySum += latency; bucket.latencyN += 1; }
       modelObservations += 1;
     }
   }
   for (const table of Object.values(models)) {
     for (const [modelId, bucket] of Object.entries(table)) {
-      const weighted = weightedStats(bucket.obs, { halfLifeHours, nowMs });
+      const weighted = weightedStats(bucket.obs, { halfLifeHours, nowMs, rewardMode });
       table[modelId] = {
         attempts: bucket.attempts,
         successes: bucket.successes,
@@ -287,6 +347,9 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
         decayedSuccessRate: weighted.decayedSuccessRate,
         wilsonLowerBound: weighted.wilsonLowerBound,
         decayedConfidence: weighted.confidence,
+        // v3 graded fields (the reward the Wilson bound is now computed over).
+        meanReward: weighted.meanReward,
+        decayedReward: weighted.decayedReward,
       };
     }
   }
@@ -365,10 +428,11 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
     const run = runsById.get(runId);
     if (!run) continue;
     const success = SUCCESS.has(run.status);
+    const reward = gradedReward(run.status, rewardMode);
     const atMs = Date.parse(run.createdAt);
     for (const pair of pairs) {
       const [failureKind, action] = pair.split('|');
-      ((recoveryObs[failureKind] ??= {})[action] ??= []).push({ success, atMs });
+      ((recoveryObs[failureKind] ??= {})[action] ??= []).push({ success, reward, atMs });
     }
   }
   const recovery = {};
@@ -376,7 +440,7 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
   for (const [failureKind, table] of Object.entries(recoveryObs)) {
     recovery[failureKind] = {};
     for (const [action, obs] of Object.entries(table)) {
-      recovery[failureKind][action] = weightedStats(obs, { halfLifeHours, nowMs });
+      recovery[failureKind][action] = weightedStats(obs, { halfLifeHours, nowMs, rewardMode });
       recoveryObservations += obs.length;
     }
   }
@@ -385,14 +449,14 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
   for (const run of runsById.values()) {
     const taskType = run.taskType || 'general';
     const strategy = multiAgentRuns.has(run.id) ? 'multi-agent' : 'single-agent';
-    (((strategyObs[taskType] ??= {})[strategy] ??= [])).push({ success: SUCCESS.has(run.status), atMs: Date.parse(run.createdAt) });
+    (((strategyObs[taskType] ??= {})[strategy] ??= [])).push({ success: SUCCESS.has(run.status), reward: gradedReward(run.status, rewardMode), atMs: Date.parse(run.createdAt) });
   }
   const strategies = {};
   let strategyObservations = 0;
   for (const [taskType, table] of Object.entries(strategyObs)) {
     strategies[taskType] = {};
     for (const [strategy, obs] of Object.entries(table)) {
-      strategies[taskType][strategy] = weightedStats(obs, { halfLifeHours, nowMs });
+      strategies[taskType][strategy] = weightedStats(obs, { halfLifeHours, nowMs, rewardMode });
       strategyObservations += obs.length;
     }
   }
@@ -401,7 +465,7 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
   let execRows = [];
   try {
     execRows = db.all(
-      `SELECT tc.tool_id AS tool_id, tc.status AS status, tc.created_at AS created_at, e.payload_json AS routing_json
+      `SELECT tc.tool_id AS tool_id, tc.status AS status, tc.created_at AS created_at, r.status AS run_status, e.payload_json AS routing_json
          FROM tool_calls tc JOIN runs r ON r.id = tc.run_id
          LEFT JOIN run_events e ON e.run_id = r.id AND e.type = 'routing_decision'
         WHERE r.tenant_id = ? AND r.created_at >= ?
@@ -413,15 +477,19 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
   for (const row of execRows) {
     const routing = row.routing_json ? parseJsonSafe(row.routing_json, {}) : {};
     const taskType = String(routing?.taskType ?? routing?.details?.taskType ?? 'general').slice(0, 40) || 'general';
-    const success = row.status !== 'failed';
+    const toolSucceeded = row.status !== 'failed';
     const atMs = Date.parse(row.created_at);
-    (((execObs[taskType] ??= {})[row.tool_id] ??= [])).push({ success, atMs });
+    // Graded reward for the execution prior: a tool that itself failed is worth 0;
+    // a tool that worked contributes the *quality* of the run it took part in, so
+    // tools used only in warning/failed runs rank below tools used in clean runs.
+    const reward = toolSucceeded ? gradedReward(row.run_status, rewardMode) : 0;
+    (((execObs[taskType] ??= {})[row.tool_id] ??= [])).push({ success: toolSucceeded, reward, atMs });
   }
   const execution = {};
   for (const [taskType, table] of Object.entries(execObs)) {
     execution[taskType] = {};
     for (const [toolId, obs] of Object.entries(table)) {
-      execution[taskType][toolId] = weightedStats(obs, { halfLifeHours, nowMs });
+      execution[taskType][toolId] = weightedStats(obs, { halfLifeHours, nowMs, rewardMode });
     }
   }
 
@@ -430,6 +498,7 @@ export function buildExperienceSnapshot(db, { tenantId, windowHours = DEFAULT_EX
     generatedAt,
     windowHours: boundedWindow,
     halfLifeHours: Math.max(1, Number(halfLifeHours) || DEFAULT_DECAY_HALF_LIFE_HOURS),
+    rewardMode,
     tenantId,
     sampleSize: { runs: runsById.size, modelObservations, toolCalls, recoveryObservations, strategyObservations },
     models,
@@ -454,6 +523,9 @@ export function modelPriorFromSnapshot(snapshot) {
         successRate: Number(stats.smoothedSuccessRate),
         confidence: Number(stats.confidence),
         attempts: Number(stats.attempts) || 0,
+        // v3: the graded reward (0..1) and the graded Wilson lower bound.
+        reward: Number(stats.decayedReward ?? stats.decayedSuccessRate),
+        wilsonLowerBound: Number(stats.wilsonLowerBound),
       };
     }
     if (Object.keys(bucket).length) prior[taskType] = bucket;
@@ -494,6 +566,7 @@ export function recoveryPriorFromSnapshot(snapshot) {
         rawSuccessRate: Number(stats.successRate),
         confidence: Number(stats.confidence),
         attempts: Number(stats.attempts) || 0,
+        reward: Number(stats.decayedReward ?? stats.decayedSuccessRate),
       };
     }
     if (Object.keys(bucket).length) prior[failureKind] = bucket;
@@ -532,6 +605,7 @@ export function strategyPriorFromSnapshot(snapshot) {
         rawSuccessRate: Number(stats.successRate),
         confidence: Number(stats.confidence),
         attempts: Number(stats.attempts) || 0,
+        reward: Number(stats.decayedReward ?? stats.decayedSuccessRate),
       };
     }
     if (Object.keys(bucket).length) prior[taskType] = bucket;
@@ -568,6 +642,7 @@ export function executionPriorFromSnapshot(snapshot) {
         rawSuccessRate: Number(stats.successRate),
         confidence: Number(stats.confidence),
         attempts: Number(stats.attempts) || 0,
+        reward: Number(stats.decayedReward ?? stats.decayedSuccessRate),
       };
     }
     if (Object.keys(bucket).length) prior[taskType] = bucket;
@@ -701,11 +776,22 @@ export function renderExperienceGuidance(snapshot, options) {
 /** A compact summary suitable for a run event / API response. */
 export function summarizeExperience(snapshot) {
   if (!snapshot) return { available: false };
+  // The mean graded reward across every model cell with real evidence — a single
+  // number that answers "how well are runs actually going for this tenant?".
+  const rewards = [];
+  for (const table of Object.values(snapshot.models ?? {})) {
+    for (const stats of Object.values(table)) {
+      if ((Number(stats.attempts) || 0) >= MIN_OBSERVATIONS) rewards.push(Number(stats.decayedReward ?? stats.decayedSuccessRate) || 0);
+    }
+  }
+  const avgReward = rewards.length ? round(rewards.reduce((total, value) => total + value, 0) / rewards.length) : null;
   return {
     available: true,
     version: snapshot.version,
     generatedAt: snapshot.generatedAt,
     windowHours: snapshot.windowHours,
+    rewardMode: snapshot.rewardMode ?? DEFAULT_REWARD_MODE,
+    avgReward,
     sampleSize: snapshot.sampleSize,
     taskTypes: Object.keys(snapshot.models ?? {}).length,
     tools: Object.keys(snapshot.tools ?? {}).length,
