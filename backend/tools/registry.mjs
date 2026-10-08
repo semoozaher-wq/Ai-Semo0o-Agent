@@ -17,6 +17,7 @@ import { buildProjectIntelligence } from '../../phase2-core/platform.mjs';
 import { analyzeImpact, describeImpact } from '../../phase2-core/impact.mjs';
 import { buildChangeSet, describeChangeSet } from '../../phase2-core/changeset.mjs';
 import { CodebaseReasoner } from '../../phase2-core/reasoning.mjs';
+import { assertValidArgs, strictArgsEnabled } from '../agent/tool-schema.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -524,13 +525,41 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   tools.set('discord.post', connectorTool('discord.post', createDiscordProvider, (provider, args) => provider.post({ text: bounded(args.text, 2000, 'TEXT'), username: args.username })));
   tools.set('notion.page.create', connectorTool('notion.page.create', createNotionProvider, (provider, args) => provider.createPage({ title: bounded(args.title, 200, 'TITLE'), content: typeof args.content === 'string' ? args.content.slice(0, 100000) : '', databaseId: args.databaseId, pageId: args.pageId })));
   tools.set('webhook.post', connectorTool('webhook.post', createWebhookProvider, (provider, args) => provider.post({ text: bounded(args.text, 40000, 'TEXT'), event: args.event, data: args.data })));
+  // Plugin / extension tools registered at runtime (backend/tools/plugins.mjs).
+  // They live in their own map so they can never overwrite a first-party tool id,
+  // and they are merged into the definition view the runtime plans against.
+  const pluginDefs = new Map();
+  const strictArgs = strictArgsEnabled();
+  const definitionsFor = () => [...TOOL_CATALOG, ...[...pluginDefs.values()]];
+  const byIdFor = (toolId) => TOOL_BY_ID.get(toolId) ?? pluginDefs.get(toolId);
+  const dangerousFor = () => new Set([...DANGEROUS_TOOLS, ...[...pluginDefs.values()].filter((def) => def.dangerous).map((def) => def.id)]);
   return {
     has(toolId) { return tools.has(toolId); },
+    /** Register a runtime tool (plugin). Never overwrites a first-party tool id. */
+    register(definition, handler) {
+      if (!definition || typeof definition.id !== 'string' || typeof handler !== 'function') throw new Error('PLUGIN_DEFINITION_INVALID');
+      if (TOOL_BY_ID.has(definition.id)) throw new Error(`PLUGIN_ID_RESERVED:${definition.id}`);
+      pluginDefs.set(definition.id, definition);
+      tools.set(definition.id, handler);
+      return definition.id;
+    },
+    /** All tool definitions (catalog + plugins) in catalog shape. */
+    definitions() { return definitionsFor().map((def) => ({ id: def.id, description: def.description, parameters: def.parameters, dangerous: def.dangerous === true })); },
+    /** OpenAI function schemas for every available tool (catalog + plugins). */
+    openAITools() { return definitionsFor().map((tool) => ({ type: 'function', function: { name: tool.id.replaceAll('.', '__'), description: tool.description, parameters: tool.parameters } })); },
+    /** A single merged view the runtime plans and executes against. */
+    view() { return { byId: new Map(definitionsFor().map((def) => [def.id, def])), all: definitionsFor(), dangerous: dangerousFor(), openAI: () => this.openAITools() }; },
     async run(toolId, args = {}, context = {}) {
-      const definition = TOOL_BY_ID.get(toolId);
+      const definition = byIdFor(toolId);
       if (!definition) throw new Error(`UNKNOWN_TOOL:${toolId}`);
       const tool = tools.get(toolId);
       if (!tool) throw new Error(`TOOL_NOT_CONNECTED:${toolId}`);
+      // Structured argument validation: reject malformed model output up-front
+      // with a precise, machine-readable error instead of failing deep inside a
+      // handler. Safe mode (default) only checks the types/enums/bounds of the
+      // arguments that were provided; strict mode also enforces `required` and
+      // rejects unknown keys.
+      assertValidArgs(toolId, definition.parameters, args, { strict: strictArgs });
       return tool(args, context);
     },
     status() {
@@ -582,7 +611,7 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
       }
       const details = [...states.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const byState = (state) => details.filter((detail) => detail.state === state).map((detail) => detail.id);
-      return { live: byState('live'), partial: byState('partial'), unwired: byState('unwired'), failed: byState('failed'), catalogOnly: [], simulated: [], dangerous: [...DANGEROUS_TOOLS], tools: details };
+      return { live: byState('live'), partial: byState('partial'), unwired: byState('unwired'), failed: byState('failed'), catalogOnly: [], simulated: [], dangerous: [...dangerousFor()], tools: details };
     },
   };
 }
