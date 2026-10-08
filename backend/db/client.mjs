@@ -119,9 +119,25 @@ export class Database {
       'ALTER TABLE runs ADD COLUMN worker_id TEXT',
       'ALTER TABLE runs ADD COLUMN lease_until TEXT',
       'ALTER TABLE runs ADD COLUMN idempotency_key TEXT',
+      // Queue reliability: a retried run is parked until `next_attempt_at` so a
+      // persistently failing handler cannot hot-loop the worker (bounded backoff).
+      'ALTER TABLE runs ADD COLUMN next_attempt_at TEXT',
       'ALTER TABLE users ADD COLUMN email_verified_at TEXT',
       'ALTER TABLE users ADD COLUMN mfa_secret TEXT',
       'ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0',
+      // Artifact ledger enrichment (backend/artifacts/store.mjs): the table
+      // previously only tracked path/hash/size, so a run could not tell an image
+      // from a spreadsheet or carry any provenance metadata.
+      'ALTER TABLE artifacts ADD COLUMN kind TEXT',
+      'ALTER TABLE artifacts ADD COLUMN mime_type TEXT',
+      'ALTER TABLE artifacts ADD COLUMN meta_json TEXT',
+      'ALTER TABLE artifacts ADD COLUMN updated_at TEXT',
+      // Scheduler hardening (backend/queue/scheduler.mjs): timezone-aware cron,
+      // missed-run policy and bounded retry/backoff state per trigger.
+      'ALTER TABLE scheduled_triggers ADD COLUMN timezone TEXT',
+      'ALTER TABLE scheduled_triggers ADD COLUMN missed_run_policy TEXT',
+      'ALTER TABLE scheduled_triggers ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE scheduled_triggers ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3',
     ]) {
       try { this.db.exec(statement); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
     }
@@ -136,6 +152,12 @@ export class Database {
     // Functional indexes for case-insensitive lookups (auth + outbox export) that
     // would otherwise full-scan; idempotent so existing databases pick them up.
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email)); CREATE INDEX IF NOT EXISTS idx_email_outbox_recipient ON email_outbox(tenant_id, lower(to_email), created_at)');
+    // Artifact ledger lookups (per run and per path) — additive, idempotent.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id, created_at); CREATE INDEX IF NOT EXISTS idx_artifacts_path ON artifacts(run_id, path)');
+    // Per-run evaluation lookups (backend/agent/evaluation.mjs): scoring a run
+    // reads its tool calls, usage and verification evidence by run id, so index
+    // those paths — additive, idempotent.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id, created_at); CREATE INDEX IF NOT EXISTS idx_run_usage_run ON run_usage(run_id); CREATE INDEX IF NOT EXISTS idx_evidence_run_kind ON evidence(run_id, kind)');
     const tenants = this.db.prepare('SELECT id FROM tenants').all();
     for (const tenant of tenants) {
       this.db.prepare('INSERT OR IGNORE INTO usage_quotas(tenant_id,updated_at) VALUES(?,?)').run(tenant.id, now());
