@@ -224,6 +224,23 @@ export function Dashboard() {
           </Card>
         </View>
 
+        {/* ------------------------ creation studio ------------------------- */}
+        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.md }}>
+          <Card onPress={() => router.push('/creation')} gradient="aurora">
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1 }}>
+                <Text variant="subtitle" weight="bold" style={{ color: '#FFFFFF' }}>
+                  استوديو الإنشاء · هدف واحد → فيديو جاهز
+                </Text>
+                <Text variant="caption" style={{ marginTop: 2, color: 'rgba(255,255,255,0.9)' }}>
+                  اكتب هدفك، ودَع Semo0o يفكّر ويخطط وينفّذ ويقيّم ويحسّن ثم يسلّم نتيجة قابلة للتحميل.
+                </Text>
+              </View>
+              <Icon name="sparkles-outline" size={26} color="#FFFFFF" />
+            </View>
+          </Card>
+        </View>
+
         {/* -------------------------- quick actions ------------------------- */}
         <View style={{ marginTop: theme.spacing['2xl'] }}>
           <View style={{ paddingHorizontal: theme.spacing.lg }}>
