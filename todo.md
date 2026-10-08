@@ -1,33 +1,40 @@
-# Task: Push Ai-Semo0o-Agent toward a General-Purpose Autonomous Agent Platform (max real features)
+# Task: Deep gap analysis -> implement NEXT-LEVEL capabilities (additive, no rebuild)
 
-Reuse the EXISTING architecture (tool catalog/registry, engine, connectors, model router,
-multi-agent, phase2 TaskGraph). Additive only — never rebuild or break current functionality.
+The previously delivered feature set (GitHub automation, Git lifecycle, Slack/Teams/Discord/
+Notion/webhook connectors, web/doc extraction, memory tools, code review, catalog/registry
+wiring, multi-agent roles, TaskGraph delivery, runtime planner wiring, MemoryStore sharing,
+expanded tests, ZIP) is DONE and VERIFIED. Do NOT reimplement it.
 
-## 1. GitHub automation (task -> PR -> CI -> fix)
-- [x] `backend/github/service.mjs`: PRs, issues, commits, combined status, check-runs, workflow runs/jobs
-- [x] Tools: github.repo, github.issues.list, github.issue.create, github.issue.comment, github.pr.create, github.ci.status
+Gap analysis (broad codebase scan) -> genuinely missing, high-value, additive capabilities:
 
-## 2. Git lifecycle tools (reuse engine.git)
-- [x] `execution-core/engine.mjs`: RealGit.log()
-- [x] Tools: git.status, git.diff, git.log, git.checkpoint
+## 1. Trigger Scheduler — scheduled / recurring / one-shot autonomy  [x]
+- [x] `backend/queue/scheduler.mjs`: cron (5-field) + interval + one-shot parsing, next-run math
+- [x] `TriggerScheduler` tick -> creates task + enqueues run (idempotent per fire time)
+- [x] `scheduled_triggers` table (schema.sql)
+- [x] Server routes: GET/POST /triggers, PATCH/DELETE /triggers/:id, POST /triggers/:id/run
+- [x] Wire into server + worker (start/stop)
 
-## 3. Integrations / connectors (extensible)
-- [x] `backend/tools/connectors.mjs`: slack, teams, discord, notion, generic webhook + connectorStatus
-- [x] Tools: slack.post, teams.post, discord.post, notion.page.create, webhook.post
+## 2. Cross-run Reflection & Episodic Lessons  [x]
+- [x] `backend/agent/reflection.mjs`: deterministic lesson extraction + store + load
+- [x] `agent_reflections` table (schema.sql)
+- [x] Runtime: reflect after terminal runs (fail-soft); surface lessons into planner guidance
 
-## 4. Research / content / memory
-- [x] Tools: web.extract (structured), doc.extract (docx/rtf/doc/txt), memory.search, memory.write, code.review
+## 3. Plugin / Extension SDK  [x]
+- [x] `backend/tools/plugins.mjs`: load declarative tool packs from a directory
+- [x] Registry: `register()` / `definitions()` / `openAITools()` / `view()` (merged catalog+plugins)
+- [x] Runtime: plan/execute against the merged tool view (default == static catalog)
+- [x] Env `TOOL_PLUGINS_DIR`; wire into server + worker
 
-## 5. Orchestration wiring
-- [x] `backend/agent/catalog.mjs`: register all new tools
-- [x] `backend/tools/registry.mjs`: handlers + honest status gates
-- [x] `backend/agent/multi-agent.mjs`: extend role tool allow-lists + delivery role
-- [x] `phase2-core/platform.mjs`: optional delivery node for PR/github goals
-- [x] `backend/agent/runtime.mjs`: planner guidance for connector tools
-- [x] `backend/server.mjs`: share the MemoryStore with the tool registry
+## 4. Structured Tool-Argument Validation  [x]
+- [x] `backend/agent/tool-schema.mjs`: JSON-Schema-subset validator (types/enums/bounds/required)
+- [x] Wire into `registry.run` (safe mode default; strict via TOOL_ARG_STRICT)
 
-## 6. Tests + verify
-- [x] `backend/test/expanded-capabilities.test.mjs` (catalog, status, git via fake engine, github via fetch stub, connectors via real HTTP, memory via real db, docx, SSRF)
-- [x] Updated `multi-agent`, `connectors-live`, `integrations` tests for the expanded surface
-- [x] `npm test` green (BROWSER_NO_SANDBOX=true required in a root container)
-- [x] ONE ZIP of new+modified files at original paths (no unchanged files)
+## 5. Re-entrant transactions (reliability)  [x]
+- [x] `Database.transaction` uses SAVEPOINTs when nested (fixes scheduler-wraps-enqueue)
+- [x] Covered by scheduler idempotency test
+
+## 6. Tests + verify  [x]
+- [x] New tests: scheduler, reflection, plugins, tool-schema (36 tests, all green)
+- [x] `npm test` green (BROWSER_NO_SANDBOX=true): execution 69 / phase1 43 / frontend 30 / phase2 23 / backend 354
+- [x] `npm run typecheck` green
+- [x] ONE ZIP of new+modified files at original paths (38 files, no unchanged files)
