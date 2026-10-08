@@ -292,8 +292,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   const redact = (value) => redactDeep(value, knownSecrets);
   const runQueue = queue ?? new RunQueue(db, { pollMs: Number(process.env.WORKER_POLL_MS || 250), maxAttempts: Number(process.env.WORKER_MAX_ATTEMPTS || 3), concurrency: Number(process.env.WORKER_CONCURRENCY || 1), redact });
   runQueue.register('code.run', codeRunner ?? createCodeRunHandler(db));
-  const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true });
   const memory = new MemoryStore(db);
+  const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true, memory });
   const chat = new ChatStore(db);
   // Optional Sentry-compatible error tracking. Null when unconfigured so we
   // never report a fake "errors are tracked" state.
