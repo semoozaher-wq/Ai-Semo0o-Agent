@@ -141,11 +141,14 @@ test('the protected default branch can never be used as a task branch', async ()
   }
 });
 
-test('the runtime exposes no automatic push or merge', async () => {
+test('the runtime performs no automatic push or merge', async () => {
   const base = await makeBase();
   try {
     const handle = await provisionTaskWorkspace({ taskId: 'no-push', baseRoot: base });
-    assert.equal(typeof handle.engine.git.push, 'undefined');
+    // `push` now exists as an EXPLICIT, capability-gated operation (the `git.push`
+    // tool refuses protected branches and raw URLs), but it is never invoked
+    // automatically and `merge`/`pull` do not exist at all.
+    assert.equal(typeof handle.engine.git.push, 'function');
     assert.equal(typeof handle.engine.git.merge, 'undefined');
     assert.equal(typeof handle.engine.git.pull, 'undefined');
     // A local branch is created, but no remote is configured and nothing is pushed.
