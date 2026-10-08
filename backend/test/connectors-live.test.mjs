@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { createImageProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from '../tools/connectors.mjs';
+import { createImageProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, connectorStatus } from '../tools/connectors.mjs';
 import { createLiveToolRegistry } from '../tools/registry.mjs';
 
 /**
@@ -162,15 +162,23 @@ test('connectors stay fail-closed with no credentials (no fake success)', async 
       OPENAI_API_KEY: undefined, GEMINI_API_KEY: undefined, GOOGLE_API_KEY: undefined,
       CALENDAR_PROVIDER: undefined, CALENDAR_WEBHOOK_URL: undefined, CALENDAR_ACCESS_TOKEN: undefined,
       EMAIL_PROVIDER: undefined, EMAIL_WEBHOOK_URL: undefined, EMAIL_API_KEY: undefined,
+      SLACK_WEBHOOK_URL: undefined, SLACK_BOT_TOKEN: undefined, TEAMS_WEBHOOK_URL: undefined,
+      DISCORD_WEBHOOK_URL: undefined, NOTION_API_KEY: undefined, NOTION_DATABASE_ID: undefined, NOTION_PAGE_ID: undefined,
+      GENERIC_WEBHOOK_URL: undefined,
     },
     async () => {
-      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false });
+      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false });
       assert.equal(createImageProvider(process.env), null);
       assert.equal(createCalendarProvider(process.env), null);
       assert.equal(createEmailSendProvider(process.env), null);
+      assert.equal(createSlackProvider(process.env), null);
+      assert.equal(createTeamsProvider(process.env), null);
+      assert.equal(createDiscordProvider(process.env), null);
+      assert.equal(createNotionProvider(process.env), null);
+      assert.equal(createWebhookProvider(process.env), null);
 
       const registry = createLiveToolRegistry();
-      for (const toolId of ['image.generate', 'calendar.schedule', 'email.send']) {
+      for (const toolId of ['image.generate', 'calendar.schedule', 'email.send', 'slack.post', 'teams.post', 'discord.post', 'notion.page.create', 'webhook.post']) {
         assert.equal(registry.status().tools.find((t) => t.id === toolId).state, 'unwired');
         await assert.rejects(
           () => registry.run(toolId, { to: 'a@b.test', subject: 's', body: 'b', title: 't', when: '2025-01-01T00:00:00Z', prompt: 'p' }),

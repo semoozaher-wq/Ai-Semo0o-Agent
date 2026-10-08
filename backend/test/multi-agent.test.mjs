@@ -75,7 +75,7 @@ function makeOrchestrator({ llm, tools, maxAttempts = 2, maxTurnsPerAgent = 3 })
 const RUN = { id: 'run_multi_1', tenant_id: 'tenant_multi' };
 
 test('multi-agent: every TaskGraph node kind maps to a real role with an allow-listed tool subset', () => {
-  for (const kind of ['intelligence', 'planning', 'implementation', 'verification', 'browser', 'retrieval', 'report', 'task']) {
+  for (const kind of ['intelligence', 'planning', 'implementation', 'verification', 'browser', 'retrieval', 'delivery', 'report', 'task']) {
     const role = roleForKind(kind);
     assert.ok(role.id && role.system, `${kind} must map to a real role`);
     for (const toolId of role.tools) assert.ok(TOOL_BY_ID.has(toolId), `${toolId} must exist in the shared catalog`);
@@ -83,7 +83,7 @@ test('multi-agent: every TaskGraph node kind maps to a real role with an allow-l
   // Unknown kinds fall back to the generalist role (never undefined).
   assert.equal(roleForKind('nonsense').id, 'generalist');
   // Schemas are built from the SAME catalog and only cover the role's allow-list.
-  assert.deepEqual(roleToolSchemas(AGENT_ROLES.intelligence).map((schema) => schema.function.name).sort(), ['code__analyze', 'code__impact', 'code__reason', 'files__scan']);
+  assert.deepEqual(roleToolSchemas(AGENT_ROLES.intelligence).map((schema) => schema.function.name).sort(), ['code__analyze', 'code__impact', 'code__reason', 'doc__extract', 'files__scan', 'git__diff', 'git__log', 'git__status', 'github__ci__status', 'github__issues__list', 'github__repo', 'memory__search', 'web__extract']);
   assert.deepEqual(roleToolSchemas(AGENT_ROLES.report), []);
 });
 

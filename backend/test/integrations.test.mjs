@@ -8,7 +8,7 @@ import { createSession, createUser } from '../auth/security.mjs';
 import { createApp } from '../server.mjs';
 import { RunQueue } from '../queue/queue.mjs';
 import { createLiveToolRegistry } from '../tools/registry.mjs';
-import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, connectorStatus } from '../tools/connectors.mjs';
+import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, connectorStatus } from '../tools/connectors.mjs';
 import { createEmbeddingProvider, embeddingStatus, localEmbedding } from '../memory/embeddings.mjs';
 import { buildAuthorizeUrl, createGitHubClient, githubStatus, parseRepoSlug } from '../github/service.mjs';
 import { billingProviderStatus, createStripeAdapter } from '../billing/stripe.mjs';
@@ -41,7 +41,12 @@ test('connectors fail closed when nothing is configured', () => {
   assert.equal(createVisionProvider(env), null);
   assert.equal(createCalendarProvider(env), null);
   assert.equal(createEmailSendProvider(env), null);
-  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false });
+  assert.equal(createSlackProvider(env), null);
+  assert.equal(createTeamsProvider(env), null);
+  assert.equal(createDiscordProvider(env), null);
+  assert.equal(createNotionProvider(env), null);
+  assert.equal(createWebhookProvider(env), null);
+  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false });
 });
 
 test('image.generate performs a real OpenAI-compatible call and returns bytes', async () => {
@@ -278,6 +283,11 @@ test('integrations status route reports configured connectors live and never lea
     VISION_PROVIDER: 'openai', VISION_API_KEY: 'sk-live-vision-secret', VISION_API_BASE: 'https://api.example.test/v1',
     CALENDAR_PROVIDER: 'webhook', CALENDAR_WEBHOOK_URL: 'https://hooks.example.test/cal', CALENDAR_WEBHOOK_SECRET: 'cal-secret',
     EMAIL_PROVIDER: 'webhook', EMAIL_WEBHOOK_URL: 'https://hooks.example.test/mail', EMAIL_WEBHOOK_SECRET: 'mail-secret',
+    SLACK_WEBHOOK_URL: 'https://hooks.example.test/slack-secret',
+    TEAMS_WEBHOOK_URL: 'https://hooks.example.test/teams-secret',
+    DISCORD_WEBHOOK_URL: 'https://hooks.example.test/discord-secret',
+    NOTION_API_KEY: 'notion-live-secret', NOTION_DATABASE_ID: 'db-live',
+    GENERIC_WEBHOOK_URL: 'https://hooks.example.test/generic-secret',
     TAVILY_API_KEY: 'tvly-live-secret',
     BROWSER_CDP_URL: 'ws://127.0.0.1:9222',
     GITHUB_TOKEN: 'ghp_live_secret',
@@ -296,7 +306,7 @@ test('integrations status route reports configured connectors live and never lea
     assert.equal(response.status, 200);
     const raw = await response.text();
     const body = JSON.parse(raw);
-    for (const id of ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send', 'web.search', 'browser.run']) {
+    for (const id of ['image.generate', 'image.analyze', 'calendar.schedule', 'email.send', 'web.search', 'browser.run', 'slack.post', 'teams.post', 'discord.post', 'notion.page.create', 'webhook.post', 'github.repo', 'github.ci.status']) {
       assert.ok(body.tools.live.includes(id), `${id} must be live when its provider is configured`);
     }
     assert.equal(body.tools.unwired.length, 0);
