@@ -22,6 +22,7 @@ import { CodebaseReasoner } from '../../phase2-core/reasoning.mjs';
 import { assertValidArgs, strictArgsEnabled } from '../agent/tool-schema.mjs';
 import { ArtifactStore, guessMimeType } from '../artifacts/store.mjs';
 import { createDocx, createOdt, createPptx, createXlsx, editDocx, editOdt, editPptx, editXlsx } from '../authoring/office.mjs';
+import { planCreation, runDirector, renderToArtifacts, composeTimeline, parseTimeline } from '../creation/index.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -709,6 +710,71 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     const target = args.path || `generated/audio-${Date.now()}.${ext}`;
     const output = await writeMedia(context, bytes, target, 'audio', info.kind === 'unknown' ? result.mimeType : info.mimeType);
     return { output: { ...output, provider: result.provider, model: result.model } };
+  });
+  // --- Creation Studio -------------------------------------------------------
+  // One goal → think → plan → render → critique → deliver. These tools expose
+  // the Creation Intelligence pipeline and the deterministic Creation Kernel.
+  // They work with ZERO external providers (the Local Studio), so a finished,
+  // watchable video is always producible; configured image/video providers are
+  // used automatically when present.
+  const studioOptions = (args) => ({
+    llm,
+    model: args.model,
+    format: args.format,
+    duration: args.duration,
+    palette: args.palette,
+    resolution: args.resolution,
+    fps: args.fps,
+  });
+  const maybeWriteMedia = async (context, bytes, target, kind, mime) => {
+    if (!bytes) return null;
+    if (!context || !context.workspaceRoot) return { path: null, bytes: bytes.length, mimeType: mime, skipped: 'WORKSPACE_ROOT_REQUIRED' };
+    return writeMedia(context, bytes, target, kind, mime);
+  };
+  tools.set('studio.plan', async (args) => {
+    const plan = await planCreation(String(args.goal), studioOptions(args));
+    return { output: { brief: plan.brief, storyboard: plan.storyboard, bibles: plan.bibles, prompts: plan.prompts, elapsedMs: plan.elapsedMs } };
+  });
+  tools.set('studio.create', async (args, context = {}) => {
+    const dir = String(args.directory || `studio/${Date.now()}`);
+    const result = await runDirector(String(args.goal), {
+      ...studioOptions(args),
+      formats: true,
+      bundle: args.bundle !== false,
+      pngSequence: false,
+    });
+    const files = {
+      gif: await maybeWriteMedia(context, result.media.gif, `${dir}/video.gif`, 'video', 'image/gif'),
+      avi: await maybeWriteMedia(context, result.media.avi, `${dir}/video.avi`, 'video', 'video/x-msvideo'),
+      bundle: await maybeWriteMedia(context, result.media.bundle, `${dir}/bundle.zip`, 'archive', 'application/zip'),
+    };
+    return {
+      output: {
+        manifest: result.manifest,
+        brief: result.brief,
+        storyboard: result.storyboard,
+        critique: result.critique,
+        iterations: result.iterations.map((i) => ({ iteration: i.iteration, score: i.score })),
+        files,
+        providers: result.manifest.providers,
+      },
+    };
+  });
+  tools.set('studio.render', async (args, context = {}) => {
+    let timeline = args.timeline ? parseTimeline(args.timeline) : null;
+    if (!timeline && args.goal) {
+      const plan = await planCreation(String(args.goal), studioOptions(args));
+      timeline = composeTimeline({ brief: plan.brief, storyboard: plan.storyboard, bibles: plan.bibles, assets: new Map() });
+    }
+    if (!timeline) throw new Error('TIMELINE_OR_GOAL_REQUIRED');
+    const dir = String(args.directory || `studio/render-${Date.now()}`);
+    const out = renderToArtifacts(timeline, { format: args.format || 'all', fps: args.fps });
+    const files = {
+      gif: await maybeWriteMedia(context, out.gif, `${dir}/video.gif`, 'video', 'image/gif'),
+      avi: await maybeWriteMedia(context, out.avi, `${dir}/video.avi`, 'video', 'video/x-msvideo'),
+      frames: out.pngs ? await Promise.all(out.pngs.map((p) => maybeWriteMedia(context, p.buffer, `${dir}/${p.name}`, 'image', 'image/png'))) : null,
+    };
+    return { output: { manifest: out.manifest, files } };
   });
   // Plugin / extension tools registered at runtime (backend/tools/plugins.mjs).
   // They live in their own map so they can never overwrite a first-party tool id,
