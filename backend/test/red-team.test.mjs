@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { redactSecrets } from '../secrets/vault.mjs';
-import { assertSafeUrl, assertSafeUrlResolved, assertWorkspacePath, isPrivateAddress } from '../security/validators.mjs';
+import { assertSafeUrl, assertSafeUrlResolved, assertWorkspacePath, isPrivateAddress, pinnedLookup, pinnedRequest, resolveSafeUrl, safeFetchText } from '../security/validators.mjs';
 import { createLiveToolRegistry } from '../tools/registry.mjs';
 
 test('red-team blocks SSRF targets and URL credential exfiltration', () => {
@@ -64,4 +66,81 @@ test('red-team blocks symlink escape out of the workspace', async () => {
     const ok = await registry.run('files.read', { path: 'inside.txt' }, { workspaceRoot: dir });
     assert.equal(ok.output.content, 'ok');
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+/* ------------------- DNS rebinding / TOCTOU hardening -------------------- */
+
+test('red-team resolveSafeUrl validates the resolved addresses and returns them for pinning', async () => {
+  const { url, addresses } = await resolveSafeUrl('http://rebind.example/', { resolver: async () => [{ address: '93.184.216.34', family: 4 }] });
+  assert.equal(url.hostname, 'rebind.example');
+  assert.deepEqual(addresses, ['93.184.216.34']);
+  // A name that resolves to a private/metadata address is rejected.
+  await assert.rejects(() => resolveSafeUrl('http://rebind.example/', { resolver: async () => [{ address: '127.0.0.1', family: 4 }] }), /SSRF_TARGET_NOT_ALLOWED/);
+  await assert.rejects(() => resolveSafeUrl('http://rebind.example/', { resolver: async () => [{ address: '169.254.169.254', family: 4 }] }), /SSRF_TARGET_NOT_ALLOWED/);
+  // If ANY resolved address is private the whole name is rejected (mixed answer).
+  await assert.rejects(() => resolveSafeUrl('http://rebind.example/', { resolver: async () => [{ address: '93.184.216.34', family: 4 }, { address: '10.0.0.1', family: 4 }] }), /SSRF_TARGET_NOT_ALLOWED/);
+  await assert.rejects(() => resolveSafeUrl('http://rebind.example/', { resolver: async () => { throw new Error('ENOTFOUND'); } }), /URL_HOST_UNRESOLVABLE/);
+});
+
+test('red-team pinnedLookup returns only the validated addresses (no second DNS resolution)', async () => {
+  const lookup = pinnedLookup(['93.184.216.34']);
+  const all = await new Promise((resolve, reject) => lookup('attacker.example', { all: true }, (error, records) => (error ? reject(error) : resolve(records))));
+  assert.deepEqual(all, [{ address: '93.184.216.34', family: 4 }]);
+  const single = await new Promise((resolve, reject) => lookup('attacker.example', { family: 4 }, (error, address, family) => (error ? reject(error) : resolve({ address, family }))));
+  assert.deepEqual(single, { address: '93.184.216.34', family: 4 });
+});
+
+test('red-team pinnedRequest connects to the pinned address, never re-resolving the hostname', async () => {
+  const server = createServer((request, response) => { response.writeHead(200, { 'content-type': 'text/plain' }); response.end('pinned-ok'); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    // `rebind.invalid` does not resolve at all; a successful response proves the
+    // socket used the pinned address rather than performing its own lookup.
+    const response = await pinnedRequest(new URL(`http://rebind.invalid:${port}/`), ['127.0.0.1']);
+    assert.equal(response.status, 200);
+    assert.equal(response.body, 'pinned-ok');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('red-team safeFetchText applies the guard before connecting (rebinding host rejected)', async () => {
+  await assert.rejects(() => safeFetchText('http://rebind.example/', { resolver: async () => [{ address: '127.0.0.1', family: 4 }] }), /SSRF_TARGET_NOT_ALLOWED/);
+  await assert.rejects(() => safeFetchText('http://169.254.169.254/'), /SSRF_TARGET_NOT_ALLOWED/);
+});
+
+// Best-effort loopback alias so a "public" address can be served locally without
+// touching the real network. Needs root (or passwordless sudo) + iproute2; when
+// unavailable the test skips honestly instead of faking a pass.
+function ipCommand(args) {
+  for (const [bin, prefix] of [['ip', []], ['sudo', ['-n', 'ip']]]) {
+    const result = spawnSync(bin, [...prefix, ...args], { encoding: 'utf8' });
+    if (result.status === 0) return true;
+  }
+  return false;
+}
+
+test('red-team safeFetchText pins the validated address and re-validates redirects', async (t) => {
+  const alias = '203.0.113.10'; // TEST-NET-3: public per the classifier, served on lo
+  if (!ipCommand(['addr', 'add', `${alias}/32`, 'dev', 'lo'])) { t.skip('cannot add a loopback alias (needs root/iproute2)'); return; }
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') { response.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' }); response.end(); return; }
+    response.writeHead(200, { 'content-type': 'text/plain' }); response.end('composed-ok');
+  });
+  try {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, alias, resolve); });
+    const port = server.address().port;
+    const resolver = async () => [{ address: alias, family: 4 }];
+    // The name resolves (via the injected resolver) to a PUBLIC address we control;
+    // the guard passes and the socket is pinned to exactly that address.
+    const response = await safeFetchText(`http://rebind.example:${port}/`, { resolver });
+    assert.equal(response.status, 200);
+    assert.equal(response.body, 'composed-ok');
+    // A redirect to a private/metadata address is re-validated and rejected.
+    await assert.rejects(() => safeFetchText(`http://rebind.example:${port}/redirect`, { resolver }), /SSRF_TARGET_NOT_ALLOWED/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    ipCommand(['addr', 'del', `${alias}/32`, 'dev', 'lo']);
+  }
 });

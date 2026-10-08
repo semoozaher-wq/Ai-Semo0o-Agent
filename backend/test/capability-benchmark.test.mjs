@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   CAPABILITY_DEFINITIONS,
@@ -9,11 +12,20 @@ import {
   defineAgentBenchmark,
   defineCapabilityBenchmark,
   describeScorecard,
+  loadProofArtifacts,
+  normalizeProof,
   runAgentBenchmark,
   runCapabilityBenchmark,
 } from '../ops/capability-benchmark.mjs';
 
 const ALL_LIVE_TOOLS = ['code.analyze', 'code.impact', 'code.changeset', 'code.reason', 'browser.run'];
+
+// A proof object where every wired benchmark passed end-to-end.
+const FULL_PROOF = {
+  agentBenchmark: { passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } } },
+  browserE2e: { passed: true },
+  capabilityBenchmark: true,
+};
 
 /* ------------------------------ scorecard -------------------------------- */
 
@@ -25,7 +37,7 @@ test('capability: the catalogue covers exactly the 13 promised capabilities', ()
   }
 });
 
-test('capability: an empty signal set is scored honestly (tool-backed caps unwired)', () => {
+test('capability: an empty signal set is scored honestly (tool-backed caps unwired, nothing proven)', () => {
   const scorecard = buildCapabilityScorecard({});
   assert.equal(scorecard.capabilities.length, 13);
   assert.equal(scorecard.summary.total, 13);
@@ -38,25 +50,58 @@ test('capability: an empty signal set is scored honestly (tool-backed caps unwir
   // Integrations with no connectors configured is honestly "partial", not live.
   const integrations = scorecard.capabilities.find((capability) => capability.id === 'integrations');
   assert.equal(integrations.status, 'partial');
-  // A low score, never a fabricated 100.
-  assert.ok(scorecard.score < 70, `expected a low honest score, got ${scorecard.score}`);
-  assert.equal(scorecard.level, 'partial');
-  assert.match(describeScorecard(scorecard), /capability score \d+\/100 \(partial\)/);
+  // Runtime-flag capabilities are WIRED (exist in code) but never PROVEN without proof.
+  const longRunning = scorecard.capabilities.find((capability) => capability.id === 'long-running');
+  assert.equal(longRunning.status, 'wired');
+  assert.equal(longRunning.proven, false);
+  assert.equal(scorecard.summary.proven, 0);
+  assert.equal(scorecard.provenScore, 0);
+  assert.ok(scorecard.score < 100, `expected a sub-100 honest score, got ${scorecard.score}`);
+  assert.notEqual(scorecard.level, 'production');
+  assert.match(describeScorecard(scorecard), /0 proven end-to-end/);
 });
 
-test('capability: full live signals reach a production scorecard', () => {
+test('capability: a runtime flag alone is wired, never proven (no flag-only claim)', () => {
+  const scorecard = buildCapabilityScorecard({ runtime: { multiAgent: true } });
+  const multiAgent = scorecard.capabilities.find((capability) => capability.id === 'multi-agent');
+  assert.equal(multiAgent.status, 'wired');
+  assert.equal(multiAgent.wired, true);
+  assert.equal(multiAgent.proven, false);
+  assert.ok(multiAgent.evidence.includes('proof:agent-benchmark:multi-agent=false'));
+});
+
+test('capability: full live signals WITHOUT proof are wired, not proven', () => {
   const scorecard = buildCapabilityScorecard({
     tools: { live: ALL_LIVE_TOOLS, partial: [], unwired: [], failed: [] },
-    models: { configured: 2, healthy: 2, total: 2 },
     integrations: { configured: ['github', 'browser'], total: 8 },
-    runtime: {},
   });
-  assert.equal(scorecard.score, 100);
-  assert.equal(scorecard.level, 'production');
-  assert.equal(scorecard.summary.live, 13);
+  assert.equal(scorecard.summary.proven, 0);
+  assert.equal(scorecard.summary.wired, 13);
+  assert.equal(scorecard.provenScore, 0);
+  assert.equal(scorecard.score, 70);
+  assert.equal(scorecard.level, 'strong');
+});
+
+test('capability: end-to-end proof upgrades wired capabilities to proven', () => {
+  const scorecard = buildCapabilityScorecard({
+    tools: { live: ALL_LIVE_TOOLS, partial: [], unwired: [], failed: [] },
+    integrations: { configured: ['github', 'browser'], total: 8 },
+    proof: FULL_PROOF,
+  });
+  assert.equal(scorecard.summary.proven, 11);
+  assert.equal(scorecard.summary.wired, 2); // self-healing + integrations have no wired E2E proof
   assert.equal(scorecard.summary.unwired, 0);
-  assert.equal(scorecard.summary.failed, 0);
-  assert.match(describeScorecard(scorecard), /13 live/);
+  assert.ok(scorecard.score >= 90, `expected a production score, got ${scorecard.score}`);
+  assert.equal(scorecard.level, 'production');
+  assert.ok(scorecard.provenScore >= 80 && scorecard.provenScore < 100, `provenScore=${scorecard.provenScore}`);
+  // Every proven capability carries the proof source in its evidence.
+  const browser = scorecard.capabilities.find((capability) => capability.id === 'computer-use');
+  assert.equal(browser.status, 'proven');
+  assert.ok(browser.evidence.includes('proof:browser-e2e=true'));
+  const selfHealing = scorecard.capabilities.find((capability) => capability.id === 'self-healing');
+  assert.equal(selfHealing.status, 'wired');
+  assert.equal(selfHealing.proven, false);
+  assert.match(describeScorecard(scorecard), /11 proven end-to-end/);
 });
 
 test('capability: a runtime flag override degrades only that capability', () => {
@@ -68,9 +113,9 @@ test('capability: a runtime flag override degrades only that capability', () => 
   assert.equal(longRunning.status, 'unwired');
   assert.equal(longRunning.score, 0);
   assert.ok(scorecard.score < 100);
-  // Every other runtime capability stays live.
+  // Every other runtime capability stays wired.
   const multiAgent = scorecard.capabilities.find((capability) => capability.id === 'multi-agent');
-  assert.equal(multiAgent.status, 'live');
+  assert.equal(multiAgent.status, 'wired');
 });
 
 test('capability: a failed tool is surfaced as failed, never hidden as partial', () => {
@@ -96,6 +141,7 @@ test('capability: collectCapabilitySignals derives honest signals from live obje
   assert.ok(signals.integrations.configured.includes('github'));
   assert.ok(signals.integrations.configured.includes('image'));
   assert.equal(signals.integrations.total, 8);
+  assert.deepEqual(signals.proof, {});
 });
 
 test('capability: collectCapabilitySignals degrades to honest defaults with no runtime', () => {
@@ -104,15 +150,60 @@ test('capability: collectCapabilitySignals degrades to honest defaults with no r
   assert.equal(signals.models.total, 0);
   assert.deepEqual(signals.integrations.configured, []);
   assert.deepEqual(signals.runtime, {});
+  assert.deepEqual(signals.proof, {});
+});
+
+/* ------------------------------ proof input ------------------------------ */
+
+test('capability: normalizeProof derives honest booleans from raw benchmark reports', () => {
+  const proof = normalizeProof({ agentBenchmark: FULL_PROOF.agentBenchmark, browserE2e: { passed: true }, capabilityBenchmark: true });
+  assert.equal(proof.agentBenchmark.passed, true);
+  assert.equal(proof.agentBenchmark.scenarios.agentLoop, true);
+  assert.equal(proof.agentBenchmark.scenarios.multiAgent, true);
+  assert.equal(proof.agentBenchmark.scenarios.longRunning, true);
+  assert.equal(proof.agentBenchmark.scenarios.codeIntelligence, true);
+  assert.equal(proof.browserE2e.passed, true);
+  assert.equal(proof.capabilityBenchmark, true);
+
+  // A missing / partial report degrades to false — never a fabricated pass.
+  const empty = normalizeProof({});
+  assert.equal(empty.agentBenchmark.passed, false);
+  assert.equal(empty.agentBenchmark.scenarios.codeIntelligence, false);
+  assert.equal(empty.browserE2e.passed, false);
+  assert.equal(empty.capabilityBenchmark, false);
+  const partial = normalizeProof({ agentBenchmark: { passed: false, agentLoop: { summary: { passRate: 50 } } } });
+  assert.equal(partial.agentBenchmark.scenarios.agentLoop, false);
+});
+
+test('capability: loadProofArtifacts reads the real benchmark reports from a directory', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'capability-proof-'));
+  try {
+    // No reports present -> nothing proven.
+    const missing = loadProofArtifacts(dir, { capabilityBenchmark: true });
+    assert.equal(missing.agentBenchmark.passed, false);
+    assert.equal(missing.browserE2e.passed, false);
+    assert.equal(missing.capabilityBenchmark, true);
+
+    await writeFile(path.join(dir, 'agent-benchmark.report.json'), JSON.stringify({ passed: true, agentLoop: { summary: { passRate: 100 } }, multiAgent: { summary: { passRate: 100 } }, longRunning: { summary: { passRate: 100 } }, codeIntelligence: { summary: { passRate: 100 } } }), 'utf8');
+    await writeFile(path.join(dir, 'browser-e2e.report.json'), JSON.stringify({ passed: true }), 'utf8');
+    const loaded = loadProofArtifacts(dir, { capabilityBenchmark: true });
+    assert.equal(loaded.agentBenchmark.passed, true);
+    assert.equal(loaded.agentBenchmark.scenarios.multiAgent, true);
+    assert.equal(loaded.browserE2e.passed, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 /* --------------------------- capability bench ---------------------------- */
 
 test('capability: the scorecard is turned into a reproducible benchmark report', async () => {
-  const { scorecard, report } = await runCapabilityBenchmark({ tools: { live: ALL_LIVE_TOOLS, partial: [], unwired: [], failed: [] } });
-  // Tools are all live, but with no connectors the integrations capability is
-  // honestly "partial", so the weighted scorecard is production-grade but < 100.
-  assert.ok(scorecard.score >= 90 && scorecard.score < 100, `expected 90..99, got ${scorecard.score}`);
+  const { scorecard, report } = await runCapabilityBenchmark({
+    tools: { live: ALL_LIVE_TOOLS, partial: [], unwired: [], failed: [] },
+    integrations: { configured: ['github', 'browser'], total: 8 },
+    proof: FULL_PROOF,
+  });
+  assert.ok(scorecard.score >= 90 && scorecard.score <= 100, `expected 90..100, got ${scorecard.score}`);
   assert.equal(scorecard.level, 'production');
   assert.equal(report.summary.total, 13);
   assert.equal(report.summary.passed, 13);
