@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { evaluateRuns } from '../agent/evaluation.mjs';
 
 // ===========================================================================
 // Platform observability: a Prometheus text exposition endpoint plus SLO
@@ -43,7 +44,30 @@ export function collectMetrics(db, { windowHours = 24, now: nowFn = () => new Da
   const users = db.get('SELECT COUNT(*) AS n FROM users').n;
   const activeSessions = db.get('SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL AND expires_at > ?', reference.toISOString()).n;
   const queueDepth = (runsByStatus.queued ?? 0) + (runsByStatus.running ?? 0) + (runsByStatus.waiting_approval ?? 0);
+  // Artifact ledger + scheduled-trigger health (additive; both tables always exist).
+  const artifactTotals = db.get('SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes),0) AS bytes FROM artifacts');
+  const artifactsByKind = rowsToMap(db.all("SELECT COALESCE(kind,'unknown') AS kind, COUNT(*) AS n FROM artifacts GROUP BY kind"), 'kind');
+  const triggerTotals = db.get('SELECT COUNT(*) AS n, COALESCE(SUM(enabled),0) AS enabled FROM scheduled_triggers');
+  const triggersDue = db.get('SELECT COUNT(*) AS n FROM scheduled_triggers WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at<=?', reference.toISOString()).n;
   const memory = process.memoryUsage();
+  // Reusable evaluation aggregate (additive): a windowed quality scorecard built
+  // from the SAME durable rows, bounded so /metrics stays cheap. Fail-soft: a
+  // malformed row can never break the metrics endpoint.
+  let evaluation = null;
+  try {
+    const scorecard = evaluateRuns(db, { windowHours, limit: 200, now: nowFn });
+    evaluation = {
+      runsEvaluated: scorecard.count,
+      successRatio: scorecard.successRatio,
+      avgQualityScore: scorecard.avgQualityScore,
+      avgToolEfficiency: scorecard.avgToolEfficiency,
+      avgEvidenceCompleteness: scorecard.avgEvidenceCompleteness,
+      interventionRate: scorecard.interventionRate,
+      totalCostUsd: scorecard.totalCostUsd,
+      costPerSuccess: scorecard.costPerSuccess,
+      avgLatencyMs: scorecard.avgLatencyMs,
+    };
+  } catch { evaluation = null; }
   return {
     windowHours,
     generatedAt: reference.toISOString(),
@@ -52,6 +76,9 @@ export function collectMetrics(db, { windowHours = 24, now: nowFn = () => new Da
     usage: { tokens: Number(usage.tokens) || 0, costUsd: Number(usage.cost) || 0, runs: Number(usage.runs) || 0 },
     outbox,
     proposals,
+    artifacts: { total: Number(artifactTotals.n) || 0, bytes: Number(artifactTotals.bytes) || 0, byKind: artifactsByKind },
+    triggers: { total: Number(triggerTotals.n) || 0, enabled: Number(triggerTotals.enabled) || 0, due: Number(triggersDue) || 0 },
+    evaluation,
     tenants,
     users,
     activeSessions,
@@ -113,6 +140,14 @@ export function renderPrometheus(metrics, slo) {
   metric(lines, 'semo0o_email_outbox_total', 'gauge', 'Transactional emails by delivery status.', outboxSamples.length ? outboxSamples : [{ value: 0 }]);
   const proposalSamples = Object.entries(metrics.proposals).map(([status, value]) => ({ labels: { status }, value }));
   metric(lines, 'semo0o_self_improve_proposals_total', 'gauge', 'Self-improvement proposals by status.', proposalSamples.length ? proposalSamples : [{ value: 0 }]);
+  const artifactSamples = Object.entries(metrics.artifacts.byKind).map(([kind, value]) => ({ labels: { kind }, value }));
+  metric(lines, 'semo0o_artifacts_total', 'gauge', 'Recorded artifacts by kind.', artifactSamples.length ? artifactSamples : [{ value: 0 }]);
+  metric(lines, 'semo0o_artifact_bytes_total', 'gauge', 'Total bytes recorded across all artifacts.', [{ value: metrics.artifacts.bytes }]);
+  metric(lines, 'semo0o_scheduled_triggers_total', 'gauge', 'Scheduled triggers by enabled state.', [
+    { labels: { state: 'enabled' }, value: metrics.triggers.enabled },
+    { labels: { state: 'disabled' }, value: metrics.triggers.total - metrics.triggers.enabled },
+  ]);
+  metric(lines, 'semo0o_scheduled_triggers_due', 'gauge', 'Enabled triggers whose next run is due now.', [{ value: metrics.triggers.due }]);
   metric(lines, 'semo0o_tenants_total', 'gauge', 'Number of tenants.', [{ value: metrics.tenants }]);
   metric(lines, 'semo0o_users_total', 'gauge', 'Number of users.', [{ value: metrics.users }]);
   metric(lines, 'semo0o_active_sessions', 'gauge', 'Active (unexpired, unrevoked) sessions.', [{ value: metrics.activeSessions }]);
@@ -125,6 +160,19 @@ export function renderPrometheus(metrics, slo) {
   metric(lines, 'semo0o_slo_tool_success_ratio', 'gauge', 'Tool success ratio over the window.', [{ value: slo.toolSuccessRatio }]);
   metric(lines, 'semo0o_slo_tool_success_target', 'gauge', 'Tool success ratio target.', [{ value: slo.toolSuccessTarget }]);
   metric(lines, 'semo0o_slo_tool_success_met', 'gauge', '1 when the tool success SLO is met.', [{ value: slo.toolSuccessMet ? 1 : 0 }]);
+  // Evaluation scorecard gauges (only when the aggregate is available).
+  const evaluation = metrics.evaluation;
+  if (evaluation) {
+    const num = (value) => (Number.isFinite(value) ? value : 0);
+    metric(lines, 'semo0o_eval_runs_evaluated', 'gauge', 'Runs included in the evaluation window.', [{ value: num(evaluation.runsEvaluated) }]);
+    metric(lines, 'semo0o_eval_success_ratio', 'gauge', 'Success ratio across evaluated runs.', [{ value: num(evaluation.successRatio) }]);
+    metric(lines, 'semo0o_eval_avg_quality_score', 'gauge', 'Average composite quality score (0..100).', [{ value: num(evaluation.avgQualityScore) }]);
+    metric(lines, 'semo0o_eval_avg_tool_efficiency', 'gauge', 'Average tool-use success ratio.', [{ value: num(evaluation.avgToolEfficiency) }]);
+    metric(lines, 'semo0o_eval_avg_evidence_completeness', 'gauge', 'Average evidence completeness (verified checks / checks).', [{ value: num(evaluation.avgEvidenceCompleteness) }]);
+    metric(lines, 'semo0o_eval_intervention_rate', 'gauge', 'Fraction of runs that required human approval.', [{ value: num(evaluation.interventionRate) }]);
+    metric(lines, 'semo0o_eval_cost_per_success_usd', 'gauge', 'Model cost (USD) per successful run.', [{ value: num(evaluation.costPerSuccess) }]);
+    metric(lines, 'semo0o_eval_avg_latency_ms', 'gauge', 'Average run latency in milliseconds.', [{ value: num(evaluation.avgLatencyMs) }]);
+  }
   return `${lines.join('\n')}\n`;
 }
 
