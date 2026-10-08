@@ -2,9 +2,12 @@
 # backend/Dockerfile — portable deployment for the Ai-Semo0o-Agent backend.
 # Works on Fly.io, Railway, Render (Docker), Google Cloud Run, or any VPS.
 # =============================================================================
-# The backend uses ONLY Node.js built-in modules (node:http, node:sqlite,
-# node:crypto, ...) and relative files — it has NO npm dependencies. That is
-# why there is no `npm install` step below.
+# The backend is built almost entirely on Node.js built-in modules (node:http,
+# node:sqlite, node:crypto, ...) and relative files. It has exactly ONE real
+# runtime npm dependency — `jszip` — which is statically imported by
+# `backend/github/service.mjs` and `backend/authoring/office.mjs` and therefore
+# loaded by `backend/server.mjs` at boot. Only that pinned dependency is
+# installed below (never the Expo/React-Native toolchain).
 #
 # Build (from the repository root):
 #   docker build -f backend/Dockerfile -t ai-semo0o-backend .
@@ -34,11 +37,22 @@ WORKDIR /app
 #   backend/runners/code-runner.mjs -> ../../execution-core/code-run-tool.mjs
 #   backend/browser/pool.mjs        -> ../../phase2-core/browser-agent.mjs
 #   backend/browser/runner.mjs      -> ../../phase2-core/browser-agent.mjs
+#   backend/agent/recovery.mjs      -> ../../shared/recovery-contract.json
 # Copying only backend/ makes the container crash at boot with
 # ERR_MODULE_NOT_FOUND before it can ever bind a port.
 COPY backend ./backend
 COPY execution-core ./execution-core
 COPY phase2-core ./phase2-core
+COPY shared ./shared
+
+# Install the backend's single runtime npm dependency, pinned to the version in
+# the repository lockfile. `jszip` is a *static* import (see the header comment),
+# so it must be present at boot or the container dies with ERR_MODULE_NOT_FOUND.
+# Node resolves it from backend/** by walking up to /app/node_modules. A tiny
+# inline manifest keeps the image small and reproducible.
+RUN printf '%s\n' '{"name":"ai-semo0o-backend-runtime","private":true,"dependencies":{"jszip":"3.10.2"}}' > /app/package.json \
+    && npm install --omit=dev --no-audit --no-fund --ignore-scripts \
+    && rm -f /app/package-lock.json
 
 # Persistent, writable location for the SQLite DB + workspace.
 RUN mkdir -p /data/db /data/workspace
