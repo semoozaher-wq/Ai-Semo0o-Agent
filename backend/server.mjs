@@ -42,7 +42,7 @@ import { buildProjectIntelligence } from '../phase2-core/platform.mjs';
 import { analyzeImpact, describeImpact } from '../phase2-core/impact.mjs';
 import { buildChangeSet, describeChangeSet } from '../phase2-core/changeset.mjs';
 import { CodebaseReasoner } from '../phase2-core/reasoning.mjs';
-import { buildCapabilityScorecard, collectCapabilitySignals, describeScorecard, runAgentBenchmark } from './ops/capability-benchmark.mjs';
+import { buildCapabilityScorecard, collectCapabilitySignals, describeScorecard, loadProofArtifacts, runAgentBenchmark } from './ops/capability-benchmark.mjs';
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
@@ -916,7 +916,11 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       // --- Capability benchmarking -----------------------------------------
       if (method === 'GET' && parts.join('/') === 'capabilities/scorecard') {
-        const signals = collectCapabilitySignals({ tools, llm, integrations: integrationStatusView({ db, user, tools }) });
+        // Fold in the outcome of the last real E2E benchmarks (agent + browser)
+        // so the endpoint reports `proven` only where evidence exists; a missing
+        // report leaves the capability honestly `wired` (never a flag-only claim).
+        const proof = loadProofArtifacts(process.cwd());
+        const signals = collectCapabilitySignals({ tools, llm, integrations: integrationStatusView({ db, user, tools }), proof });
         const scorecard = buildCapabilityScorecard(signals);
         return send(response, 200, { ...scorecard, description: describeScorecard(scorecard) });
       }
