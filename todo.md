@@ -1,47 +1,40 @@
-# Task: Implement the last 4 review points
+# Task: Make Ai-Semo0o-Agent genuinely Production-Ready (close real gaps, prove with real tests)
 
-1. CI Security Gate (no ignore, no CI break)
-2. Browser E2E Release Integration
-3. Agent Benchmark Release Integration
-4. Capability Scorecard Accuracy + SSRF Hardening
+Baseline (verified before changes): working tree clean; `npm test` green; typecheck/lint/security/audit green;
+capability scorecard 94/100 (11 proven, 1 wired, 1 partial); agent bench 4/4; browser E2E 3/3.
 
-## 0. Baseline & architecture analysis
-- [x] Baseline: full test suite 283 tests / 282 pass / 0 fail / 1 skip (EXIT=0); agent bench PASS 100%x4; browser E2E PASS 3/3; capability 91/100; security:scan FAIL (report artifact); audit:production FAIL (21 advisories)
-- [x] Map call graph: ci.yml+quality.yml, release:gate (vercel), security-scan, audit, scorecard consumers (server.mjs, scripts/*), SSRF consumers (registry.mjs fetchText/browser.run)
-- [x] Confirm undici NOT importable -> DNS pinning must use node:http/https `lookup`
+Genuine, code-confirmed gaps (not flag-only):
+- [x] Auth/MFA: `setupMfa`/`confirmMfa` existed in the client but had ZERO UI wiring.
+- [x] Privacy/Data-rights: backend `DELETE /me` + `GET /me/export` existed with tests, but NO client
+      methods and NO UI. No `GET /me` to read MFA state (needed for honest UI).
+- [x] Capability `self-healing`: PROOF_MAP null -> could never be `proven`; no E2E scenario.
+- [x] Capability `integrations`: PROOF_MAP null -> could never be `proven`; no E2E scenario.
 
-## 1. CI Security Gate
-- [x] Add scripts/audit-baseline.json (reviewed accepted advisories)
-- [x] Add scripts/audit-gate.mjs (fail on NEW advisory/package/severity; pass on baseline)
-- [x] Wire audit:gate into package.json + ci.yml + quality.yml; remove continue-on-error
-- [x] Fix security-scan false-positive on generated report artifacts
-- [ ] Verify: security:scan green, audit gate green on baseline, red on injected new advisory
+## 1. Backend: account profile + MFA/export wiring
+- [x] Add `GET /me` returning profile incl. `mfaEnabled` (honest MFA state for the UI)
+- [x] Add real HTTP E2E test `backend/test/mfa-lifecycle.test.mjs` (setup->confirm->login MFA->recovery)
+- [x] Root-cause fix: `SECRETS_MASTER_KEY_REQUIRED` now maps to an actionable 503 (was a masked 500)
 
-## 2. Browser E2E Release Integration
-- [ ] Wire existing scripts/browser-e2e.mjs into quality.yml (after browser ensured) with env
-- [ ] Verify: browser E2E runs in release flow with real evidence
+## 2. Frontend: MFA + data-rights wiring (real, testable)
+- [x] `src/services/account/security.ts` — pure helpers (otpauth URL, code normalize, export filename/summary, delete confirmation)
+- [x] `src/services/account/api.ts` — account operations over injected request (single wire-contract source)
+- [x] `src/services/api/client.ts` — add `getAccount`, `deleteAccount`, `exportAccount`; extend `setupMfa` type
+- [x] `src/store/useAccountStore.ts` — wire client
+- [x] `src/components/composite/AccountSecurityCard.tsx` — MFA + export + delete UI
+- [x] `src/screens/Settings.tsx` — render the card
+- [x] `test/account-security.test.ts` — real tests for helpers + client<->backend contract
+- [x] Wire test into `package.json` test:frontend
 
-## 3. Agent Benchmark Release Integration
-- [ ] Wire existing scripts/agent-benchmark.mjs into quality.yml
-- [ ] Prove agent-loop, multi-agent, long-running, code-intelligence
-- [ ] Verify: benchmark runs in release flow, non-zero on failure
+## 3. Prove self-healing + integrations end-to-end
+- [x] `scripts/agent-benchmark.mjs` — add `self-healing` scenario (real repair) + `integrations` scenario (real local HTTP connector)
+- [x] `backend/ops/capability-benchmark.mjs` — PROOF_MAP rules + normalizeProof scenarios
+- [x] Update `backend/test/capability-benchmark.test.mjs` (13 proven) + `backend/test/agent-benchmark.e2e.test.mjs` (6-scenario RESULT)
 
-## 4. Capability Scorecard Accuracy + SSRF Hardening
-- [x] Scorecard: status proven vs wired; no flag-only claims; add proof input + provenScore
-- [x] Feed real proof from agent benchmark + browser E2E into scorecard (scripts/capability-benchmark.mjs)
-- [x] SSRF: resolveSafeUrl + pinnedLookup + pinnedRequest + safeFetchText (DNS pinning, redirect re-validation)
-- [x] registry.mjs fetchText uses safeFetchText
-- [x] Update capability-benchmark.test.mjs + red-team.test.mjs with real tests
-- [x] Fix accuracy: passing E2E proof establishes proven even when static config flag unset (computer-use now PROVEN)
+## 4. Verify
+- [x] `npm test` green (69 + 43 + 30 + 23 + 301, 0 fail); typecheck; lint; security:scan; audit:gate
+- [x] agent benchmark 6/6 scenarios passed=true; capability scorecard 100/100 (13 proven)
+- [x] browser E2E still green (3/3; needs BROWSER_NO_SANDBOX=true as root — environmental)
 
-## 5. Full verification
-- [x] npm test (297 tests / 296 pass / 0 fail / 1 skip, EXIT=0) — re-run after final edit, still green
-- [x] typecheck EXIT=0; security:scan EXIT=0; audit:gate PASS
-- [x] agent benchmark PASS (4/4 100%); browser E2E PASS (3/3); capability benchmark 94/100 (11 proven)
-- [x] red-team 12/12 + capability 19/19 + audit-gate 5/5 re-run after final edit
-- [x] git diff + git status review (minimal, linked, no duplication/out-of-scope)
-
-## 6. Delivery
-- [x] Build ZIP with ONLY modified/added files at original repo paths (15 files)
-- [x] Verify ZIP integrity + contents + paths (unzip -t OK; byte-for-byte match working tree)
-- [x] Final reports
+## 5. Deliver
+- [x] MODIFIED / ADDED / DELETED / TEST RESULTS / REMAINING / PRODUCTION STATUS
+- [x] ZIP of ONLY changed files at original paths, verified == git diff (no build/cache/node_modules)
