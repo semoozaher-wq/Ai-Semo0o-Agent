@@ -6,11 +6,13 @@ import path from 'node:path';
 import { createConnection } from 'node:net';
 
 // Candidate browser binaries, in priority order. Operators can override with
-// CHROME_BIN / BROWSER_BIN. We only ever launch a real, locally installed
-// browser; when none is found the launcher fails closed so browser.run stays
-// honestly reported as unwired instead of pretending to work.
+// CHROME_BIN / CHROMIUM_BIN / BROWSER_BIN (the CI workflow exports CHROMIUM_BIN,
+// see .github/workflows/quality.yml). We only ever launch a real, locally
+// installed browser; when none is found the launcher fails closed so browser.run
+// stays honestly reported as unwired instead of pretending to work.
 const CANDIDATES = [
   process.env.CHROME_BIN,
+  process.env.CHROMIUM_BIN,
   process.env.BROWSER_BIN,
   'chromium',
   'chromium-browser',
@@ -176,16 +178,40 @@ export async function launchLocalChromium({ port = 0, timeoutMs = 20000, extraAr
 }
 
 /**
+ * Build a Chromium `--host-resolver-rules` value that PINS `host` to the exact
+ * addresses the SSRF guard validated (`resolveSafeUrl(...).addresses`). Chrome's
+ * host resolver honours these rules for every request (including the top-level
+ * `Page.navigate`), so the browser can never re-resolve the name to a private
+ * address between the guard check and the navigation — the DNS-rebinding /
+ * TOCTOU fix. Unlike rewriting the URL to a bare IP, this keeps the hostname
+ * intact, so HTTPS SNI, certificate validation, the Host header and redirects
+ * all behave exactly as normal.
+ */
+export function hostResolverRule(host, addresses) {
+  const list = (Array.isArray(addresses) ? addresses : [addresses]).map((address) => String(address ?? '').trim()).filter(Boolean);
+  if (!host || !list.length) return null;
+  return list.map((address) => `MAP ${host} ${address}`).join(', ');
+}
+
+/**
  * Resolve the CDP websocket URL for a run. Prefers an externally managed
  * BROWSER_CDP_URL; otherwise, when BROWSER_LAUNCH_LOCAL=true, launches a local
- * browser. Returns { webSocketUrl, launcher } where launcher is non-null only
- * for locally launched browsers and must be closed by the caller.
+ * browser. Returns { webSocketUrl, launcher, pinned } where launcher is non-null
+ * only for locally launched browsers and must be closed by the caller, and
+ * `pinned` reports whether the validated address was pinned into the browser's
+ * host resolver (`options.targetHost` + `options.pinnedAddresses`).
  */
 export async function resolveCdpEndpoint(env = process.env, options = {}) {
-  if (env.BROWSER_CDP_URL) return { webSocketUrl: env.BROWSER_CDP_URL, launcher: null };
+  if (env.BROWSER_CDP_URL) return { webSocketUrl: env.BROWSER_CDP_URL, launcher: null, pinned: false };
   if (env.BROWSER_LAUNCH_LOCAL === 'true') {
-    const launcher = await launchLocalChromium({ timeoutMs: Number(env.BROWSER_LAUNCH_TIMEOUT_MS || options.timeoutMs || 20000) });
-    return { webSocketUrl: launcher.webSocketUrl, launcher };
+    // Pin the validated address at launch: the browser resolves `targetHost` to
+    // the address the guard checked, never a re-resolved (possibly private) one.
+    const rule = options.targetHost ? hostResolverRule(options.targetHost, options.pinnedAddresses) : null;
+    const launcher = await launchLocalChromium({
+      timeoutMs: Number(env.BROWSER_LAUNCH_TIMEOUT_MS || options.timeoutMs || 20000),
+      extraArgs: rule ? [`--host-resolver-rules=${rule}`] : [],
+    });
+    return { webSocketUrl: launcher.webSocketUrl, launcher, pinned: Boolean(rule) };
   }
   throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:browser.run');
 }

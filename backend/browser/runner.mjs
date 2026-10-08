@@ -1,6 +1,6 @@
 import { BrowserAgent } from '../../phase2-core/browser-agent.mjs';
 
-export async function runBrowserTask({ webSocketUrl, url, checks = [], actions = [], pool = null }) {
+export async function runBrowserTask({ webSocketUrl, url, checks = [], actions = [], pool = null, pinnedAddresses = [] }) {
   const execute = async (browser, connected = false) => {
     if (!connected) await browser.connect();
     try {
@@ -16,7 +16,7 @@ export async function runBrowserTask({ webSocketUrl, url, checks = [], actions =
       return { ok: verification.ok, results, verification, evidence: browser.evidence(), screenshot: await browser.screenshot() };
     } finally { await browser.close(); }
   };
-  if (pool) return pool.run(webSocketUrl, (browser) => execute(browser, true));
-  const browser = new BrowserAgent(webSocketUrl);
+  if (pool) return pool.run(webSocketUrl, (browser) => execute(browser, true), { pinnedAddresses });
+  const browser = new BrowserAgent(webSocketUrl, { pinnedAddresses });
   return execute(browser);
 }

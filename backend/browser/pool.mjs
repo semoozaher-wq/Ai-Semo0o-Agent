@@ -14,10 +14,10 @@ export class BrowserPool {
 
   status() { return { active: this.active, queued: this.waiting.length, maxConcurrent: this.maxConcurrent, maxQueued: this.maxQueued }; }
 
-  run(webSocketUrl, task) {
+  run(webSocketUrl, task, agentOptions = {}) {
     if (this.waiting.length >= this.maxQueued && this.active >= this.maxConcurrent) return Promise.reject(new Error('BROWSER_POOL_QUEUE_FULL'));
     return new Promise((resolve, reject) => {
-      this.waiting.push({ webSocketUrl, task, resolve, reject });
+      this.waiting.push({ webSocketUrl, task, agentOptions, resolve, reject });
       this.#drain();
     });
   }
@@ -30,12 +30,12 @@ export class BrowserPool {
     }
   }
 
-  async #execute({ webSocketUrl, task, resolve, reject }) {
+  async #execute({ webSocketUrl, task, agentOptions, resolve, reject }) {
     let browser;
     let result;
     let failure;
     try {
-      browser = this.createAgent(webSocketUrl, { timeoutMs: this.timeoutMs });
+      browser = this.createAgent(webSocketUrl, { timeoutMs: this.timeoutMs, ...agentOptions });
       await browser.connect();
       result = await task(browser);
     } catch (error) { failure = error; }
