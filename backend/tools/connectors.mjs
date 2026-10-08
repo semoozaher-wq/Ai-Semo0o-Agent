@@ -20,6 +20,8 @@
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024; // 12 MB decoded image cap
 const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB response cap
+const MAX_MEDIA_BYTES = 64 * 1024 * 1024; // 64 MB decoded audio/video cap
+const MAX_AUDIO_UPLOAD_BYTES = 24 * 1024 * 1024; // 24 MB audio upload cap (STT)
 
 function timeoutMs(env, key, fallback = DEFAULT_TIMEOUT_MS) {
   const value = Number(env[key]);
@@ -70,6 +72,35 @@ async function readJson(response, text, config = {}) {
     throw error;
   }
   return payload;
+}
+
+// Binary sibling of fetchWithTimeout for audio/video payloads: it reads the body
+// as an ArrayBuffer (never as text, which would corrupt compressed media) and
+// enforces a byte cap so a hostile or misconfigured provider cannot exhaust RAM.
+async function fetchBinary(url, init = {}, { timeoutMs: ms = DEFAULT_TIMEOUT_MS, maxBytes = MAX_MEDIA_BYTES, config = {} } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('CONNECTOR_TIMEOUT')), ms);
+  try {
+    let response;
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal });
+    } catch {
+      if (controller.signal.aborted) throw new Error('CONNECTOR_TIMEOUT');
+      throw new Error('CONNECTOR_UNREACHABLE');
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > maxBytes) throw new Error('CONNECTOR_RESPONSE_TOO_LARGE');
+    const buffer = Buffer.from(arrayBuffer);
+    if (!response.ok) {
+      const detail = scrubSecrets(buffer.toString('utf8').slice(0, 200), config);
+      const error = new Error(`CONNECTOR_HTTP_${response.status}${detail ? `:${detail}` : ''}`);
+      error.status = response.status;
+      throw error;
+    }
+    return { response, buffer };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -541,6 +572,321 @@ async function webhookPost(config, { text, event, data }, env) {
   return { provider: 'webhook', delivered: true, id: payload?.id ?? null };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Speech-to-Text (transcription)                                            */
+/* -------------------------------------------------------------------------- */
+
+function sttOpenAiConfig(env) {
+  const apiKey = env.STT_API_KEY || env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return {
+    id: 'openai',
+    apiKey,
+    baseUrl: (env.STT_API_BASE || env.OPENAI_API_BASE || 'https://api.openai.com/v1').replace(/\/$/, ''),
+    model: env.STT_MODEL || 'whisper-1',
+  };
+}
+
+function sttGeminiConfig(env) {
+  const apiKey = env.STT_API_KEY || env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  if (!apiKey) return null;
+  return { id: 'gemini', apiKey, model: env.STT_MODEL || 'gemini-2.5-flash' };
+}
+
+function sttHttpConfig(env) {
+  if (!env.STT_HTTP_URL) return null;
+  return { id: 'http', url: env.STT_HTTP_URL, secret: env.STT_HTTP_SECRET || '' };
+}
+
+/**
+ * Resolve a speech-to-text provider from the environment.
+ * @returns {{id:string, model?:string, transcribe:Function}|null}
+ */
+export function createSpeechToTextProvider(env = process.env) {
+  const explicit = String(env.STT_PROVIDER || '').toLowerCase();
+  const builders = [['openai', sttOpenAiConfig], ['gemini', sttGeminiConfig], ['http', sttHttpConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    if (name === 'openai') return { id: 'openai', model: config.model, transcribe: (input) => openaiTranscribe(config, input, env) };
+    if (name === 'gemini') return { id: 'gemini', model: config.model, transcribe: (input) => geminiTranscribe(config, input, env) };
+    if (name === 'http') return { id: 'http', model: 'http', transcribe: (input) => httpTranscribe(config, input, env) };
+  }
+  return null;
+}
+
+function audioFilename(mimeType) {
+  const m = String(mimeType || '');
+  if (m.includes('wav')) return 'audio.wav';
+  if (m.includes('mpeg')) return 'audio.mp3';
+  if (m.includes('ogg')) return 'audio.ogg';
+  if (m.includes('webm')) return 'audio.webm';
+  if (m.includes('mp4')) return 'audio.m4a';
+  if (m.includes('flac')) return 'audio.flac';
+  return 'audio.bin';
+}
+
+async function openaiTranscribe(config, { base64, mimeType, language, prompt }, env) {
+  const form = new FormData();
+  form.append('file', new Blob([Buffer.from(base64, 'base64')], { type: mimeType || 'application/octet-stream' }), audioFilename(mimeType));
+  form.append('model', config.model);
+  if (language) form.append('language', String(language).slice(0, 16));
+  if (prompt) form.append('prompt', String(prompt).slice(0, 1000));
+  const { response, text } = await fetchWithTimeout(
+    `${config.baseUrl}/audio/transcriptions`,
+    { method: 'POST', headers: { authorization: `Bearer ${config.apiKey}` }, body: form },
+    { timeoutMs: timeoutMs(env, 'STT_TIMEOUT_MS', 120_000) },
+  );
+  const payload = await readJson(response, text, config);
+  return { provider: config.id, model: config.model, text: payload.text ?? '', language: payload.language ?? null, duration: payload.duration ?? null };
+}
+
+async function geminiTranscribe(config, { base64, mimeType, prompt }, env) {
+  const instruction = prompt || 'Transcribe this audio verbatim. Return only the transcript text.';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent`;
+  const { response, text } = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: instruction }, { inlineData: { mimeType, data: base64 } }] }] }),
+    },
+    { timeoutMs: timeoutMs(env, 'STT_TIMEOUT_MS', 120_000) },
+  );
+  const payload = await readJson(response, text, config);
+  const parts = payload?.candidates?.[0]?.content?.parts ?? [];
+  return { provider: config.id, model: config.model, text: parts.filter((part) => typeof part?.text === 'string').map((part) => part.text).join(''), language: null, duration: null };
+}
+
+async function httpTranscribe(config, { base64, mimeType, language, prompt }, env) {
+  const body = JSON.stringify({ audio: base64, mimeType, language: language ?? null, prompt: prompt ?? null });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'STT_TIMEOUT_MS', 120_000) });
+  const payload = await readJson(response, text, config);
+  return { provider: config.id, model: payload.model ?? 'http', text: payload.text ?? payload.transcript ?? '', language: payload.language ?? null, duration: payload.duration ?? null };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Text-to-Speech (synthesis)                                                */
+/* -------------------------------------------------------------------------- */
+
+function ttsOpenAiConfig(env) {
+  const apiKey = env.TTS_API_KEY || env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return {
+    id: 'openai',
+    apiKey,
+    baseUrl: (env.TTS_API_BASE || env.OPENAI_API_BASE || 'https://api.openai.com/v1').replace(/\/$/, ''),
+    model: env.TTS_MODEL || 'gpt-4o-mini-tts',
+    voice: env.TTS_VOICE || 'alloy',
+  };
+}
+
+function ttsElevenLabsConfig(env) {
+  const apiKey = env.TTS_API_KEY || env.ELEVENLABS_API_KEY;
+  if (!apiKey) return null;
+  return { id: 'elevenlabs', apiKey, model: env.TTS_MODEL || 'eleven_multilingual_v2', voice: env.TTS_VOICE || env.ELEVENLABS_VOICE_ID || 'Rachel' };
+}
+
+function ttsHttpConfig(env) {
+  if (!env.TTS_HTTP_URL) return null;
+  return { id: 'http', url: env.TTS_HTTP_URL, secret: env.TTS_HTTP_SECRET || '' };
+}
+
+/**
+ * Resolve a text-to-speech provider from the environment.
+ * @returns {{id:string, model?:string, synthesize:Function}|null}
+ */
+export function createTextToSpeechProvider(env = process.env) {
+  const explicit = String(env.TTS_PROVIDER || '').toLowerCase();
+  const builders = [['openai', ttsOpenAiConfig], ['elevenlabs', ttsElevenLabsConfig], ['http', ttsHttpConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    if (name === 'openai') return { id: 'openai', model: config.model, synthesize: (input) => openaiSynthesize(config, input, env) };
+    if (name === 'elevenlabs') return { id: 'elevenlabs', model: config.model, synthesize: (input) => elevenLabsSynthesize(config, input, env) };
+    if (name === 'http') return { id: 'http', model: 'http', synthesize: (input) => httpSynthesize(config, input, env) };
+  }
+  return null;
+}
+
+const TTS_FORMAT_MIME = { mp3: 'audio/mpeg', opus: 'audio/ogg', aac: 'audio/aac', flac: 'audio/flac', wav: 'audio/wav', pcm: 'audio/L16' };
+
+async function openaiSynthesize(config, { text, voice, format }, env) {
+  const responseFormat = TTS_FORMAT_MIME[format] ? format : 'mp3';
+  const { buffer } = await fetchBinary(
+    `${config.baseUrl}/audio/speech`,
+    {
+      method: 'POST',
+      headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: config.model, voice: voice || config.voice, input: text, response_format: responseFormat }),
+    },
+    { timeoutMs: timeoutMs(env, 'TTS_TIMEOUT_MS', 120_000), config },
+  );
+  return { provider: config.id, model: config.model, mimeType: TTS_FORMAT_MIME[responseFormat], base64: buffer.toString('base64') };
+}
+
+async function elevenLabsSynthesize(config, { text, voice }, env) {
+  const voiceId = voice || config.voice;
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+  const { buffer } = await fetchBinary(
+    url,
+    {
+      method: 'POST',
+      headers: { 'xi-api-key': config.apiKey, 'content-type': 'application/json', accept: 'audio/mpeg' },
+      body: JSON.stringify({ text, model_id: config.model }),
+    },
+    { timeoutMs: timeoutMs(env, 'TTS_TIMEOUT_MS', 120_000), config },
+  );
+  return { provider: config.id, model: config.model, mimeType: 'audio/mpeg', base64: buffer.toString('base64') };
+}
+
+async function httpSynthesize(config, { text, voice, format }, env) {
+  const body = JSON.stringify({ text, voice: voice ?? null, format: format ?? 'mp3' });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text: raw } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'TTS_TIMEOUT_MS', 120_000) });
+  const payload = await readJson(response, raw, config);
+  const base64 = payload?.audio?.base64 ?? payload?.base64 ?? payload?.audioBase64;
+  if (!base64) throw new Error('CONNECTOR_TTS_EMPTY_RESPONSE');
+  return { provider: config.id, model: payload?.model ?? 'http', mimeType: payload?.audio?.mimeType ?? payload?.mimeType ?? 'audio/mpeg', base64 };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Video / audio generation (prompt -> bytes)                                */
+/* -------------------------------------------------------------------------- */
+
+function videoHttpConfig(env) {
+  if (!env.VIDEO_HTTP_URL) return null;
+  return { id: 'http', url: env.VIDEO_HTTP_URL, secret: env.VIDEO_HTTP_SECRET || '' };
+}
+function videoReplicateConfig(env) {
+  const apiKey = env.REPLICATE_API_TOKEN;
+  if (!apiKey || !env.REPLICATE_VIDEO_VERSION) return null;
+  return { id: 'replicate', apiKey, baseUrl: (env.REPLICATE_API_BASE || 'https://api.replicate.com/v1').replace(/\/$/, ''), version: env.REPLICATE_VIDEO_VERSION, model: env.REPLICATE_VIDEO_MODEL || 'replicate/video', maxPolls: Number(env.REPLICATE_MAX_POLLS) || 60, pollIntervalMs: Number(env.REPLICATE_POLL_MS) || 2000 };
+}
+/** Resolve a video-generation provider from the environment. @returns {{id:string, generate:Function}|null} */
+export function createVideoProvider(env = process.env) {
+  const explicit = String(env.VIDEO_PROVIDER || '').toLowerCase();
+  const builders = [['http', videoHttpConfig], ['replicate', videoReplicateConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    if (name === 'http') return { id: 'http', model: 'http', generate: (input) => httpGenerateVideo(config, input, env) };
+    if (name === 'replicate') return { id: 'replicate', model: config.model, generate: (input) => replicateGenerate(config, input, env, 'VIDEO') };
+  }
+  return null;
+}
+
+function audioHttpConfig(env) {
+  if (!env.AUDIO_HTTP_URL) return null;
+  return { id: 'http', url: env.AUDIO_HTTP_URL, secret: env.AUDIO_HTTP_SECRET || '' };
+}
+function audioReplicateConfig(env) {
+  const apiKey = env.REPLICATE_API_TOKEN;
+  if (!apiKey || !env.REPLICATE_AUDIO_VERSION) return null;
+  return { id: 'replicate', apiKey, baseUrl: (env.REPLICATE_API_BASE || 'https://api.replicate.com/v1').replace(/\/$/, ''), version: env.REPLICATE_AUDIO_VERSION, model: env.REPLICATE_AUDIO_MODEL || 'replicate/audio', maxPolls: Number(env.REPLICATE_MAX_POLLS) || 60, pollIntervalMs: Number(env.REPLICATE_POLL_MS) || 2000 };
+}
+/** Resolve an audio/music-generation provider from the environment. @returns {{id:string, generate:Function}|null} */
+export function createAudioProvider(env = process.env) {
+  const explicit = String(env.AUDIO_PROVIDER || '').toLowerCase();
+  const builders = [['http', audioHttpConfig], ['replicate', audioReplicateConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    if (name === 'http') return { id: 'http', model: 'http', generate: (input) => httpGenerateAudio(config, input, env) };
+    if (name === 'replicate') return { id: 'replicate', model: config.model, generate: (input) => replicateGenerate(config, input, env, 'AUDIO') };
+  }
+  return null;
+}
+
+// Shared payload resolution: accept either inline base64 or a URL to fetch.
+async function resolveMediaPayload(payload, kind, config, env, label) {
+  const node = payload?.[kind] ?? payload?.output ?? payload;
+  const base64 = (node && typeof node === 'object' ? node.base64 : null) ?? payload?.base64 ?? payload?.b64_json;
+  const defaultMime = kind === 'video' ? 'video/mp4' : 'audio/mpeg';
+  if (base64) {
+    return { provider: config.id, model: (node && typeof node === 'object' ? node.model : null) ?? payload?.model ?? config.id, mimeType: (node && typeof node === 'object' ? node.mimeType : null) ?? payload?.mimeType ?? defaultMime, base64 };
+  }
+  const url = typeof node === 'string' ? node : node?.url ?? payload?.url ?? payload?.output_url;
+  if (url && /^https?:\/\//.test(url)) {
+    const { response, buffer } = await fetchBinary(url, {}, { timeoutMs: timeoutMs(env, `${label}_TIMEOUT_MS`, 300_000), maxBytes: MAX_MEDIA_BYTES, config });
+    return { provider: config.id, model: payload?.model ?? config.id, mimeType: response.headers.get('content-type') || defaultMime, base64: buffer.toString('base64') };
+  }
+  throw new Error(`CONNECTOR_${label}_EMPTY_RESPONSE`);
+}
+
+async function httpGenerateVideo(config, { prompt, durationSeconds }, env) {
+  const body = JSON.stringify({ prompt, durationSeconds: durationSeconds ?? null });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'VIDEO_TIMEOUT_MS', 300_000) });
+  const payload = await readJson(response, text, config);
+  return resolveMediaPayload(payload, 'video', config, env, 'VIDEO');
+}
+
+async function httpGenerateAudio(config, { prompt, durationSeconds }, env) {
+  const body = JSON.stringify({ prompt, durationSeconds: durationSeconds ?? null });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'AUDIO_TIMEOUT_MS', 300_000) });
+  const payload = await readJson(response, text, config);
+  return resolveMediaPayload(payload, 'audio', config, env, 'AUDIO');
+}
+
+// Replicate predictions: create then bounded-poll until terminal. `Prefer: wait`
+// lets a fast model return `succeeded` on the first call, avoiding a poll loop.
+async function runReplicatePrediction(config, { version, input }, env, label) {
+  const headers = { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json', prefer: 'wait' };
+  const { response, text } = await fetchWithTimeout(`${config.baseUrl}/predictions`, { method: 'POST', headers, body: JSON.stringify({ version, input }) }, { timeoutMs: timeoutMs(env, `${label}_TIMEOUT_MS`, 300_000) });
+  let payload = await readJson(response, text, config);
+  let attempts = 0;
+  while (payload?.status && !['succeeded', 'failed', 'canceled'].includes(payload.status) && attempts < config.maxPolls) {
+    await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs));
+    const poll = await fetchWithTimeout(`${config.baseUrl}/predictions/${encodeURIComponent(payload.id)}`, { headers: { authorization: `Bearer ${config.apiKey}` } }, { timeoutMs: 30_000 });
+    payload = await readJson(poll.response, poll.text, config);
+    attempts += 1;
+  }
+  if (payload?.status && payload.status !== 'succeeded') throw new Error(`REPLICATE_${String(payload.status).toUpperCase()}${payload.error ? `:${scrubSecrets(String(payload.error).slice(0, 200), config)}` : ''}`);
+  return payload;
+}
+
+async function replicateGenerate(config, { prompt, durationSeconds }, env, label) {
+  const input = { prompt, ...(durationSeconds ? { duration: durationSeconds } : {}) };
+  const payload = await runReplicatePrediction(config, { version: config.version, input }, env, label);
+  const output = Array.isArray(payload?.output) ? payload.output[0] : payload?.output;
+  return resolveMediaPayload({ output, model: config.model }, label === 'VIDEO' ? 'video' : 'audio', config, env, label);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Media analysis (audio / video understanding)                              */
+/* -------------------------------------------------------------------------- */
+
+function mediaAnalyzeHttpConfig(env) {
+  if (!env.MEDIA_ANALYZE_HTTP_URL) return null;
+  return { id: 'http', url: env.MEDIA_ANALYZE_HTTP_URL, secret: env.MEDIA_ANALYZE_HTTP_SECRET || '' };
+}
+/** Resolve a media-understanding provider (audio/video). @returns {{id:string, analyze:Function}|null} */
+export function createMediaAnalysisProvider(env = process.env) {
+  const config = mediaAnalyzeHttpConfig(env);
+  if (!config) return null;
+  return { id: 'http', model: 'http', analyze: (input) => httpAnalyzeMedia(config, input, env) };
+}
+
+async function httpAnalyzeMedia(config, { base64, mimeType, kind, prompt }, env) {
+  const body = JSON.stringify({ media: { base64, mimeType, kind }, prompt: prompt ?? null });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'MEDIA_TIMEOUT_MS', 120_000) });
+  const payload = await readJson(response, text, config);
+  return { provider: config.id, model: payload?.model ?? 'http', text: payload?.text ?? payload?.analysis ?? payload?.description ?? '', usage: payload?.usage ?? null };
+}
+
 /** Report which connector families are configured (for honest status output). */
 export function connectorStatus(env = process.env) {
   return {
@@ -553,5 +899,10 @@ export function connectorStatus(env = process.env) {
     discord: Boolean(createDiscordProvider(env)),
     notion: Boolean(createNotionProvider(env)),
     webhook: Boolean(createWebhookProvider(env)),
+    stt: Boolean(createSpeechToTextProvider(env)),
+    tts: Boolean(createTextToSpeechProvider(env)),
+    video: Boolean(createVideoProvider(env)),
+    audio: Boolean(createAudioProvider(env)),
+    mediaAnalysis: Boolean(createMediaAnalysisProvider(env)),
   };
 }

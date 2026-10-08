@@ -9,15 +9,19 @@ import { runBrowserTask } from '../browser/runner.mjs';
 import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.mjs';
 import { assertSafeUrlResolved, assertWorkspacePath, safeFetchText } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
-import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, connectorStatus } from './connectors.mjs';
+import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, createSpeechToTextProvider, createTextToSpeechProvider, createVideoProvider, createAudioProvider, createMediaAnalysisProvider, connectorStatus } from './connectors.mjs';
+import { probeMedia, sniffMediaType } from '../media/media.mjs';
 import { createGitHubClient, githubStatus, parseRepoSlug } from '../github/service.mjs';
 import { resolveGitHubToken } from '../github/connections.mjs';
 import { MemoryStore } from '../memory/store.mjs';
+import { consolidateProjectMemory } from '../memory/consolidate.mjs';
 import { buildProjectIntelligence } from '../../phase2-core/platform.mjs';
 import { analyzeImpact, describeImpact } from '../../phase2-core/impact.mjs';
 import { buildChangeSet, describeChangeSet } from '../../phase2-core/changeset.mjs';
 import { CodebaseReasoner } from '../../phase2-core/reasoning.mjs';
 import { assertValidArgs, strictArgsEnabled } from '../agent/tool-schema.mjs';
+import { ArtifactStore, guessMimeType } from '../artifacts/store.mjs';
+import { createDocx, createOdt, createPptx, createXlsx, editDocx, editOdt, editPptx, editXlsx } from '../authoring/office.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -256,7 +260,7 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   // commands / transactional applies run through it (permissions + evidence +
   // atomic writes). Engine-only tools fail closed when no engine is supplied.
   const engineTools = createEngineToolHandlers();
-  const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply', 'git.status', 'git.diff', 'git.log', 'git.checkpoint']);
+  const engineGated = new Set(['files.patch', 'terminal.run', 'workspace.apply', 'git.status', 'git.diff', 'git.log', 'git.checkpoint', 'git.push']);
   // Code-intelligence tools degrade (rather than fail closed) when no per-task
   // engine is supplied, so they are reported `partial` instead of `live`.
   const enginePartial = new Set(['code.changeset']);
@@ -473,6 +477,50 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     const green = combined?.state === 'success' && failing.length === 0 && failedRuns.length === 0;
     return { output: { ref, state: combined?.state ?? 'unknown', combined, checkRuns, workflowRuns, failing: failing.map((run) => run.name), failedRuns: failedRuns.map((run) => run.name), green } };
   });
+  // --- Delivery: push -> CI logs -> rerun -> PR verify -> merge --------------
+  tools.set('git.push', withGit(async (git, args) => {
+    if (typeof git.push !== 'function') throw new Error('GIT_PUSH_UNAVAILABLE');
+    const remote = args.remote ? String(args.remote) : 'origin';
+    const result = await git.push(remote, args.branch ? String(args.branch) : undefined, { force: args.force === true });
+    return { output: { remote: result.remote, branch: result.branch, pushed: result.pushed === true, exitCode: result.exitCode ?? null } };
+  }));
+  tools.set('github.ci.logs', async (args, context) => {
+    const client = githubClientFor(context);
+    const { owner, repo } = repoArgs(args);
+    const runId = Number(args.runId);
+    if (!Number.isInteger(runId) || runId < 1) throw new Error('GITHUB_RUN_ID_INVALID');
+    const [jobs, logs] = await Promise.all([
+      client.listWorkflowRunJobs({ owner, repo, runId }).catch(() => []),
+      client.downloadWorkflowRunLogs({ owner, repo, runId }).catch((error) => ({ error: String(error?.message ?? error) })),
+    ]);
+    return { output: { runId, jobs, logs } };
+  });
+  tools.set('github.ci.rerun', async (args, context) => {
+    const client = githubClientFor(context);
+    const { owner, repo } = repoArgs(args);
+    const runId = Number(args.runId);
+    if (!Number.isInteger(runId) || runId < 1) throw new Error('GITHUB_RUN_ID_INVALID');
+    const result = args.failedOnly === true
+      ? await client.rerunFailedJobs({ owner, repo, runId })
+      : await client.rerunWorkflowRun({ owner, repo, runId });
+    return { output: result };
+  });
+  tools.set('github.pr.verify', async (args, context) => {
+    const client = githubClientFor(context);
+    const { owner, repo } = repoArgs(args);
+    const number = Number(args.number);
+    if (!Number.isInteger(number) || number < 1) throw new Error('GITHUB_PR_NUMBER_INVALID');
+    const result = await client.verifyPullRequest({ owner, repo, number });
+    return { output: result, ok: result.verdict === 'ready' || result.verdict === 'merged' };
+  });
+  tools.set('github.pr.merge', async (args, context) => {
+    const client = githubClientFor(context);
+    const { owner, repo } = repoArgs(args);
+    const number = Number(args.number);
+    if (!Number.isInteger(number) || number < 1) throw new Error('GITHUB_PR_NUMBER_INVALID');
+    const result = await client.mergePullRequest({ owner, repo, number, method: args.method, commitTitle: args.commitTitle });
+    return { output: result, ok: result.merged === true };
+  });
   // --- Research / content ----------------------------------------------------
   tools.set('web.extract', async (args) => {
     const { url, status, headers, body } = await safeFetchText(args.url, { timeoutMs: 15000 });
@@ -504,6 +552,14 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     const document = await memoryStore.addDocument({ tenantId, projectId, source: typeof args.source === 'string' ? args.source.slice(0, 200) : 'agent', content: bounded(args.content, 200000, 'CONTENT') });
     return { output: { id: document.id, source: document.source, createdAt: document.created_at } };
   });
+  tools.set('memory.consolidate', async (args, context) => {
+    if (!memoryStore) throw new Error('MEMORY_UNAVAILABLE');
+    const tenantId = context?.run?.tenant_id;
+    const projectId = context?.task?.project_id;
+    if (!tenantId || !projectId) throw new Error('MEMORY_CONTEXT_REQUIRED');
+    const result = await consolidateProjectMemory({ db, memory: memoryStore, tenantId, projectId, minOccurrences: Number(args.minOccurrences ?? 2) });
+    return { output: { source: result.source, documentId: result.documentId, kept: result.kept, recurring: result.recurring, reflections: result.reflections, updated: result.updated } };
+  });
   // --- Code review (LLM reasoning over the real diff) ------------------------
   tools.set('code.review', async (args, context) => {
     if (!llm) throw new Error('SERVER_LLM_REQUIRED');
@@ -525,6 +581,135 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   tools.set('discord.post', connectorTool('discord.post', createDiscordProvider, (provider, args) => provider.post({ text: bounded(args.text, 2000, 'TEXT'), username: args.username })));
   tools.set('notion.page.create', connectorTool('notion.page.create', createNotionProvider, (provider, args) => provider.createPage({ title: bounded(args.title, 200, 'TITLE'), content: typeof args.content === 'string' ? args.content.slice(0, 100000) : '', databaseId: args.databaseId, pageId: args.pageId })));
   tools.set('webhook.post', connectorTool('webhook.post', createWebhookProvider, (provider, args) => provider.post({ text: bounded(args.text, 40000, 'TEXT'), event: args.event, data: args.data })));
+  // --- Office authoring (real OOXML/ODF create + edit) -----------------------
+  // These produce genuine .docx/.odt/.pptx/.xlsx packages in the workspace and
+  // record every produced file in the durable artifact ledger when a run context
+  // is present, so a generated document survives the run that created it.
+  const artifactStore = db ? new ArtifactStore(db) : null;
+  const recordArtifact = async (context, absolutePath, relativePath, kind, mimeTypeOverride) => {
+    if (!artifactStore || !context?.run?.id) return null;
+    try {
+      const row = await artifactStore.recordFile({ runId: context.run.id, absolutePath, path: relativePath, kind, mimeType: mimeTypeOverride || guessMimeType(relativePath) });
+      return { id: row.id, sha256: row.sha256, sizeBytes: row.size_bytes, mimeType: row.mime_type };
+    } catch { return null; }
+  };
+  const authoringCreate = (build, kind) => async (args, context = {}) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    await mkdir(path.dirname(resolved), { recursive: true });
+    const buffer = await build(args);
+    await writeFile(resolved, buffer);
+    const artifact = await recordArtifact(context, resolved, safe, kind);
+    return { output: { path: safe, bytes: buffer.length, mimeType: guessMimeType(safe), artifact } };
+  };
+  const authoringEdit = (edit, kind) => async (args, context = {}) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const existing = await readFile(resolved);
+    const buffer = await edit(existing, args.operations);
+    const target = args.outputPath ? await workspacePath(context.workspaceRoot, args.outputPath) : { resolved, safe };
+    await mkdir(path.dirname(target.resolved), { recursive: true });
+    await writeFile(target.resolved, buffer);
+    const artifact = await recordArtifact(context, target.resolved, target.safe, kind);
+    return { output: { path: target.safe, bytes: buffer.length, mimeType: guessMimeType(target.safe), artifact } };
+  };
+  tools.set('docx.create', authoringCreate((args) => createDocx({ title: args.title, paragraphs: args.paragraphs, author: args.author }), 'document'));
+  tools.set('docx.edit', authoringEdit((buffer, ops) => editDocx(buffer, ops), 'document'));
+  tools.set('odt.create', authoringCreate((args) => createOdt({ title: args.title, paragraphs: args.paragraphs, author: args.author }), 'document'));
+  tools.set('odt.edit', authoringEdit((buffer, ops) => editOdt(buffer, ops), 'document'));
+  tools.set('pptx.create', authoringCreate((args) => createPptx({ title: args.title, slides: args.slides, author: args.author }), 'presentation'));
+  tools.set('pptx.edit', authoringEdit((buffer, ops) => editPptx(buffer, ops), 'presentation'));
+  tools.set('xlsx.create', authoringCreate((args) => createXlsx({ title: args.title, sheets: args.sheets, author: args.author }), 'spreadsheet'));
+  tools.set('xlsx.edit', authoringEdit((buffer, ops) => editXlsx(buffer, ops), 'spreadsheet'));
+  // --- Media & multimodal ----------------------------------------------------
+  // media.probe is fully local (no provider): it inspects a workspace file and
+  // reports real container metadata. The remaining tools are provider-gated and
+  // fail closed with TOOL_CONNECTOR_NOT_CONFIGURED:<id> until an operator wires a
+  // provider; when one is present the call is real and the produced bytes are
+  // written into the workspace and recorded in the artifact ledger.
+  const writeMedia = async (context, bytes, targetPath, kind, mimeType) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, targetPath);
+    await mkdir(path.dirname(resolved), { recursive: true });
+    await writeFile(resolved, bytes);
+    const artifact = await recordArtifact(context, resolved, safe, kind, mimeType);
+    return { path: safe, bytes: bytes.length, mimeType: mimeType || guessMimeType(safe), artifact };
+  };
+  const extensionForMime = (mimeType, fallback) => {
+    const m = String(mimeType || '');
+    if (m.includes('wav')) return 'wav';
+    if (m.includes('mpeg')) return 'mp3';
+    if (m.includes('ogg')) return 'ogg';
+    if (m.includes('flac')) return 'flac';
+    if (m.includes('aac')) return 'aac';
+    if (m.includes('webm')) return 'webm';
+    if (m.includes('mp4')) return 'mp4';
+    return fallback;
+  };
+  tools.set('media.probe', async (args, context = {}) => {
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const bytes = await readFile(resolved);
+    return { output: { path: safe, ...probeMedia(bytes) } };
+  });
+  tools.set('media.analyze', async (args, context = {}) => {
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const bytes = await readFile(resolved);
+    const info = sniffMediaType(bytes);
+    if (info.kind === 'image') {
+      const provider = createVisionProvider();
+      if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:media.analyze');
+      if (bytes.length > 12 * 1024 * 1024) throw new Error('MEDIA_TOO_LARGE');
+      const result = await provider.analyze({ base64: bytes.toString('base64'), mimeType: info.mimeType, prompt: args.prompt });
+      return { output: { path: safe, kind: info.kind, format: info.format, analysis: result.text, provider: result.provider, model: result.model, usage: result.usage } };
+    }
+    const provider = createMediaAnalysisProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:media.analyze');
+    if (bytes.length > 64 * 1024 * 1024) throw new Error('MEDIA_TOO_LARGE');
+    const result = await provider.analyze({ base64: bytes.toString('base64'), mimeType: info.mimeType, kind: info.kind, prompt: args.prompt });
+    return { output: { path: safe, kind: info.kind, format: info.format, analysis: result.text, provider: result.provider, model: result.model, usage: result.usage } };
+  });
+  tools.set('speech.transcribe', async (args, context = {}) => {
+    const provider = createSpeechToTextProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:speech.transcribe');
+    const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
+    const bytes = await readFile(resolved);
+    if (bytes.length > 24 * 1024 * 1024) throw new Error('AUDIO_TOO_LARGE');
+    const info = sniffMediaType(bytes);
+    const result = await provider.transcribe({ base64: bytes.toString('base64'), mimeType: info.kind === 'unknown' ? 'audio/wav' : info.mimeType, language: args.language, prompt: args.prompt });
+    return { output: { path: safe, text: result.text, provider: result.provider, model: result.model, language: result.language, duration: result.duration } };
+  });
+  tools.set('speech.synthesize', async (args, context = {}) => {
+    const provider = createTextToSpeechProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:speech.synthesize');
+    const result = await provider.synthesize({ text: bounded(args.text, 20000, 'TEXT'), voice: args.voice, format: args.format });
+    const bytes = Buffer.from(result.base64, 'base64');
+    const ext = extensionForMime(result.mimeType, 'mp3');
+    const target = args.path || `generated/speech-${Date.now()}.${ext}`;
+    const output = await writeMedia(context, bytes, target, 'audio', result.mimeType);
+    return { output: { ...output, provider: result.provider, model: result.model } };
+  });
+  tools.set('video.generate', async (args, context = {}) => {
+    const provider = createVideoProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:video.generate');
+    const result = await provider.generate({ prompt: bounded(args.prompt, 10000, 'PROMPT'), durationSeconds: args.durationSeconds });
+    const bytes = Buffer.from(result.base64, 'base64');
+    const info = sniffMediaType(bytes);
+    const ext = info.extension === 'bin' ? extensionForMime(result.mimeType, 'mp4') : info.extension;
+    const target = args.path || `generated/video-${Date.now()}.${ext}`;
+    const output = await writeMedia(context, bytes, target, 'video', info.kind === 'unknown' ? result.mimeType : info.mimeType);
+    return { output: { ...output, provider: result.provider, model: result.model } };
+  });
+  tools.set('audio.generate', async (args, context = {}) => {
+    const provider = createAudioProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:audio.generate');
+    const result = await provider.generate({ prompt: bounded(args.prompt, 10000, 'PROMPT'), durationSeconds: args.durationSeconds });
+    const bytes = Buffer.from(result.base64, 'base64');
+    const info = sniffMediaType(bytes);
+    const ext = info.extension === 'bin' ? extensionForMime(result.mimeType, 'mp3') : info.extension;
+    const target = args.path || `generated/audio-${Date.now()}.${ext}`;
+    const output = await writeMedia(context, bytes, target, 'audio', info.kind === 'unknown' ? result.mimeType : info.mimeType);
+    return { output: { ...output, provider: result.provider, model: result.model } };
+  });
   // Plugin / extension tools registered at runtime (backend/tools/plugins.mjs).
   // They live in their own map so they can never overwrite a first-party tool id,
   // and they are merged into the definition view the runtime plans against.
@@ -585,6 +770,11 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
         ['discord.post', { ok: connectors.discord, reason: 'discord_provider_not_configured' }],
         ['notion.page.create', { ok: connectors.notion, reason: 'notion_provider_not_configured' }],
         ['webhook.post', { ok: connectors.webhook, reason: 'webhook_provider_not_configured' }],
+        ['media.analyze', { ok: connectors.vision || connectors.mediaAnalysis, reason: 'media_provider_not_configured' }],
+        ['speech.transcribe', { ok: connectors.stt, reason: 'stt_provider_not_configured' }],
+        ['speech.synthesize', { ok: connectors.tts, reason: 'tts_provider_not_configured' }],
+        ['video.generate', { ok: connectors.video, reason: 'video_provider_not_configured' }],
+        ['audio.generate', { ok: connectors.audio, reason: 'audio_provider_not_configured' }],
       ]);
       // GitHub tools are ready when an operator token exists or any tenant has a
       // stored (encrypted) connection; otherwise they report unwired.
