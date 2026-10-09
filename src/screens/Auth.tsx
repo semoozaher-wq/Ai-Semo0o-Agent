@@ -17,6 +17,12 @@ type Mode = 'login' | 'register';
  * The private-app gate. Rendered INSTEAD of the application whenever there is no
  * live session, so an unauthorised visitor who has the URL only ever sees this
  * screen — never a dashboard, a store, or any agent surface.
+ *
+ * Registration is offered ONLY when the deployment actually accepts self-service
+ * sign-ups (open registration or a shared access key). When the deployment is
+ * fully closed, the register affordance is removed entirely instead of leaving a
+ * button that can only fail at the server — the visitor is told how to obtain
+ * access (an invitation from the operator).
  */
 export function Auth() {
   const theme = useTheme();
@@ -25,8 +31,11 @@ export function Auth() {
   const error = useAuthStore((s) => s.error);
   const busy = useAuthStore((s) => s.busy);
   const mfaRequired = useAuthStore((s) => s.mfaRequired);
+  const pendingVerificationEmail = useAuthStore((s) => s.pendingVerificationEmail);
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
+  const verifyEmail = useAuthStore((s) => s.verifyEmail);
+  const cancelVerification = useAuthStore((s) => s.cancelVerification);
   const refreshPolicy = useAuthStore((s) => s.refreshPolicy);
   const clearError = useAuthStore((s) => s.clearError);
 
@@ -36,11 +45,21 @@ export function Auth() {
   const [tenantName, setTenantName] = React.useState('');
   const [accessKey, setAccessKey] = React.useState('');
   const [mfaCode, setMfaCode] = React.useState('');
+  const [verifyToken, setVerifyToken] = React.useState('');
 
   React.useEffect(() => { void refreshPolicy(); }, [refreshPolicy]);
 
+  // Fail-closed until the policy is known: only show the register affordance once
+  // the server has confirmed that self-service sign-up is actually possible.
+  const policyKnown = policy !== null;
   const requiresAccessKey = policy?.registration.requiresAccessKey ?? false;
-  const registrationOpen = policy?.registration.open ?? true;
+  const registrationOpen = policy?.registration.open ?? false;
+
+  // If the deployment turns out to be closed, never leave the user stranded on a
+  // register form that cannot succeed.
+  React.useEffect(() => {
+    if (policyKnown && !registrationOpen && mode === 'register') setMode('login');
+  }, [policyKnown, registrationOpen, mode]);
 
   const submit = async () => {
     clearError();
@@ -57,6 +76,15 @@ export function Auth() {
   };
 
   const switchMode = (next: Mode) => { clearError(); setMode(next); };
+
+  // The register tab is rendered only when sign-up is genuinely available.
+  const modes: Mode[] = registrationOpen ? ['login', 'register'] : ['login'];
+
+  const submitDisabled =
+    !email.trim() ||
+    password.length < 1 ||
+    (mode === 'register' && !registrationOpen) ||
+    (mode === 'register' && requiresAccessKey && !accessKey.trim());
 
   return (
     <KeyboardAvoidingView
@@ -79,31 +107,80 @@ export function Auth() {
           </Text>
         </View>
 
+        {pendingVerificationEmail ? (
+          <Card style={{ marginTop: theme.spacing['2xl'] }}>
+            <View style={styles.heroWrap}>
+              <Icon name="mail-unread-outline" size={30} tone="primary" />
+              <Text variant="title" weight="bold" align="center" style={{ marginTop: theme.spacing.sm }}>
+                تأكيد البريد الإلكتروني
+              </Text>
+              <Text variant="caption" tone="muted" align="center" style={{ marginTop: theme.spacing.xs }}>
+                أُنشئ حساب {pendingVerificationEmail}. أدخل رمز التأكيد الذي وصلك لإكمال التفعيل ثم سجّل الدخول.
+              </Text>
+            </View>
+            <View style={{ marginTop: theme.spacing.xl, gap: theme.spacing.md }}>
+              <Input
+                label="رمز التأكيد"
+                icon="key-outline"
+                value={verifyToken}
+                onChangeText={setVerifyToken}
+                autoCapitalize="none"
+                placeholder="ألصق رمز التأكيد هنا"
+                editable={!busy}
+              />
+            </View>
+            {error ? (
+              <View style={[styles.error, { backgroundColor: theme.colors.dangerSoft, borderRadius: theme.radius.lg, marginTop: theme.spacing.lg }]}>
+                <Icon name="alert-circle-outline" size={18} tone="danger" />
+                <Text tone="danger" style={{ flex: 1, marginStart: theme.spacing.sm }}>{error}</Text>
+              </View>
+            ) : null}
+            <Button
+              label="تأكيد البريد"
+              icon="checkmark-circle-outline"
+              onPress={() => { void verifyEmail(verifyToken); }}
+              loading={busy}
+              disabled={!verifyToken.trim()}
+              fullWidth
+              size="lg"
+              style={{ marginTop: theme.spacing.xl }}
+            />
+            <Button
+              label="العودة لتسجيل الدخول"
+              variant="ghost"
+              onPress={() => { setVerifyToken(''); cancelVerification(); }}
+              fullWidth
+              style={{ marginTop: theme.spacing.sm }}
+            />
+          </Card>
+        ) : (
         <Card style={{ marginTop: theme.spacing['2xl'] }}>
-          <View style={[styles.segment, { backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radius.pill, padding: 4 }]}>
-            {(['login', 'register'] as Mode[]).map((item) => {
-              const active = mode === item;
-              return (
-                <Pressable
-                  key={item}
-                  onPress={() => switchMode(item)}
-                  style={[
-                    styles.segmentItem,
-                    {
-                      borderRadius: theme.radius.pill,
-                      backgroundColor: active ? theme.colors.primary : 'transparent',
-                    },
-                  ]}
-                >
-                  <Text weight="semibold" align="center" style={{ color: active ? theme.colors.onPrimary : theme.colors.textMuted }}>
-                    {item === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {modes.length > 1 ? (
+            <View style={[styles.segment, { backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radius.pill, padding: 4 }]}>
+              {modes.map((item) => {
+                const active = mode === item;
+                return (
+                  <Pressable
+                    key={item}
+                    onPress={() => switchMode(item)}
+                    style={[
+                      styles.segmentItem,
+                      {
+                        borderRadius: theme.radius.pill,
+                        backgroundColor: active ? theme.colors.primary : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text weight="semibold" align="center" style={{ color: active ? theme.colors.onPrimary : theme.colors.textMuted }}>
+                      {item === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
 
-          <View style={{ marginTop: theme.spacing.xl, gap: theme.spacing.md }}>
+          <View style={{ marginTop: modes.length > 1 ? theme.spacing.xl : 0, gap: theme.spacing.md }}>
             <Input
               label="البريد الإلكتروني"
               icon="mail-outline"
@@ -125,7 +202,7 @@ export function Auth() {
               placeholder="12 حرفًا على الأقل"
               editable={!busy}
             />
-            {mode === 'register' ? (
+            {mode === 'register' && registrationOpen ? (
               <>
                 <Input
                   label="اسم مساحة العمل (اختياري)"
@@ -170,12 +247,17 @@ export function Auth() {
             </View>
           ) : null}
 
-          {mode === 'register' && !registrationOpen ? (
-            <View style={[styles.error, { backgroundColor: theme.colors.warningSoft, borderRadius: theme.radius.lg, marginTop: theme.spacing.lg }]}>
+          {policyKnown && !registrationOpen ? (
+            <View style={[styles.notice, { backgroundColor: theme.colors.warningSoft, borderRadius: theme.radius.lg, marginTop: theme.spacing.lg }]}>
               <Icon name="lock-closed-outline" size={18} tone="warning" />
-              <Text tone="warning" style={{ flex: 1, marginStart: theme.spacing.sm }}>
-                التسجيل الذاتي مغلق في هذا النشر. اطلب دعوة من مسؤول النظام.
-              </Text>
+              <View style={{ flex: 1, marginStart: theme.spacing.sm, gap: 4 }}>
+                <Text tone="warning" weight="semibold">
+                  هذا نشر خاص — التسجيل الذاتي مُغلق.
+                </Text>
+                <Text tone="warning" variant="caption">
+                  لا يمكن إنشاء حساب من هنا. للحصول على حساب، اطلب دعوة من مسؤول النظام.
+                </Text>
+              </View>
             </View>
           ) : null}
 
@@ -184,12 +266,13 @@ export function Auth() {
             icon="log-in-outline"
             onPress={submit}
             loading={busy || status === 'loading'}
-            disabled={!email.trim() || password.length < 1 || (mode === 'register' && requiresAccessKey && !accessKey.trim())}
+            disabled={submitDisabled}
             fullWidth
             size="lg"
             style={{ marginTop: theme.spacing.xl }}
           />
         </Card>
+        )}
 
         <View style={[styles.footer, { marginTop: theme.spacing.xl }]}>
           <Icon name="shield-checkmark" size={16} tone="subtle" />
@@ -210,5 +293,6 @@ const styles = StyleSheet.create({
   segment: { flexDirection: 'row' },
   segmentItem: { flex: 1, paddingVertical: 10 },
   error: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', padding: 12 },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
 });
