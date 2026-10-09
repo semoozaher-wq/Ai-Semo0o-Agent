@@ -16,6 +16,8 @@ export interface InputProps extends TextInputProps {
   icon?: IconName;
   error?: string;
   hint?: string;
+  /** Optional trailing accessory (e.g. a password visibility toggle). */
+  right?: React.ReactNode;
   containerStyle?: StyleProp<ViewStyle>;
 }
 
@@ -24,6 +26,7 @@ export function Input({
   icon,
   error,
   hint,
+  right,
   containerStyle,
   style,
   ...rest
@@ -81,6 +84,7 @@ export function Input({
             style,
           ]}
         />
+        {right ? <View style={{ marginStart: theme.spacing.sm }}>{right}</View> : null}
       </View>
       {error ? (
         <Text variant="caption" tone="danger" style={{ marginTop: 4 }}>

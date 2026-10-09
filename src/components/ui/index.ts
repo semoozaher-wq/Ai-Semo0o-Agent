@@ -1,6 +1,8 @@
 export * from './Text';
 export * from './Gradient';
 export * from './Icon';
+export * from './IconButton';
+export * from './Logo';
 export * from './Screen';
 export * from './Card';
 export * from './Button';
@@ -12,3 +14,6 @@ export * from './Progress';
 export * from './Skeleton';
 export * from './Divider';
 export * from './Rating';
+export * from './SegmentedControl';
+export * from './Sheet';
+export * from './Accordion';

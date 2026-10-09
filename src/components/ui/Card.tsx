@@ -6,7 +6,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { GradientName, useTheme } from '../../theme';
+import { ElevationLevel, GradientName, shadow, useTheme } from '../../theme';
 import { Gradient } from './Gradient';
 
 export interface CardProps {
@@ -17,6 +17,10 @@ export interface CardProps {
   gradient?: GradientName | undefined;
   accent?: string | undefined;
   bordered?: boolean | undefined;
+  /** Optional drop shadow level. Defaults to none (flat). */
+  elevation?: ElevationLevel | undefined;
+  /** Frosted-glass surface (uses the theme glass token). */
+  glass?: boolean | undefined;
 }
 
 export function Card({
@@ -27,6 +31,8 @@ export function Card({
   gradient,
   accent,
   bordered = true,
+  elevation = 'none',
+  glass = false,
 }: CardProps) {
   const theme = useTheme();
 
@@ -36,11 +42,12 @@ export function Card({
       borderRadius: theme.radius.xl,
       padding: padded ? theme.spacing.lg : 0,
       borderWidth: bordered ? StyleSheet.hairlineWidth : 0,
-      borderColor: accent ?? theme.colors.border,
+      borderColor: accent ?? (glass ? theme.colors.glassBorder : theme.colors.border),
     },
     !gradient && {
-      backgroundColor: theme.colors.surface,
+      backgroundColor: glass ? theme.colors.glass : theme.colors.surface,
     },
+    elevation !== 'none' && shadow(elevation, theme.colors.shadow),
     style,
   ];
 
