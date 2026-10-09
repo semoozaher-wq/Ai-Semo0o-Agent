@@ -11,12 +11,19 @@ interface TabDef {
   icon: IconName;
 }
 
+/**
+ * Primary navigation for the agent platform. The five surfaces are the working
+ * set of an autonomous-agent product: the command center, the agent catalogue
+ * + task engine, the chat surface, the creation studio and the operations
+ * console. There is intentionally no "store" tab — the app is a platform, not a
+ * shop.
+ */
 const TABS: TabDef[] = [
   { name: 'index', title: 'الرئيسية', icon: 'grid-outline' },
-  { name: 'store', title: 'المتجر', icon: 'storefront-outline' },
-  { name: 'chat', title: 'المحادثة', icon: 'chatbubbles-outline' },
   { name: 'agents', title: 'الوكلاء', icon: 'rocket-outline' },
-  { name: 'files', title: 'الملفات', icon: 'folder-open-outline' },
+  { name: 'chat', title: 'المحادثة', icon: 'chatbubbles-outline' },
+  { name: 'studio', title: 'الاستوديو', icon: 'sparkles-outline' },
+  { name: 'operations', title: 'العمليات', icon: 'pulse-outline' },
 ];
 
 export default function TabsLayout() {
