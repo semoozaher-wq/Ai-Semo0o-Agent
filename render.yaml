@@ -82,6 +82,11 @@ services:
       # Optionally withhold the session until the email address is verified.
       # - key: REQUIRE_EMAIL_VERIFICATION
       #   value: "true"
+      #
+      # FIRST ACCOUNT: with sign-up closed and no APP_ACCESS_KEY there is no HTTP
+      # way in (by design). Create the first owner from the Render Shell:
+      #   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-passphrase' \
+      #     npm run create:admin
 
       # -----------------------------------------------------------------------
       # LLM PROVIDERS
