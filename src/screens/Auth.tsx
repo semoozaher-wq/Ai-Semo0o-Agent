@@ -56,14 +56,13 @@ export function Auth() {
   const registrationOpen = policy?.registration.open ?? false;
 
   // If the deployment turns out to be closed, never leave the user stranded on a
-  // register form that cannot succeed.
-  React.useEffect(() => {
-    if (policyKnown && !registrationOpen && mode === 'register') setMode('login');
-  }, [policyKnown, registrationOpen, mode]);
+  // register form that cannot succeed. This is DERIVED rather than forced through
+  // an effect, so there is no cascading render and no flash of an unusable form.
+  const activeMode: Mode = policyKnown && !registrationOpen && mode === 'register' ? 'login' : mode;
 
   const submit = async () => {
     clearError();
-    if (mode === 'login') {
+    if (activeMode === 'login') {
       await login({ email: email.trim(), password, ...(mfaRequired && mfaCode ? { mfaCode: mfaCode.trim() } : {}) });
     } else {
       await register({
@@ -83,8 +82,8 @@ export function Auth() {
   const submitDisabled =
     !email.trim() ||
     password.length < 1 ||
-    (mode === 'register' && !registrationOpen) ||
-    (mode === 'register' && requiresAccessKey && !accessKey.trim());
+    (activeMode === 'register' && !registrationOpen) ||
+    (activeMode === 'register' && requiresAccessKey && !accessKey.trim());
 
   return (
     <KeyboardAvoidingView
@@ -158,7 +157,7 @@ export function Auth() {
           {modes.length > 1 ? (
             <View style={[styles.segment, { backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radius.pill, padding: 4 }]}>
               {modes.map((item) => {
-                const active = mode === item;
+                const active = activeMode === item;
                 return (
                   <Pressable
                     key={item}
@@ -202,7 +201,7 @@ export function Auth() {
               placeholder="12 حرفًا على الأقل"
               editable={!busy}
             />
-            {mode === 'register' && registrationOpen ? (
+            {activeMode === 'register' && registrationOpen ? (
               <>
                 <Input
                   label="اسم مساحة العمل (اختياري)"
@@ -226,7 +225,7 @@ export function Auth() {
                 ) : null}
               </>
             ) : null}
-            {mode === 'login' && mfaRequired ? (
+            {activeMode === 'login' && mfaRequired ? (
               <Input
                 label="رمز المصادقة الثنائية"
                 icon="shield-checkmark-outline"
@@ -262,7 +261,7 @@ export function Auth() {
           ) : null}
 
           <Button
-            label={mode === 'login' ? 'دخول' : 'إنشاء الحساب'}
+            label={activeMode === 'login' ? 'دخول' : 'إنشاء الحساب'}
             icon="log-in-outline"
             onPress={submit}
             loading={busy || status === 'loading'}
