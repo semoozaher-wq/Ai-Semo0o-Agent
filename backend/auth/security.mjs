@@ -34,9 +34,12 @@ export function createSession(db, userId) {
   db.run('INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)', id('session'), userId, hash(raw), expires, now());
   return { token: raw, expiresAt: expires };
 }
-export function authenticate(db, email, password, mfaCode) {
+export function authenticate(db, email, password, mfaCode, options = {}) {
   const user = db.get('SELECT * FROM users WHERE lower(email)=lower(?)', email);
   if (!user || !verifyPassword(password, user.password_hash)) throw new Error('INVALID_CREDENTIALS');
+  // Fail-closed verification: when the deployment requires a verified address,
+  // an unverified account cannot obtain a session even with the right password.
+  if (options.requireEmailVerification && !user.email_verified_at) throw new Error('EMAIL_VERIFICATION_REQUIRED');
   if (user.mfa_enabled) {
     if (typeof mfaCode !== 'string' || !mfaCode) throw new Error('MFA_REQUIRED');
     if (!verifyMfa(db, user.id, mfaCode)) throw new Error('MFA_CODE_INVALID');
