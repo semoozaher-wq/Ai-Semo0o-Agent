@@ -248,13 +248,29 @@ export interface ApiCreationJobInput {
   model?: string;
 }
 
-type StoredBootstrap = { email: string; password: string };
+const SESSION_STORAGE_KEY = 'semo0o.backend.session';
 
-function randomSecret(): string {
-  const bytes = new Uint8Array(24);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
-  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
-  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+/**
+ * Session token persistence. The token (never the password) is kept so a
+ * returning, already-authorised user stays signed in across reloads. Web uses
+ * localStorage; native uses the OS keychain via SecureStore.
+ */
+async function readStoredToken(): Promise<string | null> {
+  try {
+    if (Platform.OS === 'web') return globalThis.localStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
+    return await SecureStore.getItemAsync(SESSION_STORAGE_KEY);
+  } catch { return null; }
+}
+async function writeStoredToken(token: string | null): Promise<void> {
+  try {
+    if (Platform.OS === 'web') {
+      if (token) globalThis.localStorage?.setItem(SESSION_STORAGE_KEY, token);
+      else globalThis.localStorage?.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    if (token) await SecureStore.setItemAsync(SESSION_STORAGE_KEY, token, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
+    else await SecureStore.deleteItemAsync(SESSION_STORAGE_KEY);
+  } catch { /* keep the in-memory session if secure persistence is unavailable */ }
 }
 
 class BackendApiClient {
@@ -262,23 +278,14 @@ class BackendApiClient {
   private user: ApiUser | null = null;
   constructor(private readonly baseUrl = resolveBackendUrl()) {}
   get enabled(): boolean { return Boolean(this.baseUrl); }
-  setSession(session: ApiSession | null, user?: ApiUser): void { this.token = session?.token ?? null; if (user) this.user = user; }
-  clearSession(): void { this.token = null; this.user = null; }
-  private async storedCredentials(): Promise<StoredBootstrap | null> {
-    try {
-      const raw = Platform.OS === 'web'
-        ? globalThis.sessionStorage?.getItem('semo0o.backend.bootstrap')
-        : await SecureStore.getItemAsync('semo0o.backend.bootstrap');
-      return raw ? JSON.parse(raw) as StoredBootstrap : null;
-    } catch { return null; }
+  get currentUser(): ApiUser | null { return this.user; }
+  get authenticated(): boolean { return Boolean(this.token && this.user); }
+  setSession(session: ApiSession | null, user?: ApiUser): void {
+    this.token = session?.token ?? null;
+    if (user) this.user = user;
+    void writeStoredToken(this.token);
   }
-  private async saveCredentials(value: StoredBootstrap): Promise<void> {
-    try {
-      const raw = JSON.stringify(value);
-      if (Platform.OS === 'web') globalThis.sessionStorage?.setItem('semo0o.backend.bootstrap', raw);
-      else await SecureStore.setItemAsync('semo0o.backend.bootstrap', raw, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
-    } catch { /* keep an in-memory session if secure persistence is unavailable */ }
-  }
+  clearSession(): void { this.token = null; this.user = null; void writeStoredToken(null); }
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
@@ -297,26 +304,42 @@ class BackendApiClient {
     const body = await response.json().catch(() => ({}));
     return { status: response.status, body: body as T };
   }
-  async ensureSession(): Promise<ApiUser> {
+  /**
+   * Cold-start session restore. Loads the persisted token and validates it
+   * against the server (`GET /auth/session`). Returns the user for a live
+   * session, or null when there is none/expired. NEVER creates an account —
+   * the previous device auto-registration backdoor is gone.
+   */
+  async restoreSession(): Promise<ApiUser | null> {
     if (this.token && this.user) return this.user;
-    const configured: StoredBootstrap | null = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_AGENT_EMAIL && process.env.EXPO_PUBLIC_AGENT_PASSWORD
-      ? { email: process.env.EXPO_PUBLIC_AGENT_EMAIL, password: process.env.EXPO_PUBLIC_AGENT_PASSWORD }
-      : null;
-    const saved = configured ?? await this.storedCredentials();
-    const credentials = saved ?? { email: `device-${randomSecret().slice(0, 16)}@local.semo0o`, password: randomSecret() };
+    const stored = await readStoredToken();
+    if (!stored) return null;
+    this.token = stored;
     try {
-      const registered = await this.register({ ...credentials, tenantName: 'Semo0o Device Workspace' });
-      this.user = registered.user;
-      await this.saveCredentials(credentials);
-      return registered.user;
-    } catch (error) {
-      if (!String(error).includes('already') && !String(error).includes('UNIQUE')) throw error;
-      const loggedIn = await this.login(credentials);
-      this.user = loggedIn.user;
-      return loggedIn.user;
+      const { user } = await this.request<{ user: ApiUser }>('/auth/session');
+      this.user = user;
+      return user;
+    } catch {
+      this.clearSession();
+      return null;
     }
   }
-  async register(input: { email: string; password: string; tenantName?: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/register', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session, value.user); return value; }
+  /** Returns the authenticated user or throws AUTH_REQUIRED (gate enforcement). */
+  async requireSession(): Promise<ApiUser> {
+    if (this.token && this.user) return this.user;
+    const restored = await this.restoreSession();
+    if (!restored) throw new Error('AUTH_REQUIRED');
+    return restored;
+  }
+  /** Secret-free view of the deployment's enrolment gate (access key, open sign-up). */
+  async getAccessPolicy(): Promise<{ private: boolean; registration: { open: boolean; requiresAccessKey: boolean; requiresEmailVerification: boolean } }> {
+    return this.request('/auth/policy');
+  }
+  async register(input: { email: string; password: string; tenantName?: string; accessKey?: string }): Promise<{ user: ApiUser; session: ApiSession | null; verificationRequired?: boolean }> {
+    const value = await this.request<{ user: ApiUser; session: ApiSession | null; verificationRequired?: boolean }>('/auth/register', { method: 'POST', body: JSON.stringify(input) });
+    if (value.session) this.setSession(value.session, value.user);
+    return value;
+  }
   async login(input: { email: string; password: string; mfaCode?: string }): Promise<{ user: ApiUser; session: ApiSession }> { const value = await this.request<{ user: ApiUser; session: ApiSession }>('/auth/login', { method: 'POST', body: JSON.stringify(input) }); this.setSession(value.session, value.user); return value; }
   async logout(): Promise<void> { await this.request('/auth/logout', { method: 'POST' }); this.clearSession(); }
   async verifyEmail(token: string): Promise<Record<string, unknown>> { return this.request('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }); }
