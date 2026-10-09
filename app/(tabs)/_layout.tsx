@@ -9,6 +9,7 @@ interface TabDef {
   name: string;
   title: string;
   icon: IconName;
+  iconActive: IconName;
 }
 
 /**
@@ -19,11 +20,11 @@ interface TabDef {
  * shop.
  */
 const TABS: TabDef[] = [
-  { name: 'index', title: 'الرئيسية', icon: 'grid-outline' },
-  { name: 'agents', title: 'الوكلاء', icon: 'rocket-outline' },
-  { name: 'chat', title: 'المحادثة', icon: 'chatbubbles-outline' },
-  { name: 'studio', title: 'الاستوديو', icon: 'sparkles-outline' },
-  { name: 'operations', title: 'العمليات', icon: 'pulse-outline' },
+  { name: 'index', title: 'الرئيسية', icon: 'grid-outline', iconActive: 'grid' },
+  { name: 'agents', title: 'الوكلاء', icon: 'rocket-outline', iconActive: 'rocket' },
+  { name: 'chat', title: 'المحادثة', icon: 'chatbubbles-outline', iconActive: 'chatbubbles' },
+  { name: 'studio', title: 'الاستوديو', icon: 'sparkles-outline', iconActive: 'sparkles' },
+  { name: 'operations', title: 'العمليات', icon: 'pulse-outline', iconActive: 'pulse' },
 ];
 
 export default function TabsLayout() {
@@ -35,6 +36,7 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: theme.colors.textSubtle,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: theme.colors.backgroundElevated,
           borderTopColor: theme.colors.border,
@@ -52,8 +54,12 @@ export default function TabsLayout() {
           name={tab.name}
           options={{
             title: tab.title,
-            tabBarIcon: ({ color, size }) => (
-              <Icon name={tab.icon} size={size} color={color as string} />
+            tabBarIcon: ({ color, size, focused }) => (
+              <Icon
+                name={focused ? tab.iconActive : tab.icon}
+                size={size}
+                color={color as string}
+              />
             ),
           }}
         />
