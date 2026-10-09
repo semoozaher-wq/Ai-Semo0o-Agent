@@ -83,8 +83,21 @@ services:
       # - key: REQUIRE_EMAIL_VERIFICATION
       #   value: "true"
       #
-      # FIRST ACCOUNT: with sign-up closed and no APP_ACCESS_KEY there is no HTTP
-      # way in (by design). Create the first owner from the Render Shell:
+      # FIRST ACCOUNT (bootstrap) — pick ONE of these two options:
+      #
+      # Option A (recommended, no Shell needed): set BOTH of these in the Render
+      # Dashboard. On the next boot, if — and only if — the database has NO
+      # accounts yet, the first owner is created automatically and marked
+      # verified. It is a strict no-op once any account exists, so leaving them
+      # set is harmless. Remove them after the first successful boot.
+      #
+      # - key: BOOTSTRAP_ADMIN_EMAIL
+      #   sync: false
+      # - key: BOOTSTRAP_ADMIN_PASSWORD   # >= 12 chars
+      #   sync: false
+      #
+      # Option B (Render Shell): with sign-up closed and no APP_ACCESS_KEY there
+      # is no HTTP way in (by design). Create the first owner from the Shell:
       #   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-passphrase' \
       #     npm run create:admin
 
