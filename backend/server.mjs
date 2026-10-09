@@ -1410,14 +1410,33 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   }
   // Optional OWNER RECOVERY from protected env vars (no Shell required). Strictly
   // existing-account-only, owner-only, and one-time; a no-op unless configured.
-  // Never logs the password. A half-configured request fails closed.
+  // Never logs the password.
+  //
+  // This is an OPTIONAL, out-of-band tool, so a misconfiguration must NEVER take
+  // the server down: it logs and continues instead of exiting. Disable it at any
+  // time by setting RECOVERY_DISABLED=true, or simply by removing the secret
+  // (RECOVERY_ADMIN_PASSWORD) — leaving RECOVERY_ADMIN_EMAIL behind is safe.
   try {
     const recovery = recoverOwner(db, process.env);
-    if (recovery.applied) console.log(`[RECOVERY] Owner password reset for ${recovery.email}; revoked ${recovery.sessionsRevoked} session(s).`);
-    else if (recovery.reason && recovery.reason !== 'NOT_CONFIGURED') console.log(`[RECOVERY] Skipped (${recovery.reason}).`);
+    if (recovery.applied) {
+      console.log(`[RECOVERY] Owner password reset for ${recovery.email}; revoked ${recovery.sessionsRevoked} session(s).`);
+    } else if (recovery.reason === 'NOT_CONFIGURED' || recovery.reason === 'DISABLED') {
+      // Expected quiet states: nothing configured, or explicitly disabled.
+    } else if (recovery.reason === 'ALREADY_APPLIED') {
+      console.log('[RECOVERY] Skipped: this recovery was already applied (one-time).');
+    } else {
+      console.warn(`[RECOVERY] Skipped (${recovery.reason}${recovery.detail ? `: ${recovery.detail}` : ''}); recovery did NOT run.`);
+    }
   } catch (error) {
-    console.error(`[RECOVERY] Failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    // Defensive: recoverOwner is designed not to throw, but an optional recovery
+    // must never prevent the server from starting.
+    console.error(`[RECOVERY] Unexpected error (ignored): ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // Device approval is BACKEND-ONLY and NOT production-ready: the client does not
+  // yet send a deviceId or handle the 202 response, so enabling it would block
+  // new-device logins. Warn loudly if an operator flips it on by mistake.
+  if (deviceApprovalRequired(process.env)) {
+    console.warn('[DEVICE-APPROVAL] WARNING: REQUIRE_DEVICE_APPROVAL is enabled, but the client does not yet send a deviceId or handle the 202 response. New-device logins WILL be blocked. This feature is NOT production-ready — leave REQUIRE_DEVICE_APPROVAL unset.');
   }
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db, engineAvailable: true }) });
   if (process.env.DISABLE_WORKER !== '1') { app.queue.start(); app.scheduler.start(); }
