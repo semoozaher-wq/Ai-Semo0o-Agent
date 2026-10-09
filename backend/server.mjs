@@ -3,10 +3,12 @@ import { access, mkdir, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { Database, id, now } from './db/client.mjs';
+import { Database, id, now, hash } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
 import { assertRegistrationAllowed, describeAccessPolicy, emailVerificationRequired } from './auth/access.mjs';
 import { bootstrapFirstOwner } from './auth/bootstrap.mjs';
+import { recoverOwner } from './auth/recovery.mjs';
+import { approveAccessRequest, approveDevice, checkDevice, completeAccessRequest, deviceApprovalRequired, listAccessRequests, listDevices, rejectAccessRequest, rejectDevice, requestAccess } from './auth/approvals.mjs';
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS, MISSED_RUN_POLICIES, isValidTimeZone } from './queue/scheduler.mjs';
@@ -474,7 +476,19 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'auth/login') {
         const input = await body(request);
-        return send(response, 200, authenticate(db, input.email, input.password, input.mfaCode, { requireEmailVerification: emailVerificationRequired(process.env) }));
+        const result = authenticate(db, input.email, input.password, input.mfaCode, { requireEmailVerification: emailVerificationRequired(process.env) });
+        // OPTIONAL device approval (OFF by default, so ordinary logins are never
+        // gated). When enabled, a login from a device this account has not been
+        // seen on is parked for owner approval and the freshly-minted session is
+        // revoked immediately, so no usable token exists before approval.
+        if (deviceApprovalRequired(process.env)) {
+          const check = checkDevice(db, { userId: result.user.id, deviceId: input.deviceId, label: input.deviceLabel });
+          if (!check.trusted) {
+            db.run('UPDATE sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL', now(), hash(result.session.token));
+            return send(response, 202, { deviceApprovalRequired: true, deviceRequestId: check.requestId, reason: check.reason });
+          }
+        }
+        return send(response, 200, result);
       }
       if (method === 'POST' && parts.join('/') === 'auth/verify-email') {
         const input = await body(request); return send(response, 200, { user: verifyEmail(db, validateText(input.token, 'TOKEN', 256)) });
@@ -492,6 +506,26 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'auth/reset-password') {
         const input = await body(request); resetPassword(db, validateText(input.token, 'TOKEN', 256), input.password, passwordHash); return send(response, 200, { ok: true });
+      }
+      // --- Owner-approved access (public, opt-in) --------------------------
+      // A request only records intent: it never creates an account and never
+      // issues a session. The endpoint is closed unless ALLOW_ACCESS_REQUESTS is
+      // enabled, and it always answers 202 with a generic body so it cannot be
+      // used to enumerate accounts or pending requests.
+      if (method === 'POST' && parts.join('/') === 'access/request') {
+        const input = await body(request);
+        try {
+          requestAccess(db, input, process.env);
+        } catch (error) {
+          if (error.message === 'ACCESS_REQUESTS_DISABLED') throw error;
+          if (error.message !== 'INVALID_REQUEST_EMAIL') throw error;
+        }
+        return send(response, 202, { accepted: true });
+      }
+      // Consume a one-time approval token and create the (member) account.
+      if (method === 'POST' && parts.join('/') === 'access/complete') {
+        const input = await body(request);
+        return send(response, 201, completeAccessRequest(db, { setupToken: input.setupToken, password: input.password }));
       }
       if (method === 'POST' && parts.join('/') === 'billing/webhook') {
         // Provider webhooks are unauthenticated but authenticated by HMAC signature
@@ -744,6 +778,40 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/setup') { return send(response, 200, enableMfa(db, user.id)); }
       if (method === 'POST' && parts.join('/') === 'auth/mfa/confirm') { const input = await body(request); return send(response, 200, confirmMfa(db, user.id, validateText(input.code, 'MFA_CODE', 6))); }
+      // --- Owner-approved access (owner-only decisions) --------------------
+      // Only an authenticated OWNER may list, approve, or reject. Admins cannot
+      // decide, and a requester (who has no account) can never self-approve. The
+      // API is Bearer-token based (no cookies), so these routes are not reachable
+      // by a cross-site form (no CSRF).
+      if (parts[0] === 'access' && parts[1] === 'requests') {
+        if (method === 'GET' && parts.length === 2) {
+          requireRole(user, ['owner']);
+          return send(response, 200, { requests: listAccessRequests(db, user.tenantId, { status: new URL(request.url, 'http://localhost').searchParams.get('status') || undefined }) });
+        }
+        if (method === 'POST' && parts.length === 4 && parts[3] === 'approve') {
+          requireRole(user, ['owner']);
+          return send(response, 200, approveAccessRequest(db, { tenantId: user.tenantId, requestId: parts[2], actorId: user.id }));
+        }
+        if (method === 'POST' && parts.length === 4 && parts[3] === 'reject') {
+          requireRole(user, ['owner']);
+          return send(response, 200, rejectAccessRequest(db, { tenantId: user.tenantId, requestId: parts[2], actorId: user.id }));
+        }
+      }
+      // --- Device trust (owner-only decisions, opt-in) ---------------------
+      if (parts[0] === 'devices') {
+        if (method === 'GET' && parts.length === 1) {
+          requireRole(user, ['owner']);
+          return send(response, 200, { devices: listDevices(db, user.tenantId, { status: new URL(request.url, 'http://localhost').searchParams.get('status') || undefined }) });
+        }
+        if (method === 'POST' && parts.length === 3 && parts[2] === 'approve') {
+          requireRole(user, ['owner']);
+          return send(response, 200, approveDevice(db, { tenantId: user.tenantId, deviceRequestId: parts[1], actorId: user.id }));
+        }
+        if (method === 'POST' && parts.length === 3 && parts[2] === 'reject') {
+          requireRole(user, ['owner']);
+          return send(response, 200, rejectDevice(db, { tenantId: user.tenantId, deviceRequestId: parts[1], actorId: user.id }));
+        }
+      }
       if (method === 'POST' && parts.join('/') === 'org/invitations') {
         requireRole(user, ['owner', 'admin']); const input = await body(request); const invite = createInvitation(db, { tenantId: user.tenantId, invitedBy: user.id, email: input.email, role: input.role || 'member' });
         const outbox = safeEnqueueEmail(db, { tenantId: user.tenantId, to: invite.email ?? input.email, template: 'invitation', body: `You have been invited to a Semo AI workspace. Accept with this token: ${invite.token}` });
@@ -1303,7 +1371,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','ACCESS_REQUESTS_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND','ACCESS_REQUEST_NOT_FOUND','DEVICE_REQUEST_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED','ACCESS_REQUEST_NOT_PENDING','ACCESS_REQUEST_EMAIL_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED','ACCESS_REQUEST_TOKEN_INVALID'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       if (status >= 500 && errorTracker) {
         // Fire-and-forget: reporting must never delay or break the response.
         Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
@@ -1338,6 +1406,17 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
     else if (boot.reason === 'USERS_EXIST') console.log('[BOOTSTRAP] Accounts already exist; skipping first-owner bootstrap.');
   } catch (error) {
     console.error(`[BOOTSTRAP] Failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  // Optional OWNER RECOVERY from protected env vars (no Shell required). Strictly
+  // existing-account-only, owner-only, and one-time; a no-op unless configured.
+  // Never logs the password. A half-configured request fails closed.
+  try {
+    const recovery = recoverOwner(db, process.env);
+    if (recovery.applied) console.log(`[RECOVERY] Owner password reset for ${recovery.email}; revoked ${recovery.sessionsRevoked} session(s).`);
+    else if (recovery.reason && recovery.reason !== 'NOT_CONFIGURED') console.log(`[RECOVERY] Skipped (${recovery.reason}).`);
+  } catch (error) {
+    console.error(`[RECOVERY] Failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
   const app = createApp({ db, liveTools: createLiveToolRegistry({ db, engineAvailable: true }) });
