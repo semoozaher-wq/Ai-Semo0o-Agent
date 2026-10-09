@@ -16,11 +16,14 @@
  * production database or the live Render deployment.
  */
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { Database, now } from '../db/client.mjs';
 import { createApp } from '../server.mjs';
 import { RunQueue } from '../queue/queue.mjs';
@@ -77,6 +80,99 @@ function withEnv(vars, fn) {
 }
 
 // ---------------------------------------------------------------------------
+// Real-boot harness: spawn the actual server process against a throwaway SQLite
+// file and drive it over HTTP. This is how we prove the boot path itself is safe
+// (a misconfigured recovery must never take the process down).
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function makeDbDir() {
+  return mkdtemp(path.join(os.tmpdir(), 'semo0o-boot-'));
+}
+
+/** Seed a real account into a throwaway database file, then close it. */
+function seedOwner(dbFile, { email, password, tenantName = 'Boot', role } = {}) {
+  const db = new Database(dbFile);
+  try {
+    const user = createUser(db, { email, password, tenantName });
+    if (role) db.run('UPDATE users SET role=? WHERE id=?', role, user.id);
+    return user;
+  } finally {
+    db.close();
+  }
+}
+
+async function bootServer({ dir, dbFile, env = {}, timeoutMs = 25_000 }) {
+  const port = await freePort();
+  const child = spawn(process.execPath, ['--experimental-sqlite', path.join(REPO_ROOT, 'backend', 'server.mjs')], {
+    cwd: REPO_ROOT,
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      NODE_ENV: 'development',
+      DISABLE_WORKER: '1',
+      DATABASE_FILE: dbFile,
+      PORT: String(port),
+      ...env,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let logs = '';
+  child.stdout.on('data', (chunk) => { logs += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { logs += chunk.toString(); });
+  let exited = null;
+  child.on('exit', (code, signal) => { exited = { code, signal }; });
+
+  const base = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + timeoutMs;
+  let up = false;
+  while (Date.now() < deadline) {
+    if (exited) break;
+    try {
+      const response = await fetch(`${base}/health`);
+      if (response.ok) { up = true; break; }
+    } catch { /* not listening yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  const request = async (route, options = {}) => {
+    const response = await fetch(`${base}${route}`, {
+      headers: { 'content-type': 'application/json', ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) },
+      method: options.method,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    return { status: response.status, body: await response.json().catch(() => ({})) };
+  };
+
+  // Kill only the process. The caller owns `dir` (it may boot the same database
+  // file again), so cleanup is a separate step.
+  const stop = async () => {
+    if (!exited) {
+      child.kill('SIGKILL');
+      await new Promise((resolve) => child.once('exit', resolve));
+    }
+  };
+
+  return { base, child, up, logs: () => logs, exited: () => exited, request, stop };
+}
+
+async function cleanup(dir) {
+  await rm(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // 1. Correct / incorrect login
 // ---------------------------------------------------------------------------
 
@@ -123,13 +219,79 @@ test('recovery refuses to escalate a non-owner account', () => {
   });
 });
 
-test('recovery fails closed on a half-configured or policy-violating request', () => {
+test('recovery is a SAFE no-op (never throws) on a half-configured or invalid request', () => {
   withDb((db) => {
-    assert.throws(() => recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'x@owner.test' }), /RECOVERY_ADMIN_PASSWORD_MISSING/);
-    assert.throws(() => recoverOwner(db, { RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD }), /RECOVERY_ADMIN_EMAIL_MISSING/);
-    assert.throws(() => recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'not-an-email', RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD }), /RECOVERY_ADMIN_EMAIL_INVALID/);
-    assert.throws(() => recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'x@owner.test', RECOVERY_ADMIN_PASSWORD: 'short' }), /PASSWORD_POLICY_FAILED/);
-    assert.equal(db.get('SELECT COUNT(*) AS n FROM users').n, 0, 'nothing written on failure');
+    // Removing the secret (RECOVERY_ADMIN_PASSWORD) while the email remains must
+    // NOT throw — this is the exact case that used to crash the server at boot.
+    const emailOnly = recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'x@owner.test' });
+    assert.equal(emailOnly.applied, false);
+    assert.equal(emailOnly.reason, 'PARTIAL_CONFIG');
+    assert.equal(emailOnly.detail, 'RECOVERY_ADMIN_PASSWORD_MISSING');
+
+    const passwordOnly = recoverOwner(db, { RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD });
+    assert.equal(passwordOnly.applied, false);
+    assert.equal(passwordOnly.reason, 'PARTIAL_CONFIG');
+    assert.equal(passwordOnly.detail, 'RECOVERY_ADMIN_EMAIL_MISSING');
+
+    const badEmail = recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'not-an-email', RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD });
+    assert.equal(badEmail.reason, 'EMAIL_INVALID');
+
+    const shortPassword = recoverOwner(db, { RECOVERY_ADMIN_EMAIL: 'x@owner.test', RECOVERY_ADMIN_PASSWORD: 'short' });
+    assert.equal(shortPassword.reason, 'PASSWORD_POLICY_FAILED');
+
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM users').n, 0, 'nothing written on a skipped recovery');
+    db.close();
+  });
+});
+
+test('RECOVERY_DISABLED is an explicit kill switch that wins over a full config', () => {
+  withDb((db) => {
+    const owner = createUser(db, { email: 'kill@owner.test', password: PASSWORD, tenantName: 'Kill' });
+    const result = recoverOwner(db, {
+      RECOVERY_DISABLED: 'true',
+      RECOVERY_ADMIN_EMAIL: 'kill@owner.test',
+      RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD,
+    });
+    assert.equal(result.applied, false);
+    assert.equal(result.reason, 'DISABLED');
+    // The old password is untouched.
+    assert.ok(authenticate(db, 'kill@owner.test', PASSWORD).session.token);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM recovery_consumed').n, 0);
+    assert.ok(owner.id);
+    db.close();
+  });
+});
+
+test('a failure during recovery rolls back atomically (no partial state)', () => {
+  withDb((db) => {
+    const owner = createUser(db, { email: 'atomic@owner.test', password: PASSWORD, tenantName: 'Atomic' });
+    const live = createSession(db, owner.id);
+
+    // Force the LAST write (the audit insert) to fail, after the password and
+    // session updates have already run inside the same transaction.
+    const failing = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'run') {
+          return (sql, ...params) => {
+            if (String(sql).includes('audit_logs')) throw new Error('SIMULATED_DB_FAILURE');
+            return target.run(sql, ...params);
+          };
+        }
+        const value = target[prop];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    const result = recoverOwner(failing, { RECOVERY_ADMIN_EMAIL: 'atomic@owner.test', RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD });
+    assert.equal(result.applied, false);
+    assert.equal(result.reason, 'APPLY_FAILED');
+
+    // Transaction integrity: NOTHING was committed.
+    assert.ok(authenticate(db, 'atomic@owner.test', PASSWORD).session.token, 'old password still works (rollback)');
+    assert.throws(() => authenticate(db, 'atomic@owner.test', NEW_PASSWORD), /INVALID_CREDENTIALS/);
+    assert.ok(authenticateToken(db, live.token), 'the session was NOT revoked (rollback)');
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM recovery_consumed').n, 0, 'no one-time marker was written');
+    assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_logs WHERE action='auth.owner_recovery'").n, 0, 'no audit row was written');
     db.close();
   });
 });
@@ -420,4 +582,70 @@ test('completeAccessRequest rejects an unknown or expired token', () => {
     assert.throws(() => completeAccessRequest(db, { setupToken: 'not-a-real-token', password: PASSWORD }), /ACCESS_REQUEST_TOKEN_INVALID/);
     db.close();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Real-boot recovery scenarios (spawn the actual server process)
+// ---------------------------------------------------------------------------
+
+test('boot stays healthy when the recovery secret is removed but the email remains', async () => {
+  const dir = await makeDbDir();
+  const dbFile = path.join(dir, 'agent.sqlite');
+  seedOwner(dbFile, { email: 'boot@owner.test', password: PASSWORD });
+  const server = await bootServer({ dir, dbFile, env: { RECOVERY_ADMIN_EMAIL: 'boot@owner.test' } });
+  try {
+    assert.equal(server.up, true, `server must stay up (the old bug crashed here). logs:\n${server.logs()}`);
+    assert.equal(server.exited(), null, 'the process must not exit');
+    assert.equal((await server.request('/health')).status, 200);
+    assert.match(server.logs(), /\[RECOVERY\] Skipped \(PARTIAL_CONFIG: RECOVERY_ADMIN_PASSWORD_MISSING\)/);
+  } finally { await server.stop(); await cleanup(dir); }
+});
+
+test('boot stays healthy when recovery is explicitly disabled', async () => {
+  const dir = await makeDbDir();
+  const dbFile = path.join(dir, 'agent.sqlite');
+  seedOwner(dbFile, { email: 'boot@owner.test', password: PASSWORD });
+  const server = await bootServer({ dir, dbFile, env: {
+    RECOVERY_DISABLED: 'true',
+    RECOVERY_ADMIN_EMAIL: 'boot@owner.test',
+    RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD,
+  } });
+  try {
+    assert.equal(server.up, true, server.logs());
+    assert.equal(server.exited(), null, 'the process must not exit');
+    assert.equal((await server.request('/health')).status, 200);
+    // Disabled wins: the old password is untouched and still works.
+    const old = await server.request('/auth/login', { method: 'POST', body: { email: 'boot@owner.test', password: PASSWORD } });
+    assert.equal(old.status, 200, 'disabled recovery never changes the password');
+  } finally { await server.stop(); await cleanup(dir); }
+});
+
+test('recovery applies on boot, then a reboot without the secret is a safe no-op', async () => {
+  const dir = await makeDbDir();
+  const dbFile = path.join(dir, 'agent.sqlite');
+  seedOwner(dbFile, { email: 'reboot@owner.test', password: PASSWORD });
+
+  // Boot 1 — armed: the password is reset once.
+  const first = await bootServer({ dir, dbFile, env: { RECOVERY_ADMIN_EMAIL: 'reboot@owner.test', RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD } });
+  try {
+    assert.equal(first.up, true, first.logs());
+    assert.match(first.logs(), /\[RECOVERY\] Owner password reset for reboot@owner\.test/);
+    assert.equal((await first.request('/auth/login', { method: 'POST', body: { email: 'reboot@owner.test', password: NEW_PASSWORD } })).status, 200);
+    assert.equal((await first.request('/auth/login', { method: 'POST', body: { email: 'reboot@owner.test', password: PASSWORD } })).status, 401);
+  } finally { await first.stop(); }
+
+  // Boot 2 — secret removed (email left behind): boots fine, does not re-apply.
+  const second = await bootServer({ dir, dbFile, env: { RECOVERY_ADMIN_EMAIL: 'reboot@owner.test' } });
+  try {
+    assert.equal(second.up, true, second.logs());
+    assert.equal(second.exited(), null);
+    assert.equal((await second.request('/auth/login', { method: 'POST', body: { email: 'reboot@owner.test', password: NEW_PASSWORD } })).status, 200, 'the recovered password survives a reboot without the secret');
+  } finally { await second.stop(); }
+
+  // Boot 3 — re-armed with the SAME config: one-time no-op.
+  const third = await bootServer({ dir, dbFile, env: { RECOVERY_ADMIN_EMAIL: 'reboot@owner.test', RECOVERY_ADMIN_PASSWORD: NEW_PASSWORD } });
+  try {
+    assert.equal(third.up, true, third.logs());
+    assert.match(third.logs(), /already applied/i);
+  } finally { await third.stop(); await cleanup(dir); }
 });
