@@ -103,7 +103,15 @@ export class CreationStudio {
     this.jobs.set(id, job);
     this.#push(job, 'job.started', { goal, options });
     // Fire-and-forget: the run owns its own error handling and never rejects here.
-    this.#run(job).catch(() => {});
+    //
+    // Defer the run to the NEXT macrotask instead of starting it inline. The
+    // Director's early stages resolve deterministically (as microtasks) and the
+    // render is CPU-heavy and synchronous, so calling `#run` here would keep this
+    // call — and therefore the HTTP response that returns the job id — blocked on
+    // the event loop for the entire render. Deferring makes `start()` truly
+    // return immediately (as documented) and keeps the server responsive while
+    // the job runs.
+    setImmediate(() => { this.#run(job).catch(() => {}); });
     return this.view(job);
   }
 

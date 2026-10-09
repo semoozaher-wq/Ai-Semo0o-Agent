@@ -202,6 +202,13 @@ export async function runDirector(goal, options = {}) {
       }
     }
     emit('stage', { stage: 'render', iteration: i });
+    // Yield to the event loop before the CPU-heavy, synchronous render. The
+    // deterministic stages above resolve as microtasks, so without this the whole
+    // pipeline — including the render — would run on the event loop in one go and
+    // block the caller (e.g. the HTTP handler that started the job) for the entire
+    // render. A macrotask yield lets pending I/O (the POST response, SSE flushes)
+    // complete first and keeps the server responsive while frames are produced.
+    await new Promise((resolve) => setImmediate(resolve));
     const rendered = renderTimeline(timeline, {
       assets,
       includeAudio: true,
@@ -232,6 +239,9 @@ export async function runDirector(goal, options = {}) {
   // 9. Encode final artefacts from the best iteration
   guard();
   emit('stage', { stage: 'encode' });
+  // Same rationale as the render yield: the GIF/AVI encoders are CPU-heavy and
+  // synchronous, so give the event loop a turn before blocking on them.
+  await new Promise((resolve) => setImmediate(resolve));
   const { frames, audio, width, height, fps, duration, timeline } = best.rendered;
   const media = { audio };
   if (options.formats !== false) {
