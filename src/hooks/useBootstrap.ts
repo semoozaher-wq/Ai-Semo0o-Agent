@@ -35,11 +35,11 @@ export function useBootstrap(): {
   }, [attempt]);
 
   // 2) Hydrate the workspace stores only for an authenticated session.
+  //    We deliberately do NOT reset `hydrated` synchronously here (that would
+  //    trigger a cascading render); `ready` is derived from `status` instead, so
+  //    an unauthenticated visitor is never treated as ready.
   useEffect(() => {
-    if (status !== 'authenticated') {
-      setHydrated(false);
-      return;
-    }
+    if (status !== 'authenticated') return;
     let cancelled = false;
 
     async function run() {
@@ -76,7 +76,8 @@ export function useBootstrap(): {
   }, [status, attempt]);
 
   return {
-    ready: hydrated,
+    // Ready only once a live session exists AND its stores have hydrated.
+    ready: status === 'authenticated' && hydrated,
     error,
     status,
     retry: () => {
