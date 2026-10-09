@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { useBootstrap } from '../src/hooks/useBootstrap';
+import { Auth } from '../src/screens';
 
 function BootSplash() {
   const theme = useTheme();
@@ -25,7 +26,20 @@ function BootSplash() {
 
 function RootNavigator() {
   const theme = useTheme();
-  const { ready, error, retry } = useBootstrap();
+  const { ready, error, retry, status } = useBootstrap();
+
+  // HARD GATE: while the session is being restored show a splash; with no live
+  // session render ONLY the sign-in screen. No application route is mounted for
+  // an unauthenticated visitor, so possessing the URL is not enough to open it.
+  if (status === 'loading') return <BootSplash />;
+  if (status === 'anonymous') {
+    return (
+      <>
+        <StatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
+        <Auth />
+      </>
+    );
+  }
 
   if (error) {
     return (
@@ -55,8 +69,8 @@ function RootNavigator() {
         <Stack.Screen name="workspace" />
         <Stack.Screen name="anatomy" />
         <Stack.Screen name="analytics" />
-        <Stack.Screen name="operations" />
-        <Stack.Screen name="creation" />
+        <Stack.Screen name="files" />
+        <Stack.Screen name="library" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="privacy" />
         <Stack.Screen name="terms" />
