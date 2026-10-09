@@ -1,13 +1,11 @@
 import React from 'react';
 import { useRouter } from 'expo-router';
 import {
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import { AppHeader, SectionHeader, EmptyState, ListRow } from '../components/composite';
 import { Badge } from '../components/ui/Badge';
@@ -19,6 +17,7 @@ import { Icon, IconName } from '../components/ui/Icon';
 import { Input } from '../components/ui/Input';
 import { Progress } from '../components/ui/Progress';
 import { Screen } from '../components/ui/Screen';
+import { Sheet } from '../components/ui/Sheet';
 import { Text } from '../components/ui/Text';
 import { useAgentsStore, LogEntry } from '../store/useAgentsStore';
 import { useAppStore } from '../store/useAppStore';
@@ -198,6 +197,7 @@ function StepTimeline({ task }: { task: Task }) {
 
 function LogConsole({ logs }: { logs: LogEntry[] }) {
   const theme = useTheme();
+  const [open, setOpen] = React.useState(false);
   const colorFor = (level: LogEntry['level']) =>
     level === 'success'
       ? theme.colors.success
@@ -209,28 +209,43 @@ function LogConsole({ logs }: { logs: LogEntry[] }) {
 
   if (logs.length === 0) return null;
   return (
-    <View
-      style={[
-        styles.console,
-        { backgroundColor: theme.colors.background, borderRadius: theme.radius.lg },
-      ]}
-    >
-      {logs.slice(-12).map((log) => (
-        <Text
-          key={log.id}
-          variant="caption"
-          style={{ color: colorFor(log.level), marginBottom: 3, fontFamily: 'monospace' }}
-        >
-          {log.message}
+    <View style={{ marginTop: 12 }}>
+      <Pressable
+        onPress={() => setOpen((prev) => !prev)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={[styles.logToggle, { borderColor: theme.colors.border, borderRadius: theme.radius.lg }]}
+      >
+        <Icon name="terminal-outline" size={14} tone="muted" />
+        <Text variant="caption" tone="muted" style={{ flex: 1, marginStart: 6 }}>
+          سجل التنفيذ التقني ({logs.length})
         </Text>
-      ))}
+        <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} tone="muted" />
+      </Pressable>
+      {open ? (
+        <View
+          style={[
+            styles.console,
+            { backgroundColor: theme.colors.background, borderRadius: theme.radius.lg },
+          ]}
+        >
+          {logs.slice(-12).map((log) => (
+            <Text
+              key={log.id}
+              variant="caption"
+              style={{ color: colorFor(log.level), marginBottom: 3, fontFamily: 'monospace' }}
+            >
+              {log.message}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
 
 export function Agents() {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
 
   const tasks = useAgentsStore((s) => s.tasks);
   const logs = useAgentsStore((s) => s.logs);
@@ -535,63 +550,44 @@ export function Agents() {
       </ScrollView>
 
       {/* --------------------------- approval surface ------------------------ */}
-      <Modal visible={Boolean(approvalRequest)} transparent animationType="slide" onRequestClose={reject}>
-        <Pressable style={styles.backdrop} onPress={reject}>
-          <Pressable
-            style={[styles.sheet, { backgroundColor: theme.colors.backgroundElevated, paddingBottom: insets.bottom + 16, borderColor: theme.colors.border }]}
-            onPress={(event) => event.stopPropagation()}
-          >
-            <View style={styles.sheetHandle} />
-            <View style={styles.rowBetween}>
-              <Text variant="subtitle" weight="bold">موافقة مطلوبة</Text>
-              <Badge label={approvalRequest?.risk === 'high' ? 'مخاطر عالية' : 'مخاطر متوسطة'} tone={approvalRequest?.risk === 'high' ? 'danger' : 'warning'} />
-            </View>
-            <Text variant="body" weight="semibold" style={{ marginTop: theme.spacing.lg }}>
-              {approvalRequest?.toolName ?? 'أداة خطرة'}
-            </Text>
-            <Text variant="caption" tone="muted" style={{ marginTop: 6, lineHeight: 20 }}>
-              {approvalRequest?.reason ?? 'طلب تنفيذ عملية تحتاج صلاحية.'}
-            </Text>
-            <Text variant="label" weight="semibold" style={{ marginTop: theme.spacing.lg }}>الملفات أو المسارات المتأثرة</Text>
-            <Text variant="caption" tone="muted" style={{ marginTop: 4 }}>
-              {approvalRequest?.affectedFiles.length ? approvalRequest.affectedFiles.join('، ') : 'لم يحدد الوكيل ملفات بعينها'}
-            </Text>
-            <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.md }}>
-              {approvalRequest?.reversible ? 'العملية قابلة للتراجع.' : 'العملية قد لا تكون قابلة للتراجع.'}
-            </Text>
-            <View style={[styles.taskActions, { marginTop: theme.spacing.lg }]}>
-              <Button label="رفض" variant="outline" onPress={reject} style={{ flex: 1 }} />
-              <Button label="موافقة وتنفيذ" variant="danger" onPress={approve} style={{ flex: 1 }} />
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <Sheet
+        visible={Boolean(approvalRequest)}
+        onClose={reject}
+        title="موافقة مطلوبة"
+        footer={
+          <View style={styles.taskActions}>
+            <Button label="رفض" variant="outline" onPress={reject} style={{ flex: 1 }} />
+            <Button label="موافقة وتنفيذ" variant="danger" onPress={approve} style={{ flex: 1 }} />
+          </View>
+        }
+      >
+        <Badge
+          label={approvalRequest?.risk === 'high' ? 'مخاطر عالية' : 'مخاطر متوسطة'}
+          tone={approvalRequest?.risk === 'high' ? 'danger' : 'warning'}
+        />
+        <Text variant="body" weight="semibold" style={{ marginTop: theme.spacing.lg }}>
+          {approvalRequest?.toolName ?? 'أداة خطرة'}
+        </Text>
+        <Text variant="caption" tone="muted" style={{ marginTop: 6, lineHeight: 20 }}>
+          {approvalRequest?.reason ?? 'طلب تنفيذ عملية تحتاج صلاحية.'}
+        </Text>
+        <Text variant="label" weight="semibold" style={{ marginTop: theme.spacing.lg }}>الملفات أو المسارات المتأثرة</Text>
+        <Text variant="caption" tone="muted" style={{ marginTop: 4 }}>
+          {approvalRequest?.affectedFiles.length ? approvalRequest.affectedFiles.join('، ') : 'لم يحدد الوكيل ملفات بعينها'}
+        </Text>
+        <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.md }}>
+          {approvalRequest?.reversible ? 'العملية قابلة للتراجع.' : 'العملية قد لا تكون قابلة للتراجع.'}
+        </Text>
+      </Sheet>
 
       {/* ---------------------------- model picker --------------------------- */}
-      <Modal
+      <Sheet
         visible={modelOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModelOpen(false)}
+        onClose={() => setModelOpen(false)}
+        title="محرّك النموذج"
+        maxHeight="82%"
       >
-        <Pressable style={styles.backdrop} onPress={() => setModelOpen(false)}>
-          <Pressable
-            style={[
-              styles.sheet,
-              {
-                backgroundColor: theme.colors.backgroundElevated,
-                paddingBottom: insets.bottom + 16,
-                borderColor: theme.colors.border,
-              },
-            ]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.sheetHandle} />
-            <Text variant="subtitle" weight="bold" style={{ marginBottom: theme.spacing.md }}>
-              محرّك النموذج
-            </Text>
-            <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
-              {(Object.keys(PROVIDERS) as ProviderId[]).map((pid) => {
+        {(Object.keys(PROVIDERS) as ProviderId[]).map((pid) => {
                 const prov = PROVIDERS[pid];
                 const models = modelsByProvider(pid);
                 if (models.length === 0) return null;
@@ -635,11 +631,8 @@ export function Agents() {
                     })}
                   </View>
                 );
-              })}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        })}
+      </Sheet>
     </Screen>
   );
 }
@@ -666,26 +659,18 @@ const styles = StyleSheet.create({
   stepTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   toolRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   console: { padding: 12, marginTop: 12 },
+  logToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   taskHead: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 8 },
   taskIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   taskBody: { paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: StyleSheet.hairlineWidth },
   result: { padding: 12, marginTop: 12 },
   taskActions: { flexDirection: 'row', gap: 8, marginTop: 12, justifyContent: 'flex-end' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(4,5,12,0.55)', justifyContent: 'flex-end' },
-  sheet: {
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  sheetHandle: {
-    width: 44,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: 'rgba(128,128,128,0.4)',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
   provHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   modelRow: {
     flexDirection: 'row',

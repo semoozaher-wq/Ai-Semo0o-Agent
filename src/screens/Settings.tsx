@@ -1,12 +1,5 @@
 import React from 'react';
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useTheme, useThemeController } from '../theme';
 import type { ThemePreference } from '../theme';
 import { AppHeader } from '../components/composite/AppHeader';
@@ -15,12 +8,14 @@ import { ListRow } from '../components/composite/ListRow';
 import { SystemStatusCard } from '../components/composite/SystemStatusCard';
 import { IntegrationsCard } from '../components/composite/IntegrationsCard';
 import { AccountSecurityCard } from '../components/composite/AccountSecurityCard';
+import { Accordion } from '../components/ui/Accordion';
 import { Card } from '../components/ui/Card';
 import { Text } from '../components/ui/Text';
 import { Chip } from '../components/ui/Chip';
 import { Badge } from '../components/ui/Badge';
 import { Divider } from '../components/ui/Divider';
 import { Icon } from '../components/ui/Icon';
+import { Sheet } from '../components/ui/Sheet';
 import { useAppStore } from '../store/useAppStore';
 import { PROVIDERS, getModel, modelsByProvider } from '../data/models';
 import { ProviderId } from '../types/model';
@@ -139,42 +134,7 @@ export function Settings() {
           </View>
         </Card>
 
-        {/* Server-managed providers */}
-        <SectionHeader
-          title="مزودو الذكاء الاصطناعي"
-          subtitle="المفاتيح تُدار في Backend ولا تُرسل أو تُحفظ في التطبيق"
-          icon="key-outline"
-          style={{ marginTop: theme.spacing.xl }}
-        />
-        <Card>
-          <Text variant="body" weight="semibold">اتصال آمن من الخادم</Text>
-          <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.sm }}>
-            يختار الـBackend OpenAI أو Gemini أو Anthropic حسب النموذج المتاح. اضبط المفاتيح كأسرار بيئية على الخادم، ثم أعد تشغيل العامل. لا يُسمح للعميل برؤية قيمة أي مفتاح.
-          </Text>
-          <View style={[styles.chipRow, { marginTop: theme.spacing.md }]}>
-            {PROVIDER_IDS.map((id) => <Badge key={id} label={PROVIDERS[id].nameAr} tone="neutral" />)}
-          </View>
-        </Card>
-
-        {/* Live system status — real backend state, never assumed */}
-        <SectionHeader
-          title="حالة النظام والقدرات"
-          subtitle="تُقرأ مباشرة من الخادم — تُظهر حالة كل قدرة ومزود كما هي فعليًا"
-          icon="server-outline"
-          style={{ marginTop: theme.spacing.xl }}
-        />
-        <SystemStatusCard />
-
-        {/* Integrations / connectors — GitHub, billing, embeddings, tracking, browser */}
-        <SectionHeader
-          title="التكاملات والموصلات"
-          subtitle="GitHub · الفوترة · مخزن المتجهات · تتبّع الأخطاء · المتصفح — تُقرأ مباشرة من الخادم بحالتها الفعلية"
-          icon="git-network-outline"
-          style={{ marginTop: theme.spacing.xl }}
-        />
-        <IntegrationsCard />
-
-        {/* Operations console — self-improvement + tool availability */}
+        {/* Operations console */}
         <SectionHeader
           title="لوحة العمليات"
           subtitle="التحسين الذاتي الآمن · حالة الأدوات · المراقبة والتراجع"
@@ -236,14 +196,57 @@ export function Settings() {
           </View>
         </Card>
 
-        {/* Account security — real MFA enrollment, data export, deletion */}
+        {/* Account security */}
         <SectionHeader
           title="الأمان والحساب"
-          subtitle="المصادقة الثنائية · تصدير البيانات · حذف الحساب — تُنفّذ فعليًا على الخادم"
+          subtitle="المصادقة الثنائية · تصدير البيانات · حذف الحساب — تُنفَّذ فعليًا على الخادم"
           icon="shield-checkmark-outline"
           style={{ marginTop: theme.spacing.xl }}
         />
         <AccountSecurityCard />
+
+        {/* Advanced — technical detail tucked away */}
+        <SectionHeader
+          title="إعدادات متقدمة"
+          subtitle="معلومات تقنية للمزوّدين وحالة النظام والتكاملات"
+          icon="options-outline"
+          style={{ marginTop: theme.spacing.xl }}
+        />
+        <View style={{ gap: 12 }}>
+          <Accordion
+            title="مزوّدو الذكاء الاصطناعي"
+            subtitle="اتصال آمن من الخادم — المفاتيح لا تُحفظ في التطبيق"
+            icon="key-outline"
+          >
+            <Text variant="body" weight="semibold">
+              اتصال آمن من الخادم
+            </Text>
+            <Text variant="caption" tone="muted" style={{ marginTop: theme.spacing.sm }}>
+              يختار الـBackend OpenAI أو Gemini أو Anthropic حسب النموذج المتاح. اضبط المفاتيح كأسرار بيئية على الخادم، ثم أعد تشغيل العامل. لا يُسمح للعميل برؤية قيمة أي مفتاح.
+            </Text>
+            <View style={[styles.chipRow, { marginTop: theme.spacing.md }]}>
+              {PROVIDER_IDS.map((id) => (
+                <Badge key={id} label={PROVIDERS[id].nameAr} tone="neutral" />
+              ))}
+            </View>
+          </Accordion>
+
+          <Accordion
+            title="حالة النظام والقدرات"
+            subtitle="تُقرأ مباشرة من الخادم — كما هي فعليًا"
+            icon="server-outline"
+          >
+            <SystemStatusCard />
+          </Accordion>
+
+          <Accordion
+            title="التكاملات والموصلات"
+            subtitle="GitHub · الفوترة · مخزن المتجهات · تتبّع الأخطاء · المتصفح"
+            icon="git-network-outline"
+          >
+            <IntegrationsCard />
+          </Accordion>
+        </View>
 
         {/* About */}
         <SectionHeader title="حول التطبيق" icon="information-circle-outline" style={{ marginTop: theme.spacing.xl }} />
@@ -274,71 +277,59 @@ export function Settings() {
         </Text>
       </ScrollView>
 
-      {/* Model picker */}
-      <Modal visible={modelPicker} transparent animationType="slide" onRequestClose={() => setModelPicker(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setModelPicker(false)}>
-          <Pressable
-            style={[
-              styles.sheet,
-              { backgroundColor: theme.colors.surfaceElevated, borderTopLeftRadius: theme.radius['2xl'], borderTopRightRadius: theme.radius['2xl'] },
-            ]}
-            onPress={() => {}}
-          >
-            <View style={styles.sheetHead}>
-              <Text variant="subtitle" weight="bold">
-                اختر النموذج
-              </Text>
-              <Pressable onPress={() => setModelPicker(false)} hitSlop={10}>
-                <Icon name="close" size={22} tone="muted" />
-              </Pressable>
-            </View>
-            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
-              {PROVIDER_IDS.map((pid) => {
-                const models = modelsByProvider(pid);
-                if (models.length === 0) return null;
-                const provider = PROVIDERS[pid];
+      <Sheet
+        visible={modelPicker}
+        onClose={() => setModelPicker(false)}
+        title="اختر النموذج"
+        subtitle="النماذج المتاحة عبر المزوّدين المفعّلين"
+        maxHeight="82%"
+      >
+        {PROVIDER_IDS.map((pid) => {
+          const models = modelsByProvider(pid);
+          if (models.length === 0) return null;
+          const provider = PROVIDERS[pid];
+          return (
+            <View key={pid} style={{ marginBottom: theme.spacing.lg }}>
+              <View style={styles.provHeader}>
+                <View style={[styles.dot, { backgroundColor: provider.accent }]} />
+                <Text variant="label" weight="semibold">
+                  {provider.nameAr}
+                </Text>
+              </View>
+              {models.map((m) => {
+                const active = settings.activeModel === m.id;
                 return (
-                  <View key={pid} style={{ marginBottom: theme.spacing.lg }}>
-                    <Text variant="label" tone="muted" style={{ marginBottom: theme.spacing.sm }}>
-                      {provider.nameAr}
-                    </Text>
-                    {models.map((m) => (
-                      <Pressable
-                        key={m.id}
-                        onPress={() => {
-                          update({ activeModel: m.id });
-                          setModelPicker(false);
-                        }}
-                        style={[
-                          styles.modelRow,
-                          {
-                            backgroundColor:
-                              settings.activeModel === m.id ? theme.colors.primarySoft : theme.colors.surfaceMuted,
-                            borderRadius: theme.radius.lg,
-                            marginBottom: 8,
-                          },
-                        ]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text variant="label" weight="semibold">
-                            {m.name}
-                          </Text>
-                          <Text variant="caption" tone="muted" numberOfLines={1}>
-                            {m.description}
-                          </Text>
-                        </View>
-                        {settings.activeModel === m.id ? (
-                          <Icon name="checkmark-circle" size={20} tone="primary" />
-                        ) : null}
-                      </Pressable>
-                    ))}
-                  </View>
+                  <Pressable
+                    key={m.id}
+                    onPress={() => {
+                      update({ activeModel: m.id });
+                      setModelPicker(false);
+                    }}
+                    style={[
+                      styles.modelRow,
+                      {
+                        borderColor: active ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: active ? theme.colors.primarySoft : theme.colors.surface,
+                        borderRadius: theme.radius.lg,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text variant="label" weight="semibold">
+                        {m.name}
+                      </Text>
+                      <Text variant="caption" tone="muted" numberOfLines={1}>
+                        {m.description}
+                      </Text>
+                    </View>
+                    {active ? <Icon name="checkmark-circle" size={20} tone="primary" /> : null}
+                  </Pressable>
                 );
               })}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
+            </View>
+          );
+        })}
+      </Sheet>
     </View>
   );
 }
@@ -347,10 +338,7 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   switchLabel: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  providerHead: { flexDirection: 'row', alignItems: 'center' },
-  keyActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { padding: 20, maxHeight: '82%' },
-  sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  modelRow: { flexDirection: 'row', alignItems: 'center', padding: 14 },
+  provHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  modelRow: { flexDirection: 'row', alignItems: 'center', padding: 14, marginBottom: 8, borderWidth: 1 },
 });
