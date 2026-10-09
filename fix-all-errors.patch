@@ -1,0 +1,951 @@
+diff --git a/agent-benchmark.report.json b/agent-benchmark.report.json
+index d0ba379..e3ba01f 100644
+--- a/agent-benchmark.report.json
++++ b/agent-benchmark.report.json
+@@ -1,18 +1,18 @@
+ {
+-  "startedAt": "2026-10-07T20:22:22.249Z",
+-  "workspace": "/tmp/semo0o-agent-bench-mfasWR",
++  "startedAt": "2026-10-09T02:58:54.195Z",
++  "workspace": "/tmp/semo0o-agent-bench-rgPkRp",
+   "steps": [
+     {
+       "name": "setup",
+       "register": 201,
+       "project": 201,
+-      "projectId": "project_6ebb6ad9-5af8-49df-a6a3-136b67a31a52"
++      "projectId": "project_2ebccfe8-262f-4d58-93b0-069caec68d12"
+     },
+     {
+       "name": "enqueue agent.run",
+       "status": 202,
+-      "runId": "run_15259b8b-6555-45f8-8d3e-7eccc21c15d0",
+-      "taskId": "task_11445fe4-5a3e-407a-92d4-08c9b8e02345"
++      "runId": "run_282dc6d3-a714-420e-8e54-e6d0731bea8e",
++      "taskId": "task_783ce2c2-63a2-4dfe-bc4c-618737d91e2e"
+     },
+     {
+       "name": "agent loop finished",
+@@ -56,7 +56,7 @@
+     {
+       "name": "enqueue multi-agent run",
+       "status": 202,
+-      "runId": "run_f4ad8bc1-6e36-4d49-8831-865eccf9378b"
++      "runId": "run_a527e0b1-b75d-4a8a-aba7-605b660fd558"
+     },
+     {
+       "name": "multi-agent finished",
+@@ -106,14 +106,14 @@
+     {
+       "name": "enqueue long-running run",
+       "status": 202,
+-      "runId": "run_089caf7a-b243-43d2-8c5b-38d6706cd56e"
++      "runId": "run_0718465d-c23e-4591-987b-b96432f5e0df"
+     },
+     {
+       "name": "long-running finished",
+       "status": "completed_with_warnings",
+       "continuation": {
+         "scheduled": true,
+-        "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
++        "runId": "run_b62285b1-a56e-4fcd-81e7-4766efb02f5e",
+         "continuations": 1
+       },
+       "continuationStatus": "completed_with_warnings",
+@@ -153,7 +153,7 @@
+     {
+       "name": "code-intelligence benchmark",
+       "workspace": {
+-        "root": "/tmp/semo0o-agent-bench-mfasWR",
++        "root": "/tmp/semo0o-agent-bench-rgPkRp",
+         "files": 3,
+         "symbols": 3
+       },
+@@ -198,13 +198,125 @@
+           "score": 100
+         }
+       ]
++    },
++    {
++      "name": "enqueue self-healing run",
++      "status": 202,
++      "runId": "run_7ce3ebc5-6473-4c5f-98cc-577529c8e5a2"
++    },
++    {
++      "name": "self-healing finished",
++      "status": "completed",
++      "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
++      "selfHealingEvents": 1,
++      "repairEvents": 1,
++      "readOutcomes": [
++        false,
++        true
++      ],
++      "failedRead": true,
++      "repairedRead": true,
++      "toolResultEvents": 3,
++      "evidenceCount": 5
++    },
++    {
++      "name": "self-healing benchmark",
++      "summary": {
++        "total": 1,
++        "passed": 1,
++        "failed": 0,
++        "passRate": 100,
++        "score": 100,
++        "byEvaluator": {
++          "completed": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "repair-recorded": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "failed-then-succeeded": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "has-evidence": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "has-final": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          }
++        }
++      }
++    },
++    {
++      "name": "enqueue integrations run",
++      "status": 202,
++      "runId": "run_fcab7115-9eb1-49b5-9018-dcc5bd44dfe5"
++    },
++    {
++      "name": "integrations finished",
++      "status": "completed",
++      "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
++      "deliveredCount": 1,
++      "deliveredTo": [
++        "ops@example.com"
++      ],
++      "emailToolOk": true,
++      "emailMessageId": "msg-1",
++      "connectorLive": true,
++      "evidenceCount": 4
++    },
++    {
++      "name": "integrations benchmark",
++      "summary": {
++        "total": 1,
++        "passed": 1,
++        "failed": 0,
++        "passRate": 100,
++        "score": 100,
++        "byEvaluator": {
++          "completed": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "email-delivered": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "email-tool-ok": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "connector-live": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          },
++          "has-evidence": {
++            "passed": 1,
++            "failed": 0,
++            "rate": 100
++          }
++        }
++      }
+     }
+   ],
+-  "finishedAt": "2026-10-07T20:22:23.965Z",
++  "finishedAt": "2026-10-09T02:58:56.062Z",
+   "agentLoop": {
+     "name": "agent-loop",
+-    "startedAt": "2026-10-07T20:22:22.372Z",
+-    "finishedAt": "2026-10-07T20:22:22.372Z",
++    "startedAt": "2026-10-09T02:58:54.333Z",
++    "finishedAt": "2026-10-09T02:58:54.333Z",
+     "durationMs": 0,
+     "tasks": [
+       {
+@@ -285,8 +397,8 @@
+   },
+   "multiAgent": {
+     "name": "multi-agent",
+-    "startedAt": "2026-10-07T20:22:22.423Z",
+-    "finishedAt": "2026-10-07T20:22:22.423Z",
++    "startedAt": "2026-10-09T02:58:54.388Z",
++    "finishedAt": "2026-10-09T02:58:54.388Z",
+     "durationMs": 0,
+     "tasks": [
+       {
+@@ -380,8 +492,8 @@
+   },
+   "longRunning": {
+     "name": "long-running",
+-    "startedAt": "2026-10-07T20:22:23.681Z",
+-    "finishedAt": "2026-10-07T20:22:23.681Z",
++    "startedAt": "2026-10-09T02:58:55.619Z",
++    "finishedAt": "2026-10-09T02:58:55.619Z",
+     "durationMs": 0,
+     "tasks": [
+       {
+@@ -394,7 +506,7 @@
+           "status": "completed_with_warnings",
+           "continuation": {
+             "scheduled": true,
+-            "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
++            "runId": "run_b62285b1-a56e-4fcd-81e7-4766efb02f5e",
+             "continuations": 1
+           },
+           "continuationStatus": "completed_with_warnings",
+@@ -458,8 +570,8 @@
+   },
+   "codeIntelligence": {
+     "name": "agent-code-intelligence",
+-    "startedAt": "2026-10-07T20:22:23.961Z",
+-    "finishedAt": "2026-10-07T20:22:23.965Z",
++    "startedAt": "2026-10-09T02:58:55.943Z",
++    "finishedAt": "2026-10-09T02:58:55.947Z",
+     "durationMs": 4,
+     "tasks": [
+       {
+@@ -467,7 +579,7 @@
+         "name": "Codebase analysis",
+         "weight": 2,
+         "ok": true,
+-        "durationMs": 1,
++        "durationMs": 0,
+         "result": {
+           "ok": true,
+           "output": {
+@@ -500,12 +612,12 @@
+         "name": "ChangeSet construction",
+         "weight": 2,
+         "ok": true,
+-        "durationMs": 2,
++        "durationMs": 3,
+         "result": {
+           "ok": true,
+           "output": {
+-            "id": "changeset_5f927a3e-2182-41e1-9dfb-a36dde46714b",
+-            "generatedAt": "2026-10-07T20:22:23.964Z",
++            "id": "changeset_84b215b5-53a1-4559-9b56-de0f5f284838",
++            "generatedAt": "2026-10-09T02:58:55.946Z",
+             "goal": "agent-benchmark",
+             "summary": {
+               "files": 0,
+@@ -622,7 +734,7 @@
+         "name": "Impact analysis",
+         "weight": 2,
+         "ok": true,
+-        "durationMs": 1,
++        "durationMs": 0,
+         "result": {
+           "ok": true,
+           "output": {
+@@ -709,7 +821,7 @@
+         "name": "Deep reasoning (definition)",
+         "weight": 2,
+         "ok": true,
+-        "durationMs": 0,
++        "durationMs": 1,
+         "result": {
+           "ok": true,
+           "output": {
+@@ -764,5 +876,207 @@
+       }
+     }
+   },
++  "selfHealing": {
++    "name": "self-healing",
++    "startedAt": "2026-10-09T02:58:56.003Z",
++    "finishedAt": "2026-10-09T02:58:56.003Z",
++    "durationMs": 0,
++    "tasks": [
++      {
++        "id": "repair",
++        "name": "failing tool call -> diagnosis -> repair -> success",
++        "weight": 1,
++        "ok": true,
++        "durationMs": 0,
++        "result": {
++          "status": "completed",
++          "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
++          "selfHealingEvents": 1,
++          "repairEvents": 1,
++          "readOutcomes": [
++            false,
++            true
++          ],
++          "failedRead": true,
++          "repairedRead": true,
++          "toolResultEvents": 3,
++          "evidenceCount": 5
++        },
++        "error": null,
++        "score": 100,
++        "evaluators": [
++          {
++            "id": "completed",
++            "name": "completed",
++            "passed": true,
++            "weight": 1,
++            "detail": "status=completed"
++          },
++          {
++            "id": "repair-recorded",
++            "name": "repair-recorded",
++            "passed": true,
++            "weight": 1,
++            "detail": "repair_events=1"
++          },
++          {
++            "id": "failed-then-succeeded",
++            "name": "failed-then-succeeded",
++            "passed": true,
++            "weight": 1,
++            "detail": "failed_read=true repaired_read=true"
++          },
++          {
++            "id": "has-evidence",
++            "name": "has-evidence",
++            "passed": true,
++            "weight": 1,
++            "detail": "evidence=5"
++          },
++          {
++            "id": "has-final",
++            "name": "has-final",
++            "passed": true,
++            "weight": 1,
++            "detail": "ok"
++          }
++        ]
++      }
++    ],
++    "summary": {
++      "total": 1,
++      "passed": 1,
++      "failed": 0,
++      "passRate": 100,
++      "score": 100,
++      "byEvaluator": {
++        "completed": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "repair-recorded": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "failed-then-succeeded": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "has-evidence": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "has-final": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        }
++      }
++    }
++  },
++  "integrations": {
++    "name": "integrations",
++    "startedAt": "2026-10-09T02:58:56.062Z",
++    "finishedAt": "2026-10-09T02:58:56.062Z",
++    "durationMs": 0,
++    "tasks": [
++      {
++        "id": "email-connector",
++        "name": "live email.send delivered over a real connector",
++        "weight": 1,
++        "ok": true,
++        "durationMs": 0,
++        "result": {
++          "status": "completed",
++          "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
++          "deliveredCount": 1,
++          "deliveredTo": [
++            "ops@example.com"
++          ],
++          "emailToolOk": true,
++          "emailMessageId": "msg-1",
++          "connectorLive": true,
++          "evidenceCount": 4
++        },
++        "error": null,
++        "score": 100,
++        "evaluators": [
++          {
++            "id": "completed",
++            "name": "completed",
++            "passed": true,
++            "weight": 1,
++            "detail": "status=completed"
++          },
++          {
++            "id": "email-delivered",
++            "name": "email-delivered",
++            "passed": true,
++            "weight": 1,
++            "detail": "delivered=1 to=ops@example.com"
++          },
++          {
++            "id": "email-tool-ok",
++            "name": "email-tool-ok",
++            "passed": true,
++            "weight": 1,
++            "detail": "email_tool_ok=true"
++          },
++          {
++            "id": "connector-live",
++            "name": "connector-live",
++            "passed": true,
++            "weight": 1,
++            "detail": "email.send live=true"
++          },
++          {
++            "id": "has-evidence",
++            "name": "has-evidence",
++            "passed": true,
++            "weight": 1,
++            "detail": "evidence=4"
++          }
++        ]
++      }
++    ],
++    "summary": {
++      "total": 1,
++      "passed": 1,
++      "failed": 0,
++      "passRate": 100,
++      "score": 100,
++      "byEvaluator": {
++        "completed": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "email-delivered": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "email-tool-ok": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "connector-live": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        },
++        "has-evidence": {
++          "passed": 1,
++          "failed": 0,
++          "rate": 100
++        }
++      }
++    }
++  },
+   "passed": true
+ }
+diff --git a/app/(tabs)/files.tsx b/app/(tabs)/files.tsx
+deleted file mode 100644
+index 26b0ae3..0000000
+--- a/app/(tabs)/files.tsx
++++ /dev/null
+@@ -1,3 +0,0 @@
+-import { Files } from '../../src/screens';
+-
+-export default Files;
+diff --git a/app/(tabs)/store.tsx b/app/(tabs)/store.tsx
+deleted file mode 100644
+index fa59223..0000000
+--- a/app/(tabs)/store.tsx
++++ /dev/null
+@@ -1,3 +0,0 @@
+-import { Store } from '../../src/screens';
+-
+-export default Store;
+diff --git a/app/creation.tsx b/app/creation.tsx
+deleted file mode 100644
+index 2b9ddf5..0000000
+--- a/app/creation.tsx
++++ /dev/null
+@@ -1,3 +0,0 @@
+-import { Creation } from '../src/screens';
+-
+-export default Creation;
+diff --git a/app/operations.tsx b/app/operations.tsx
+deleted file mode 100644
+index 4bf8341..0000000
+--- a/app/operations.tsx
++++ /dev/null
+@@ -1,3 +0,0 @@
+-import { Operations } from '../src/screens';
+-
+-export default Operations;
+diff --git a/eslint.config.js b/eslint.config.js
+index 4db6d92..748ea36 100644
+--- a/eslint.config.js
++++ b/eslint.config.js
+@@ -1,10 +1,33 @@
+ // https://docs.expo.dev/guides/using-eslint/
+ const { defineConfig } = require('eslint/config');
+ const expoConfig = require("eslint-config-expo/flat");
++const globals = require('globals');
+ 
+ module.exports = defineConfig([
+   expoConfig,
+   {
+     ignores: ['dist/*', 'legacy/*', 'node_modules/*', '.expo/*'],
+-  }
++  },
++  // ---------------------------------------------------------------------------
++  // Node backend + tooling.
++  // ---------------------------------------------------------------------------
++  // This repository ships BOTH the Expo frontend and a Node.js backend/tooling
++  // (backend/, scripts/, execution-core/, phase2-core/, test/, server.js) from
++  // the same tree. `eslint-config-expo` only declares browser globals, so every
++  // Node file that uses `Buffer`, `__dirname`, `process`, ... was reported as a
++  // false `no-undef` error, and the JSON import attributes used by the backend
++  // (`import contract from './x.json' with { type: 'json' }`) could not be parsed
++  // (the Expo preset pins `ecmaVersion: 2022`).
++  //
++  // These files never run in a browser, so they are given the real Node globals
++  // and the latest ECMAScript syntax. `src/` and `app/` (the React Native app)
++  // are intentionally NOT covered — they keep the Expo/browser environment.
++  {
++    files: ['**/*.mjs', 'server.js'],
++    languageOptions: {
++      ecmaVersion: 'latest',
++      sourceType: 'module',
++      globals: { ...globals.node },
++    },
++  },
+ ]);
+diff --git a/scripts/boot-smoke.sh b/scripts/boot-smoke.sh
+index 42bc93f..921a592 100644
+--- a/scripts/boot-smoke.sh
++++ b/scripts/boot-smoke.sh
+@@ -25,6 +25,12 @@ export SECRETS_MASTER_KEY="${SECRETS_MASTER_KEY:-0123456789abcdef0123456789abcde
+ export DATABASE_FILE="${DATABASE_FILE:-$TMP/db/agent.sqlite}"
+ export WORKSPACE_ROOT="${WORKSPACE_ROOT:-$TMP/workspace}"
+ export ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://ci.invalid}"
++# This smoke gate boots the server with NODE_ENV=production (to exercise the real
++# production env contract) and then registers a throwaway account. Production is
++# fail-closed for self-service sign-up unless explicitly opted in, so the harness
++# opts in here. This is a TEST-ONLY switch: it does not change the production
++# default (which stays closed unless the operator sets ALLOW_PUBLIC_REGISTRATION).
++export ALLOW_PUBLIC_REGISTRATION="${ALLOW_PUBLIC_REGISTRATION:-1}"
+ export PORT BIND_HOST
+ export DISABLE_WORKER="${DISABLE_WORKER:-1}"
+ 
+diff --git a/src/hooks/useBootstrap.ts b/src/hooks/useBootstrap.ts
+index 5749f25..6dd628d 100644
+--- a/src/hooks/useBootstrap.ts
++++ b/src/hooks/useBootstrap.ts
+@@ -35,11 +35,11 @@ export function useBootstrap(): {
+   }, [attempt]);
+ 
+   // 2) Hydrate the workspace stores only for an authenticated session.
++  //    We deliberately do NOT reset `hydrated` synchronously here (that would
++  //    trigger a cascading render); `ready` is derived from `status` instead, so
++  //    an unauthenticated visitor is never treated as ready.
+   useEffect(() => {
+-    if (status !== 'authenticated') {
+-      setHydrated(false);
+-      return;
+-    }
++    if (status !== 'authenticated') return;
+     let cancelled = false;
+ 
+     async function run() {
+@@ -76,7 +76,8 @@ export function useBootstrap(): {
+   }, [status, attempt]);
+ 
+   return {
+-    ready: hydrated,
++    // Ready only once a live session exists AND its stores have hydrated.
++    ready: status === 'authenticated' && hydrated,
+     error,
+     status,
+     retry: () => {
+diff --git a/src/screens/Auth.tsx b/src/screens/Auth.tsx
+index 506b062..9bb95a8 100644
+--- a/src/screens/Auth.tsx
++++ b/src/screens/Auth.tsx
+@@ -56,14 +56,13 @@ export function Auth() {
+   const registrationOpen = policy?.registration.open ?? false;
+ 
+   // If the deployment turns out to be closed, never leave the user stranded on a
+-  // register form that cannot succeed.
+-  React.useEffect(() => {
+-    if (policyKnown && !registrationOpen && mode === 'register') setMode('login');
+-  }, [policyKnown, registrationOpen, mode]);
++  // register form that cannot succeed. This is DERIVED rather than forced through
++  // an effect, so there is no cascading render and no flash of an unusable form.
++  const activeMode: Mode = policyKnown && !registrationOpen && mode === 'register' ? 'login' : mode;
+ 
+   const submit = async () => {
+     clearError();
+-    if (mode === 'login') {
++    if (activeMode === 'login') {
+       await login({ email: email.trim(), password, ...(mfaRequired && mfaCode ? { mfaCode: mfaCode.trim() } : {}) });
+     } else {
+       await register({
+@@ -83,8 +82,8 @@ export function Auth() {
+   const submitDisabled =
+     !email.trim() ||
+     password.length < 1 ||
+-    (mode === 'register' && !registrationOpen) ||
+-    (mode === 'register' && requiresAccessKey && !accessKey.trim());
++    (activeMode === 'register' && !registrationOpen) ||
++    (activeMode === 'register' && requiresAccessKey && !accessKey.trim());
+ 
+   return (
+     <KeyboardAvoidingView
+@@ -158,7 +157,7 @@ export function Auth() {
+           {modes.length > 1 ? (
+             <View style={[styles.segment, { backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radius.pill, padding: 4 }]}>
+               {modes.map((item) => {
+-                const active = mode === item;
++                const active = activeMode === item;
+                 return (
+                   <Pressable
+                     key={item}
+@@ -202,7 +201,7 @@ export function Auth() {
+               placeholder="12 حرفًا على الأقل"
+               editable={!busy}
+             />
+-            {mode === 'register' && registrationOpen ? (
++            {activeMode === 'register' && registrationOpen ? (
+               <>
+                 <Input
+                   label="اسم مساحة العمل (اختياري)"
+@@ -226,7 +225,7 @@ export function Auth() {
+                 ) : null}
+               </>
+             ) : null}
+-            {mode === 'login' && mfaRequired ? (
++            {activeMode === 'login' && mfaRequired ? (
+               <Input
+                 label="رمز المصادقة الثنائية"
+                 icon="shield-checkmark-outline"
+@@ -262,7 +261,7 @@ export function Auth() {
+           ) : null}
+ 
+           <Button
+-            label={mode === 'login' ? 'دخول' : 'إنشاء الحساب'}
++            label={activeMode === 'login' ? 'دخول' : 'إنشاء الحساب'}
+             icon="log-in-outline"
+             onPress={submit}
+             loading={busy || status === 'loading'}
+diff --git a/src/screens/Store.tsx b/src/screens/Store.tsx
+deleted file mode 100644
+index ca63bd9..0000000
+--- a/src/screens/Store.tsx
++++ /dev/null
+@@ -1,268 +0,0 @@
+-import React from 'react';
+-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+-import { useRouter } from 'expo-router';
+-import { useTheme } from '../theme';
+-import { AppHeader, SectionHeader, AgentCard, EmptyState } from '../components/composite';
+-import { Badge } from '../components/ui/Badge';
+-import { Card } from '../components/ui/Card';
+-import { Chip } from '../components/ui/Chip';
+-import { Gradient } from '../components/ui/Gradient';
+-import { Icon } from '../components/ui/Icon';
+-import { Input } from '../components/ui/Input';
+-import { Screen } from '../components/ui/Screen';
+-import { Text } from '../components/ui/Text';
+-import { storeService, StoreQuery } from '../services/store';
+-import { useStoreStore } from '../store/useStoreStore';
+-import { AgentManifest } from '../types/agent';
+-import { formatNumber } from '../utils/format';
+-
+-const SORTS: { id: NonNullable<StoreQuery['sort']>; label: string }[] = [
+-  { id: 'relevance', label: 'الأنسب' },
+-  { id: 'rating', label: 'الأعلى تقييمًا' },
+-  { id: 'installs', label: 'الأكثر تنزيلًا' },
+-  { id: 'recent', label: 'الأحدث' },
+-  { id: 'name', label: 'أبجديًا' },
+-];
+-
+-export function Store() {
+-  const theme = useTheme();
+-  const router = useRouter();
+-  const installed = useStoreStore((s) => s.installed);
+-  const stats = useStoreStore((s) => s.stats);
+-  const install = useStoreStore((s) => s.install);
+-
+-  const [query, setQuery] = React.useState('');
+-  const [category, setCategory] = React.useState<StoreQuery['category']>('all');
+-  const [sort, setSort] = React.useState<NonNullable<StoreQuery['sort']>>('relevance');
+-  const [installingId, setInstallingId] = React.useState<string | null>(null);
+-
+-  const categories = storeService.categories();
+-  const results = React.useMemo(
+-    () => storeService.search({ category, search: query, sort }),
+-    [category, query, sort],
+-  );
+-
+-  const featured = storeService.featured();
+-  const updates = React.useMemo(() => {
+-    return installed
+-      .map((rec) => storeService.get(rec.agentId))
+-      .filter((m): m is AgentManifest => Boolean(m) && m!.version !== installed.find((r) => r.agentId === m!.id)?.version);
+-  }, [installed]);
+-
+-  const installedIds = new Set(installed.map((a) => a.agentId));
+-
+-  const handleInstall = async (agent: AgentManifest) => {
+-    setInstallingId(agent.id);
+-    try {
+-      await install(agent.id);
+-    } finally {
+-      setInstallingId(null);
+-    }
+-  };
+-
+-  return (
+-    <Screen padded={false}>
+-      <ScrollView
+-        contentContainerStyle={{ paddingBottom: 40 }}
+-        showsVerticalScrollIndicator={false}
+-        keyboardShouldPersistTaps="handled"
+-      >
+-        <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm }}>
+-          <AppHeader
+-            title="المتجر"
+-            subtitle={
+-              stats
+-                ? `${stats.totalAgents} وكيلًا · ${stats.installed} مثبّت · ${stats.categories} تصنيفًا`
+-                : 'تصفّح وثبّت وكلاء الذكاء الاصطناعي'
+-            }
+-            right={
+-              <Pressable onPress={() => router.push('/agents')} style={styles.iconBtn}>
+-                <Icon name="cube-outline" size={22} tone="muted" />
+-              </Pressable>
+-            }
+-          />
+-
+-          <Input
+-            icon="search-outline"
+-            placeholder="ابحث عن وكيل، أداة، أو قدرة…"
+-            value={query}
+-            onChangeText={setQuery}
+-            returnKeyType="search"
+-          />
+-
+-          {/* categories */}
+-          <ScrollView
+-            horizontal
+-            showsHorizontalScrollIndicator={false}
+-            contentContainerStyle={{ gap: 8, paddingVertical: theme.spacing.md }}
+-          >
+-            {categories.map((cat) => (
+-              <Chip
+-                key={cat.id}
+-                label={cat.labelAr}
+-                icon={cat.icon as never}
+-                selected={category === cat.id}
+-                onPress={() => setCategory(cat.id)}
+-              />
+-            ))}
+-          </ScrollView>
+-        </View>
+-
+-        {/* featured banner */}
+-        {category === 'all' && !query ? (
+-          <View style={{ marginTop: theme.spacing.sm }}>
+-            <View style={{ paddingHorizontal: theme.spacing.lg }}>
+-              <SectionHeader title="مميّز هذا الأسبوع" icon="flame-outline" />
+-            </View>
+-            <ScrollView
+-              horizontal
+-              showsHorizontalScrollIndicator={false}
+-              contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, gap: 12 }}
+-            >
+-              {featured.map((agent) => (
+-                <Pressable key={agent.id} onPress={() => router.push(`/agent/${agent.id}`)}>
+-                  <Card padded={false} bordered={false} style={styles.banner}>
+-                    <Gradient name="brand" radius={theme.radius.xl} style={styles.bannerGrad}>
+-                      <View style={styles.bannerInner}>
+-                        <Text style={{ fontSize: 40 }}>{agent.icon}</Text>
+-                        <Text
+-                          weight="extrabold"
+-                          numberOfLines={1}
+-                          style={{ color: '#FFFFFF', fontSize: theme.fontSize.xl, marginTop: 12 }}
+-                        >
+-                          {agent.nameAr}
+-                        </Text>
+-                        <Text
+-                          numberOfLines={2}
+-                          style={{
+-                            color: 'rgba(255,255,255,0.85)',
+-                            fontSize: theme.fontSize.sm,
+-                            marginTop: 4,
+-                            minHeight: 36,
+-                          }}
+-                        >
+-                          {agent.taglineAr}
+-                        </Text>
+-                        <View style={styles.bannerMeta}>
+-                          <Icon name="star" size={13} color="#FFD166" />
+-                          <Text style={{ color: '#FFFFFF', fontSize: theme.fontSize.xs, marginStart: 4 }}>
+-                            {agent.rating.toFixed(1)} · {formatNumber(agent.installs)} تنزيل
+-                          </Text>
+-                        </View>
+-                      </View>
+-                    </Gradient>
+-                  </Card>
+-                </Pressable>
+-              ))}
+-            </ScrollView>
+-          </View>
+-        ) : null}
+-
+-        {/* updates */}
+-        {updates.length > 0 && category === 'all' && !query ? (
+-          <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing['2xl'] }}>
+-            <SectionHeader title="تحديثات متاحة" icon="cloud-download-outline" />
+-            <Card padded={false} style={{ paddingHorizontal: theme.spacing.lg }}>
+-              {updates.map((agent, index) => (
+-                <View key={agent.id}>
+-                  {index > 0 ? <View style={[styles.divider, { backgroundColor: theme.colors.border }]} /> : null}
+-                  <View style={styles.updateRow}>
+-                    <Text style={{ fontSize: 26 }}>{agent.icon}</Text>
+-                    <View style={{ flex: 1, marginStart: 12 }}>
+-                      <Text variant="body" weight="semibold" numberOfLines={1}>
+-                        {agent.nameAr}
+-                      </Text>
+-                      <Text variant="caption" tone="muted">
+-                        الإصدار {agent.version} متاح
+-                      </Text>
+-                    </View>
+-                    <Chip label="تحديث" icon="download-outline" selected onPress={() => handleInstall(agent)} />
+-                  </View>
+-                </View>
+-              ))}
+-            </Card>
+-          </View>
+-        ) : null}
+-
+-        {/* results header + sort */}
+-        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing['2xl'] }}>
+-          <SectionHeader
+-            title={query ? `نتائج البحث (${results.length})` : 'كل الوكلاء'}
+-            icon="apps-outline"
+-          />
+-          <ScrollView
+-            horizontal
+-            showsHorizontalScrollIndicator={false}
+-            contentContainerStyle={{ gap: 8, paddingBottom: theme.spacing.md }}
+-          >
+-            {SORTS.map((s) => (
+-              <Chip
+-                key={s.id}
+-                label={s.label}
+-                selected={sort === s.id}
+-                onPress={() => setSort(s.id)}
+-                tone="accent"
+-                size="sm"
+-              />
+-            ))}
+-          </ScrollView>
+-        </View>
+-
+-        {/* results list */}
+-        <View style={{ paddingHorizontal: theme.spacing.lg, gap: 12 }}>
+-          {results.length === 0 ? (
+-            <EmptyState
+-              icon="search-outline"
+-              title="لا توجد نتائج"
+-              description="جرّب كلمة بحث أخرى أو اختر تصنيفًا مختلفًا."
+-            />
+-          ) : (
+-            results.map((agent) => {
+-              const rec = installed.find((a) => a.agentId === agent.id);
+-              const updateAvailable = Boolean(rec && rec.version !== agent.version);
+-              return (
+-                <AgentCard
+-                  key={agent.id}
+-                  agent={agent}
+-                  installed={installedIds.has(agent.id)}
+-                  updateAvailable={updateAvailable}
+-                  installing={installingId === agent.id}
+-                  onPress={() => router.push(`/agent/${agent.id}`)}
+-                  onInstall={() => handleInstall(agent)}
+-                />
+-              );
+-            })
+-          )}
+-        </View>
+-
+-        {/* footer note */}
+-        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing['2xl'] }}>
+-          <Card>
+-            <View style={styles.rowBetween}>
+-              <View style={{ flex: 1 }}>
+-                <Text variant="label" weight="semibold">
+-                  نظام الصلاحيات والأمان
+-                </Text>
+-                <Text variant="caption" tone="muted" style={{ marginTop: 4 }}>
+-                  كل وكيل يطلب صلاحيات محددة، ويمكنك منحها أو سحبها في أي وقت.
+-                </Text>
+-              </View>
+-              <Badge label="آمن" tone="success" />
+-            </View>
+-          </Card>
+-        </View>
+-      </ScrollView>
+-    </Screen>
+-  );
+-}
+-
+-const styles = StyleSheet.create({
+-  iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+-  banner: { width: 300, overflow: 'hidden' },
+-  bannerGrad: { width: '100%' },
+-  bannerInner: { padding: 20 },
+-  bannerMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+-  updateRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+-  divider: { height: StyleSheet.hairlineWidth },
+-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+-});
