@@ -1,0 +1,112 @@
+diff --git a/backend/creation/director.mjs b/backend/creation/director.mjs
+index 53b2b42..cd635c6 100644
+--- a/backend/creation/director.mjs
++++ b/backend/creation/director.mjs
+@@ -202,6 +202,13 @@ export async function runDirector(goal, options = {}) {
+       }
+     }
+     emit('stage', { stage: 'render', iteration: i });
++    // Yield to the event loop before the CPU-heavy, synchronous render. The
++    // deterministic stages above resolve as microtasks, so without this the whole
++    // pipeline — including the render — would run on the event loop in one go and
++    // block the caller (e.g. the HTTP handler that started the job) for the entire
++    // render. A macrotask yield lets pending I/O (the POST response, SSE flushes)
++    // complete first and keeps the server responsive while frames are produced.
++    await new Promise((resolve) => setImmediate(resolve));
+     const rendered = renderTimeline(timeline, {
+       assets,
+       includeAudio: true,
+@@ -232,6 +239,9 @@ export async function runDirector(goal, options = {}) {
+   // 9. Encode final artefacts from the best iteration
+   guard();
+   emit('stage', { stage: 'encode' });
++  // Same rationale as the render yield: the GIF/AVI encoders are CPU-heavy and
++  // synchronous, so give the event loop a turn before blocking on them.
++  await new Promise((resolve) => setImmediate(resolve));
+   const { frames, audio, width, height, fps, duration, timeline } = best.rendered;
+   const media = { audio };
+   if (options.formats !== false) {
+diff --git a/backend/creation/studio.mjs b/backend/creation/studio.mjs
+index 5bdd82e..64a32d0 100644
+--- a/backend/creation/studio.mjs
++++ b/backend/creation/studio.mjs
+@@ -103,7 +103,15 @@ export class CreationStudio {
+     this.jobs.set(id, job);
+     this.#push(job, 'job.started', { goal, options });
+     // Fire-and-forget: the run owns its own error handling and never rejects here.
+-    this.#run(job).catch(() => {});
++    //
++    // Defer the run to the NEXT macrotask instead of starting it inline. The
++    // Director's early stages resolve deterministically (as microtasks) and the
++    // render is CPU-heavy and synchronous, so calling `#run` here would keep this
++    // call — and therefore the HTTP response that returns the job id — blocked on
++    // the event loop for the entire render. Deferring makes `start()` truly
++    // return immediately (as documented) and keeps the server responsive while
++    // the job runs.
++    setImmediate(() => { this.#run(job).catch(() => {}); });
+     return this.view(job);
+   }
+ 
+diff --git a/backend/test/creation-studio.test.mjs b/backend/test/creation-studio.test.mjs
+index 34ce04d..2ce8f6b 100644
+--- a/backend/test/creation-studio.test.mjs
++++ b/backend/test/creation-studio.test.mjs
+@@ -11,6 +11,26 @@ import { createUser } from '../auth/security.mjs';
+ import { createLiveToolRegistry } from '../tools/registry.mjs';
+ import { parseGif } from '../media/gif.mjs';
+ 
++/**
++ * The Creation Studio runs the Director — including the CPU-heavy, synchronous
++ * render — in the SAME process and event loop as this test's HTTP server. A long
++ * render can therefore stall the server long enough for the platform to drop an
++ * in-flight request, which surfaces as a transient `TypeError: fetch failed`
++ * (undici) on CI runners that are slower or more contended than a dev box. These
++ * are connection-level failures, not application errors, so retry ONLY those —
++ * a real HTTP status or an assertion failure is never retried or masked.
++ */
++const TRANSIENT_FETCH_CODES = new Set([
++  'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
++  'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
++]);
++function isTransientFetchError(error) {
++  if (!error) return false;
++  const code = error.cause?.code ?? error.code;
++  if (code && TRANSIENT_FETCH_CODES.has(code)) return true;
++  return error.name === 'TypeError' && /fetch failed/i.test(error.message ?? '');
++}
++
+ /**
+  * Creation Studio integration: the /creation/* HTTP surface and the studio.*
+  * tools must turn ONE goal into a real, downloadable deliverable end-to-end,
+@@ -25,7 +45,7 @@ async function fixture() {
+   const app = createApp({ db, queue });
+   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+   const base = `http://127.0.0.1:${app.server.address().port}`;
+-  const request = async (route, options = {}) => {
++  const send = async (route, options = {}) => {
+     const response = await fetch(`${base}${route}`, {
+       headers: { 'content-type': 'application/json', ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) },
+       ...options,
+@@ -40,6 +60,22 @@ async function fixture() {
+       bytes: contentType.includes('application/json') ? null : Buffer.from(await response.arrayBuffer()),
+     };
+   };
++  // Retry a dropped connection a few times with a short backoff. Only the
++  // connection-level errors above are retried; an HTTP response (even 4xx/5xx)
++  // is returned as-is so the assertions still see the real behaviour.
++  const request = async (route, options = {}) => {
++    let lastError;
++    for (let attempt = 0; attempt < 4; attempt += 1) {
++      try {
++        return await send(route, options);
++      } catch (error) {
++        lastError = error;
++        if (!isTransientFetchError(error)) throw error;
++        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
++      }
++    }
++    throw lastError;
++  };
+   return {
+     dir, db, queue, app, base, request,
+     close: async () => { queue.stop(); await new Promise((resolve) => app.server.close(resolve)); db.close(); await rm(dir, { recursive: true, force: true }); },
