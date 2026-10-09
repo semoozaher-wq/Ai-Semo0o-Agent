@@ -6,19 +6,40 @@ import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
+import { useAuthStore } from '../store/useAuthStore';
+import type { AuthStatus } from '../store/useAuthStore';
 import { runBootstrapRecovery } from '../services/chat/recovery';
 
-/** Hydrates persisted stores and exposes a recoverable startup state. */
+/**
+ * Startup orchestration for the PRIVATE app.
+ *
+ * Step 1 restores the session (validating any persisted token with the server).
+ * Step 2 hydrates the data stores ONLY once a live session exists — so an
+ * unauthenticated visitor never triggers authenticated API calls, and the gate
+ * in `app/_layout.tsx` can safely render the sign-in screen instead.
+ */
 export function useBootstrap(): {
   ready: boolean;
   error: string | null;
   retry: () => void;
+  status: AuthStatus;
 } {
-  const [ready, setReady] = useState(false);
+  const status = useAuthStore((s) => s.status);
+  const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
+  // 1) Session restore (runs on mount and on every explicit retry).
   useEffect(() => {
+    void useAuthStore.getState().restore();
+  }, [attempt]);
+
+  // 2) Hydrate the workspace stores only for an authenticated session.
+  useEffect(() => {
+    if (status !== 'authenticated') {
+      setHydrated(false);
+      return;
+    }
     let cancelled = false;
 
     async function run() {
@@ -34,7 +55,7 @@ export function useBootstrap(): {
         ]);
         if (!cancelled) {
           setError(null);
-          setReady(true);
+          setHydrated(true);
           // Best-effort: sweep any chat thread left mid-stream by a crash or a
           // backend restart so the UI can offer a retry instead of spinning
           // forever. Fire-and-forget — it must never block or fail startup.
@@ -43,7 +64,7 @@ export function useBootstrap(): {
       } catch (cause) {
         if (!cancelled) {
           setError(cause instanceof Error ? cause.message : 'تعذر تحميل بيانات التطبيق');
-          setReady(false);
+          setHydrated(false);
         }
       }
     }
@@ -52,14 +73,15 @@ export function useBootstrap(): {
     return () => {
       cancelled = true;
     };
-  }, [attempt]);
+  }, [status, attempt]);
 
   return {
-    ready,
+    ready: hydrated,
     error,
+    status,
     retry: () => {
       setError(null);
-      setReady(false);
+      setHydrated(false);
       setAttempt((value) => value + 1);
     },
   };
