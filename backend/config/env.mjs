@@ -88,6 +88,11 @@ export function validateEnv(env = process.env) {
     const publicExplicitlyClosed = ['0', 'false', 'no', 'off'].includes(allowPublicRaw);
     if (env.APP_ACCESS_KEY && String(env.APP_ACCESS_KEY).trim().length < 12) errors.push('APP_ACCESS_KEY_TOO_SHORT');
     if (!env.APP_ACCESS_KEY && !publicExplicitlyClosed) warnings.push('PRIVATE_APP_NOT_GATED');
+    // Locked-out configuration: sign-up is closed AND no access key is set, so
+    // there is no self-service way in. That is a valid private posture, but the
+    // operator must create the first account out-of-band — surface the exact
+    // command instead of leaving them stranded.
+    if (!env.APP_ACCESS_KEY && publicExplicitlyClosed) warnings.push('NO_SIGNUP_PATH_USE_CREATE_ADMIN');
     if (allowPublicRaw && !['0', '1', 'true', 'false', 'yes', 'no', 'on', 'off'].includes(allowPublicRaw)) warnings.push('UNKNOWN_ALLOW_PUBLIC_REGISTRATION_VALUE');
     // Browser production hardening: an in-process Chromium runs with --no-sandbox
     // (required inside containers) and shares the server's network namespace, so an
