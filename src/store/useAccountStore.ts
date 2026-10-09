@@ -48,7 +48,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     }
     set({ loading: true, error: null });
     try {
-      await backendApi.ensureSession();
+      await backendApi.requireSession();
       const account = await backendApi.getAccount();
       set({ account, loading: false, error: null, loadedAt: new Date().toISOString() });
     } catch (error) {

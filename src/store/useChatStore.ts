@@ -53,7 +53,7 @@ export const useChatStore = create<ChatState>((set, get) => {
   const patchMessage = (conversationId: string, messageId: string, patch: Partial<Message>) => set((state) => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map((message) => message.id === messageId ? { ...message, ...patch } : message) } }));
   const projectPromise = { value: null as { projectId: string; workspaceId: string } | null, pending: null as Promise<{ projectId: string; workspaceId: string }> | null };
   const ensureProject = async () => {
-    await backendApi.ensureSession();
+    await backendApi.requireSession();
     if (projectPromise.value) return projectPromise.value;
     projectPromise.pending ??= backendApi.createProject({ name: 'Semo0o Agent Workspace' }).then((project) => { projectPromise.value = project; return project; });
     return projectPromise.pending;

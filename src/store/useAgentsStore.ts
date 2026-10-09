@@ -155,7 +155,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => {
         if (current && next.type === 'step_started' && next.stepId) updateTask(updateLiveStep(current, { type: 'step_started', stepId: String(next.stepId), details: { title: next.title, kind: 'tool' } } as never));
       };
       try {
-        const project = await (async () => { await backendApi.ensureSession(); return backendApi.createProject({ name: `Task ${task.title}` }); })();
+        const project = await (async () => { await backendApi.requireSession(); return backendApi.createProject({ name: `Task ${task.title}` }); })();
         const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: task.goal, model: opts?.model ?? task.model });
         activeRunId = run.runId;
         await backendApi.streamEvents(run.runId, (event) => { if (!cancelSignal.cancelled) appendBackendEvent(event, run.runId); });

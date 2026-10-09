@@ -69,7 +69,7 @@ export const useCreationStore = create<CreationState>((set, get) => ({
     }
     set({ loading: true, error: null });
     try {
-      await backendApi.ensureSession();
+      await backendApi.requireSession();
       const [capabilities, jobs] = await Promise.all([
         backendApi.getCreationCapabilities(),
         backendApi.listCreationJobs(),
@@ -93,7 +93,7 @@ export const useCreationStore = create<CreationState>((set, get) => ({
     }
     set({ submitting: true, error: null, notice: null, events: [] });
     try {
-      await backendApi.ensureSession();
+      await backendApi.requireSession();
       const job = await backendApi.startCreationJob(input);
       set({ submitting: false, activeJob: job, notice: 'CREATION_STARTED' });
       get().select(job.id);

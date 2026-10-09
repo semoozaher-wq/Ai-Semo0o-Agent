@@ -61,7 +61,7 @@ function seedUsage(days = 30): UsagePoint[] {
 async function fetchBackendUsage(): Promise<UsagePoint[] | null> {
   if (!backendApi.enabled) return null;
   try {
-    await backendApi.ensureSession();
+    await backendApi.requireSession();
     const summary = await backendApi.getUsage(30);
     return (summary.daily ?? []).map((point) => ({
       date: point.date,

@@ -48,7 +48,7 @@ export const useOperationsStore = create<OperationsState>((set, get) => ({
     }
     set(mode === 'refresh' ? { refreshing: true, error: null } : { loading: true, error: null });
     try {
-      await backendApi.ensureSession();
+      await backendApi.requireSession();
       const [signalResult, proposalResult, historyResult] = await Promise.all([
         backendApi.getSelfImproveSignals(),
         backendApi.listSelfImproveProposals(),

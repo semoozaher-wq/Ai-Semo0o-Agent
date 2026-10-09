@@ -46,7 +46,7 @@ export const useSystemStatusStore = create<SystemStatusState>((set) => ({
     }
     set({ loading: true, error: null });
     try {
-      await backendApi.ensureSession();
+      await backendApi.requireSession();
       const [tools, models, billing, readiness, integrations] = await Promise.all([
         backendApi.getToolsStatus(),
         backendApi.getModelsStatus(),
