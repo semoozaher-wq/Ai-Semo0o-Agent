@@ -12,6 +12,26 @@ import { createLiveToolRegistry } from '../tools/registry.mjs';
 import { parseGif } from '../media/gif.mjs';
 
 /**
+ * The Creation Studio runs the Director — including the CPU-heavy, synchronous
+ * render — in the SAME process and event loop as this test's HTTP server. A long
+ * render can therefore stall the server long enough for the platform to drop an
+ * in-flight request, which surfaces as a transient `TypeError: fetch failed`
+ * (undici) on CI runners that are slower or more contended than a dev box. These
+ * are connection-level failures, not application errors, so retry ONLY those —
+ * a real HTTP status or an assertion failure is never retried or masked.
+ */
+const TRANSIENT_FETCH_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+  'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+]);
+function isTransientFetchError(error) {
+  if (!error) return false;
+  const code = error.cause?.code ?? error.code;
+  if (code && TRANSIENT_FETCH_CODES.has(code)) return true;
+  return error.name === 'TypeError' && /fetch failed/i.test(error.message ?? '');
+}
+
+/**
  * Creation Studio integration: the /creation/* HTTP surface and the studio.*
  * tools must turn ONE goal into a real, downloadable deliverable end-to-end,
  * with honest status, tenant scoping and validation — against a real server +
@@ -25,7 +45,7 @@ async function fixture() {
   const app = createApp({ db, queue });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.server.address().port}`;
-  const request = async (route, options = {}) => {
+  const send = async (route, options = {}) => {
     const response = await fetch(`${base}${route}`, {
       headers: { 'content-type': 'application/json', ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) },
       ...options,
@@ -39,6 +59,22 @@ async function fixture() {
       body: contentType.includes('application/json') ? await response.json().catch(() => ({})) : null,
       bytes: contentType.includes('application/json') ? null : Buffer.from(await response.arrayBuffer()),
     };
+  };
+  // Retry a dropped connection a few times with a short backoff. Only the
+  // connection-level errors above are retried; an HTTP response (even 4xx/5xx)
+  // is returned as-is so the assertions still see the real behaviour.
+  const request = async (route, options = {}) => {
+    let lastError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        return await send(route, options);
+      } catch (error) {
+        lastError = error;
+        if (!isTransientFetchError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
+    throw lastError;
   };
   return {
     dir, db, queue, app, base, request,
