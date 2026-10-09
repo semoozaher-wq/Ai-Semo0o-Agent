@@ -1,0 +1,39 @@
+From 9b7d5b92eeb5767886d50ea9ea1328b123a8ed8a Mon Sep 17 00:00:00 2001
+From: SuperNinja <agent@ninjatech.ai>
+Date: Fri, 9 Oct 2026 19:02:08 +0000
+Subject: [PATCH] fix(ci): repair stray verify_fix2.mjs breaking security:scan
+
+- correct broken relative import ./repo/backend/... -> ./backend/llm/providers.mjs
+- annotate legitimate loopback test URL with documented
+  'security-scan:allow private-url-literal' inline suppression
+- restores green 'npm run security:scan' (was failing on private-url-literal)
+- script now runs end-to-end: RESULT: ALL PASS
+---
+ verify_fix2.mjs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/verify_fix2.mjs b/verify_fix2.mjs
+index 080723c..82f0085 100644
+--- a/verify_fix2.mjs
++++ b/verify_fix2.mjs
+@@ -2,7 +2,7 @@
+ // Proves that a DIRECT-provider failure now marks the provider unhealthy,
+ // while a successful direct call still reports healthy (no regression).
+ import { createServer } from 'node:http';
+-import { createLLMRouter } from './repo/backend/llm/providers.mjs';
++import { createLLMRouter } from './backend/llm/providers.mjs';
+ 
+ let mode = 'fail'; // 'fail' | 'ok'
+ 
+@@ -24,7 +24,7 @@ const port = srv.address().port;
+ 
+ const router = createLLMRouter({
+   OPENAI_API_KEY: 'test-key',
+-  OPENAI_API_BASE: `http://127.0.0.1:${port}/v1`,
++  OPENAI_API_BASE: `http://127.0.0.1:${port}/v1`, // security-scan:allow private-url-literal
+   OPENAI_MODEL: 'gpt-5-mini',
+ });
+ 
+-- 
+2.39.5
+

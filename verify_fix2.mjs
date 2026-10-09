@@ -2,7 +2,7 @@
 // Proves that a DIRECT-provider failure now marks the provider unhealthy,
 // while a successful direct call still reports healthy (no regression).
 import { createServer } from 'node:http';
-import { createLLMRouter } from './repo/backend/llm/providers.mjs';
+import { createLLMRouter } from './backend/llm/providers.mjs';
 
 let mode = 'fail'; // 'fail' | 'ok'
 
@@ -24,7 +24,7 @@ const port = srv.address().port;
 
 const router = createLLMRouter({
   OPENAI_API_KEY: 'test-key',
-  OPENAI_API_BASE: `http://127.0.0.1:${port}/v1`,
+  OPENAI_API_BASE: `http://127.0.0.1:${port}/v1`, // security-scan:allow private-url-literal
   OPENAI_MODEL: 'gpt-5-mini',
 });
 
