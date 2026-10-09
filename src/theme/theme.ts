@@ -6,6 +6,9 @@ import {
   fontWeight,
   lineHeight,
   gradients,
+  elevation,
+  motion,
+  blur,
 } from './tokens';
 
 export type ThemeMode = 'light' | 'dark';
@@ -21,12 +24,21 @@ export interface ThemeColors {
   surfaceElevated: string;
   /** Muted surface for chips / inline blocks */
   surfaceMuted: string;
+  /** Hover / pressed surface tint */
+  surfaceHover: string;
   /** Hairline borders */
   border: string;
   /** Stronger border for emphasis */
   borderStrong: string;
   /** Scrim behind modals */
   overlay: string;
+  /** Modal / drawer scrim */
+  scrim: string;
+
+  /** Translucent glass surface (over imagery / gradients) */
+  glass: string;
+  /** Glass hairline border */
+  glassBorder: string;
 
   /** Primary text */
   text: string;
@@ -60,6 +72,11 @@ export interface ThemeColors {
   dangerSoft: string;
   info: string;
   infoSoft: string;
+
+  /** Shadow tint used by the elevation helper */
+  shadow: string;
+  /** Focus ring colour for keyboard / accessibility */
+  focusRing: string;
 }
 
 export interface Theme {
@@ -71,6 +88,9 @@ export interface Theme {
   fontWeight: typeof fontWeight;
   lineHeight: typeof lineHeight;
   gradients: typeof gradients;
+  elevation: typeof elevation;
+  motion: typeof motion;
+  blur: typeof blur;
 }
 
 const darkColors: ThemeColors = {
@@ -79,9 +99,14 @@ const darkColors: ThemeColors = {
   surface: '#14162B',
   surfaceElevated: '#1B1D36',
   surfaceMuted: '#20223D',
+  surfaceHover: '#262845',
   border: 'rgba(255,255,255,0.08)',
   borderStrong: 'rgba(255,255,255,0.16)',
   overlay: 'rgba(4,5,12,0.72)',
+  scrim: 'rgba(4,5,12,0.62)',
+
+  glass: 'rgba(27,29,54,0.66)',
+  glassBorder: 'rgba(255,255,255,0.12)',
 
   text: '#F2F3FA',
   textMuted: '#A9ADC9',
@@ -106,6 +131,9 @@ const darkColors: ThemeColors = {
   dangerSoft: palette.dangerSoft,
   info: palette.info,
   infoSoft: palette.infoSoft,
+
+  shadow: '#05060F',
+  focusRing: 'rgba(123,132,255,0.55)',
 };
 
 const lightColors: ThemeColors = {
@@ -114,9 +142,14 @@ const lightColors: ThemeColors = {
   surface: '#FFFFFF',
   surfaceElevated: '#FFFFFF',
   surfaceMuted: '#EEF0F8',
+  surfaceHover: '#E7EAF6',
   border: 'rgba(16,18,40,0.08)',
   borderStrong: 'rgba(16,18,40,0.16)',
   overlay: 'rgba(16,18,40,0.4)',
+  scrim: 'rgba(16,18,40,0.34)',
+
+  glass: 'rgba(255,255,255,0.72)',
+  glassBorder: 'rgba(16,18,40,0.08)',
 
   text: '#14162B',
   textMuted: '#5E6280',
@@ -141,6 +174,9 @@ const lightColors: ThemeColors = {
   dangerSoft: '#FDE7E7',
   info: '#2E7DD1',
   infoSoft: '#E3F0FC',
+
+  shadow: '#1A1C33',
+  focusRing: 'rgba(90,73,214,0.45)',
 };
 
 export const darkTheme: Theme = {
@@ -152,6 +188,9 @@ export const darkTheme: Theme = {
   fontWeight,
   lineHeight,
   gradients,
+  elevation,
+  motion,
+  blur,
 };
 
 export const lightTheme: Theme = {
@@ -163,6 +202,9 @@ export const lightTheme: Theme = {
   fontWeight,
   lineHeight,
   gradients,
+  elevation,
+  motion,
+  blur,
 };
 
 export const themes: Record<ThemeMode, Theme> = {
