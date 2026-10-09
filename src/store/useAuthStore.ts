@@ -26,10 +26,14 @@ export interface AuthState {
   busy: boolean;
   /** True when the last login needs a TOTP code to complete. */
   mfaRequired: boolean;
+  /** Set after a sign-up that requires email verification (no session yet). */
+  pendingVerificationEmail: string | null;
   restore(): Promise<void>;
   refreshPolicy(): Promise<void>;
   login(input: { email: string; password: string; mfaCode?: string }): Promise<boolean>;
   register(input: { email: string; password: string; tenantName?: string; accessKey?: string }): Promise<{ ok: boolean; verificationRequired: boolean }>;
+  verifyEmail(token: string): Promise<boolean>;
+  cancelVerification(): void;
   logout(): Promise<void>;
   clearError(): void;
 }
@@ -42,6 +46,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   error: null,
   busy: false,
   mfaRequired: false,
+  pendingVerificationEmail: null,
 
   async restore() {
     set({ status: 'loading', error: null });
@@ -86,15 +91,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const verificationRequired = Boolean(result.verificationRequired);
       // Fail-closed enrolment: no session until the address is verified.
       if (!result.session) {
-        set({ busy: false, status: 'anonymous', error: verificationRequired ? (AUTH_MESSAGES.EMAIL_VERIFICATION_REQUIRED ?? null) : null });
+        set({
+          busy: false,
+          status: 'anonymous',
+          // Keep the email so the user can complete verification in-app instead
+          // of being stranded on a form that only reports an error.
+          pendingVerificationEmail: verificationRequired ? input.email : null,
+          error: verificationRequired ? (AUTH_MESSAGES.EMAIL_VERIFICATION_REQUIRED ?? null) : null,
+        });
         return { ok: false, verificationRequired };
       }
-      set({ status: 'authenticated', user: result.user, busy: false, error: null });
+      set({ status: 'authenticated', user: result.user, busy: false, error: null, pendingVerificationEmail: null });
       return { ok: true, verificationRequired };
     } catch (error) {
       set({ busy: false, status: 'anonymous', error: humanizeAuthError(error) });
       return { ok: false, verificationRequired: false };
     }
+  },
+
+  async verifyEmail(token) {
+    set({ busy: true, error: null });
+    try {
+      await backendApi.verifyEmail(token.trim());
+      // Verification succeeded; the account can now sign in. Clear the pending
+      // state and let the user log in with the credentials they just created.
+      set({ busy: false, pendingVerificationEmail: null, error: null });
+      return true;
+    } catch (error) {
+      set({ busy: false, error: humanizeAuthError(error) });
+      return false;
+    }
+  },
+
+  cancelVerification() {
+    set({ pendingVerificationEmail: null, error: null });
   },
 
   async logout() {
