@@ -1,0 +1,100 @@
+node: v22.11.0  npm: 10.9.0
+CHROMIUM_BIN=/root/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome
+
+================================================================
+>>> STEP: security:scan
+>>> CMD : npm run security:scan
+================================================================
+RESULT: PASS  (security:scan, 0s)
+
+================================================================
+>>> STEP: audit:gate
+>>> CMD : npm run audit:gate
+================================================================
+RESULT: PASS  (audit:gate, 1s)
+
+================================================================
+>>> STEP: verify-imports:backend
+>>> CMD : node scripts/verify-imports.mjs backend
+================================================================
+RESULT: PASS  (verify-imports:backend, 0s)
+
+================================================================
+>>> STEP: typecheck
+>>> CMD : npm run typecheck
+================================================================
+RESULT: PASS  (typecheck, 7s)
+
+================================================================
+>>> STEP: lint
+>>> CMD : npm run lint
+================================================================
+RESULT: PASS  (lint, 14s)
+
+================================================================
+>>> STEP: test
+>>> CMD : npm test
+================================================================
+RESULT: PASS  (test, 128s)
+
+================================================================
+>>> STEP: doctor
+>>> CMD : npm run doctor
+================================================================
+RESULT: PASS  (doctor, 5s)
+
+================================================================
+>>> STEP: build
+>>> CMD : npm run build
+================================================================
+RESULT: PASS  (build, 4s)
+
+================================================================
+>>> STEP: browser-smoke
+>>> CMD : node scripts/browser-smoke.mjs
+================================================================
+RESULT: PASS  (browser-smoke, 0s)
+
+================================================================
+>>> STEP: browser-e2e
+>>> CMD : npm run test:browser-e2e
+================================================================
+RESULT: PASS  (browser-e2e, 2s)
+
+================================================================
+>>> STEP: benchmark:agent
+>>> CMD : npm run benchmark:agent
+================================================================
+RESULT: PASS  (benchmark:agent, 2s)
+
+================================================================
+>>> STEP: smoke:backend
+>>> CMD : npm run smoke:backend
+================================================================
+RESULT: PASS  (smoke:backend, 1s)
+
+================================================================
+>>> STEP: trial:self-improve
+>>> CMD : npm run trial:self-improve
+================================================================
+RESULT: PASS  (trial:self-improve, 0s)
+
+================================================================
+QUALITY SUMMARY  (node v22.11.0)
+================================================================
+  PASS  security:scan (0s)
+  PASS  audit:gate (1s)
+  PASS  verify-imports:backend (0s)
+  PASS  typecheck (7s)
+  PASS  lint (14s)
+  PASS  test (128s)
+  PASS  doctor (5s)
+  PASS  build (4s)
+  PASS  browser-smoke (0s)
+  PASS  browser-e2e (2s)
+  PASS  benchmark:agent (2s)
+  PASS  smoke:backend (1s)
+  PASS  trial:self-improve (0s)
+----------------------------------------------------------------
+PASS=13 FAIL=0
+OVERALL: ALL QUALITY STEPS PASSED ✅

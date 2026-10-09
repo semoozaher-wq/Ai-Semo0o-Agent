@@ -1,0 +1,32 @@
+From 8b594ecde8349461561aea52adb7208a4d5ecbef Mon Sep 17 00:00:00 2001
+From: SuperNinja <agent@ninjatech.ai>
+Date: Fri, 9 Oct 2026 19:28:51 +0000
+Subject: [PATCH] fix(ci): run browser-e2e with --experimental-sqlite
+
+The Quality workflow runs on Node 22.11.0, where node:sqlite is still behind
+the --experimental-sqlite flag. scripts/browser-e2e.mjs transitively imports
+node:sqlite (via backend/tools/registry.mjs), so 'npm run test:browser-e2e'
+crashed with ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite.
+
+Adding the flag makes the step pass on Node 22.11.0 (and is a harmless no-op on
+newer Node where the flag is no longer required). Only this one script changed.
+---
+ package.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/package.json b/package.json
+index b71ca7a..0f23e99 100644
+--- a/package.json
++++ b/package.json
+@@ -35,7 +35,7 @@
+     "start:backend": "node --experimental-sqlite backend/server.mjs",
+     "start:worker": "node --experimental-sqlite backend/worker.mjs",
+     "test:browser-smoke": "npm run build && node scripts/browser-smoke.mjs",
+-    "test:browser-e2e": "node scripts/browser-e2e.mjs",
++    "test:browser-e2e": "node --experimental-sqlite scripts/browser-e2e.mjs",
+     "generate:anatomy": "node scripts/generate-317-pain-map.js data/anatomyPainMap.json",
+     "validate:pain-map": "node scripts/validate-pain-map.js data/anatomyPainMap.json",
+     "smoke:backend": "bash scripts/boot-smoke.sh",
+-- 
+2.39.5
+
