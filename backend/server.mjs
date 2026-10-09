@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Database, id, now } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
+import { assertRegistrationAllowed, describeAccessPolicy, emailVerificationRequired } from './auth/access.mjs';
 import { acceptInvitation, consumeQuota, confirmMfa, createInvitation, enableMfa, issueAccountToken, resetPassword, verifyEmail } from './auth/lifecycle.mjs';
 import { RunQueue } from './queue/queue.mjs';
 import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS, MISSED_RUN_POLICIES, isValidTimeZone } from './queue/scheduler.mjs';
@@ -449,17 +450,30 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         response.end(`${renderPrometheus(report.metrics, report.slo)}${renderAlertMetrics(report.firing)}`);
         return;
       }
+      if (method === 'GET' && parts.join('/') === 'auth/policy') {
+        // Public, secret-free view of the enrolment gate so the client can render
+        // the right form (access-key field, verification notice) without probing.
+        return send(response, 200, { service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, ...describeAccessPolicy(process.env) });
+      }
       if (method === 'POST' && parts.join('/') === 'auth/register') {
         const input = await body(request);
+        // PRIVATE-APP GATE: refuse enrolment unless the deployment policy allows
+        // it (access key and/or explicit open registration). Runs before any row
+        // is written, so an outsider with the URL cannot provision an account.
+        assertRegistrationAllowed(process.env, input);
+        if (db.get('SELECT id FROM users WHERE lower(email)=lower(?)', String(input.email ?? ''))) throw new Error('EMAIL_ALREADY_REGISTERED');
         const result = createUser(db, input);
-        const session = createSession(db, result.id);
         const token = issueAccountToken(db, result.id, 'email_verification');
         const outbox = safeEnqueueEmail(db, { tenantId: result.tenant_id, to: result.email, template: 'email_verification', body: `Verify your email with this token: ${token}` });
-        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role, emailVerified: false }, session, verificationRequired: true, delivery: outbox ? 'queued' : 'NOT_VERIFIED_EMAIL_DELIVERY', outboxId: outbox?.outboxId ?? null });
+        // Fail-closed enrolment: when email verification is required the account is
+        // created but NO session is issued until the address is confirmed.
+        const verificationRequired = emailVerificationRequired(process.env);
+        const session = verificationRequired ? null : createSession(db, result.id);
+        return send(response, 201, { user: { id: result.id, tenantId: result.tenant_id, email: result.email, role: result.role, emailVerified: false }, session, verificationRequired, delivery: outbox ? 'queued' : 'NOT_VERIFIED_EMAIL_DELIVERY', outboxId: outbox?.outboxId ?? null });
       }
       if (method === 'POST' && parts.join('/') === 'auth/login') {
         const input = await body(request);
-        return send(response, 200, authenticate(db, input.email, input.password, input.mfaCode));
+        return send(response, 200, authenticate(db, input.email, input.password, input.mfaCode, { requireEmailVerification: emailVerificationRequired(process.env) }));
       }
       if (method === 'POST' && parts.join('/') === 'auth/verify-email') {
         const input = await body(request); return send(response, 200, { user: verifyEmail(db, validateText(input.token, 'TOKEN', 256)) });
@@ -651,6 +665,12 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         throw new Error('GITHUB_ACTION_UNSUPPORTED');
       }
       if (method === 'POST' && parts.join('/') === 'auth/logout') { revokeSession(db, user.sessionId); return send(response, 200, { ok: true }); }
+      if (method === 'GET' && parts.join('/') === 'auth/session') {
+        // Token-validation endpoint used by the client gate on cold start: it
+        // returns the caller's identity only for a live, unrevoked session.
+        const session = db.get('SELECT expires_at FROM sessions WHERE id=?', user.sessionId);
+        return send(response, 200, { user: { id: user.id, tenantId: user.tenantId, email: user.email, role: user.role }, expiresAt: session?.expires_at ?? null });
+      }
       if (method === 'GET' && parts.join('/') === 'me') {
         // The caller's own profile, including the REAL MFA state so the account
         // UI can show whether a second factor is active instead of assuming it.
@@ -1282,7 +1302,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       if (status >= 500 && errorTracker) {
         // Fire-and-forget: reporting must never delay or break the response.
         Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
