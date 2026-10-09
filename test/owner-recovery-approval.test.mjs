@@ -24,12 +24,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Database, now } from '../db/client.mjs';
-import { createApp } from '../server.mjs';
-import { RunQueue } from '../queue/queue.mjs';
-import { authenticate, authenticateToken, createSession, createUser } from '../auth/security.mjs';
-import { recoverOwner } from '../auth/recovery.mjs';
-import { approveAccessRequest, completeAccessRequest, listAccessRequests, rejectAccessRequest, requestAccess } from '../auth/approvals.mjs';
+import { Database, now } from '../backend/db/client.mjs';
+import { createApp } from '../backend/server.mjs';
+import { RunQueue } from '../backend/queue/queue.mjs';
+import { authenticate, authenticateToken, createSession, createUser } from '../backend/auth/security.mjs';
+import { recoverOwner } from '../backend/auth/recovery.mjs';
+import { approveAccessRequest, completeAccessRequest, listAccessRequests, rejectAccessRequest, requestAccess } from '../backend/auth/approvals.mjs';
 
 const PASSWORD = 'correct horse battery staple';
 const NEW_PASSWORD = 'a-brand-new-passphrase-123';
@@ -85,7 +85,7 @@ function withEnv(vars, fn) {
 // (a misconfigured recovery must never take the process down).
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function freePort() {
   return new Promise((resolve, reject) => {
