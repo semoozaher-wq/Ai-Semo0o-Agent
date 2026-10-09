@@ -2,7 +2,7 @@
   "name": "ai-semo0o-agent",
   "version": "2.0.0",
   "main": "expo-router/entry",
-  "description": "Semo0o AI — Integrated autonomous AI platform (agents, store, chat, data engine)",
+  "description": "Semo0o AI — Integrated autonomous AI agent platform (agents, chat, studio, operations, data engine)",
   "private": true,
   "packageManager": "npm@10.9.2",
   "engines": {
@@ -28,7 +28,7 @@
     "test:execution": "node --experimental-sqlite --test test/*.test.mjs",
     "test:phase2": "node --test test/phase2-core.test.mjs test/phase2-intelligence.test.mjs",
     "test:phase1": "tsx --test test/phase1-orchestrator.test.ts test/code-run-integration.test.ts test/model-router.test.ts test/recovery-contract.test.ts",
-    "test:frontend": "tsx --test test/backend-url.test.ts test/chat-stream.test.ts test/chat-recovery.test.ts test/account-security.test.ts",
+    "test:frontend": "tsx --test test/backend-url.test.ts test/chat-stream.test.ts test/chat-recovery.test.ts test/account-security.test.ts test/auth-gate.test.ts",
     "test:backend": "node --experimental-sqlite --test backend/test/*.test.mjs",
     "start:backend": "node --experimental-sqlite backend/server.mjs",
     "start:worker": "node --experimental-sqlite backend/worker.mjs",

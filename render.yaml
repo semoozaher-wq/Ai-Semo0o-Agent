@@ -65,6 +65,25 @@ services:
       # - key: PUBLIC_APP_URL
 
       # -----------------------------------------------------------------------
+      # PRIVATE-APP ACCESS GATE  (REQUIRED for a private deployment)
+      # -----------------------------------------------------------------------
+      # Possessing the URL must NEVER be enough to open the app. Set
+      # APP_ACCESS_KEY (a long random string) in the Render Dashboard; only
+      # people who hold it can create an account. Without it, sign-up stays
+      # closed and every authenticated route is unreachable to outsiders.
+      #
+      # - key: APP_ACCESS_KEY
+      #   sync: false
+      #
+      # Keep open sign-up disabled (this is also the production default).
+      - key: ALLOW_PUBLIC_REGISTRATION
+        value: "false"
+      #
+      # Optionally withhold the session until the email address is verified.
+      # - key: REQUIRE_EMAIL_VERIFICATION
+      #   value: "true"
+
+      # -----------------------------------------------------------------------
       # LLM PROVIDERS
       # -----------------------------------------------------------------------
       # Configure at least one provider in Render Dashboard.
