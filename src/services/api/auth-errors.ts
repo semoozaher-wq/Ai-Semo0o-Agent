@@ -18,6 +18,7 @@ export const AUTH_MESSAGES: Record<string, string> = {
   EMAIL_ALREADY_REGISTERED: 'هذا البريد الإلكتروني مسجّل بالفعل.',
   PASSWORD_POLICY_FAILED: 'كلمة المرور يجب أن تكون 12 حرفًا على الأقل.',
   EMAIL_VERIFICATION_REQUIRED: 'يجب تأكيد البريد الإلكتروني قبل الدخول.',
+  ACCOUNT_TOKEN_INVALID_OR_EXPIRED: 'رمز التأكيد غير صحيح أو انتهت صلاحيته. اطلب رمزًا جديدًا.',
   BACKEND_API_NOT_CONFIGURED: 'لم يتم ضبط عنوان الخادم (Backend).',
   RATE_LIMITED: 'محاولات كثيرة جدًا. انتظر قليلًا ثم أعد المحاولة.',
 };
