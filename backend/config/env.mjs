@@ -81,6 +81,14 @@ export function validateEnv(env = process.env) {
     if (env.BILLING_WEBHOOK_SECRET && !isStrongSecret(env.BILLING_WEBHOOK_SECRET, 16)) errors.push('BILLING_WEBHOOK_SECRET_TOO_SHORT');
     if (env.BILLING_PROVIDER && !env.BILLING_WEBHOOK_SECRET) errors.push('BILLING_WEBHOOK_SECRET_REQUIRED');
     if (env.BROWSER_CDP_URL && !/^wss?:\/\//i.test(env.BROWSER_CDP_URL)) errors.push('BROWSER_CDP_URL_INVALID');
+    // Private-app gate: a production deployment must not accept open sign-up. It
+    // is gated when either APP_ACCESS_KEY is set or ALLOW_PUBLIC_REGISTRATION is
+    // explicitly false. A short shared key is flagged (brute-forceable).
+    const allowPublicRaw = String(env.ALLOW_PUBLIC_REGISTRATION ?? '').trim().toLowerCase();
+    const publicExplicitlyClosed = ['0', 'false', 'no', 'off'].includes(allowPublicRaw);
+    if (env.APP_ACCESS_KEY && String(env.APP_ACCESS_KEY).trim().length < 12) errors.push('APP_ACCESS_KEY_TOO_SHORT');
+    if (!env.APP_ACCESS_KEY && !publicExplicitlyClosed) warnings.push('PRIVATE_APP_NOT_GATED');
+    if (allowPublicRaw && !['0', '1', 'true', 'false', 'yes', 'no', 'on', 'off'].includes(allowPublicRaw)) warnings.push('UNKNOWN_ALLOW_PUBLIC_REGISTRATION_VALUE');
     // Browser production hardening: an in-process Chromium runs with --no-sandbox
     // (required inside containers) and shares the server's network namespace, so an
     // externally managed CDP fleet is preferred. A plaintext ws:// endpoint to a
