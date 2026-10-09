@@ -34,7 +34,17 @@ export ALLOW_PUBLIC_REGISTRATION="${ALLOW_PUBLIC_REGISTRATION:-1}"
 export PORT BIND_HOST
 export DISABLE_WORKER="${DISABLE_WORKER:-1}"
 
-mkdir -p "$(dirname "$DATABASE_FILE")" "$WORKSPACE_ROOT"
+# The DB client requires the database DIRECTORY to be private (mode 0700). A
+# directory pre-created by a plain `mkdir -p` inherits the umask (0755), which
+# makes the client REJECT the configured DATABASE_FILE and silently fall back to
+# the shared repo DB (backend/data/agent.sqlite). That is neither hermetic nor
+# idempotent: a second smoke run then hits EMAIL_ALREADY_REGISTERED (409) and the
+# gate fails spuriously. Create the DB directory with the exact mode the client
+# enforces so the configured (throwaway) path is always the one actually used.
+mkdir -p "$WORKSPACE_ROOT"
+DB_DIR="$(dirname "$DATABASE_FILE")"
+mkdir -p "$DB_DIR"
+chmod 700 "$DB_DIR"
 
 SERVER_PID=""
 cleanup() {
