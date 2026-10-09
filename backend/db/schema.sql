@@ -110,6 +110,52 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL
 );
 
+-- One-time owner-recovery ledger (backend/auth/recovery.mjs). Each applied
+-- recovery writes a fingerprint so re-running the same recovery request on a
+-- persistent database is a safe no-op (never a second password reset).
+CREATE TABLE IF NOT EXISTS recovery_consumed (
+  id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  applied_at TEXT NOT NULL
+);
+
+-- Owner-approved access requests (backend/auth/approvals.mjs). A public request
+-- NEVER creates an account or a session; it only records intent. Approval mints
+-- a one-time setup token; completion creates a 'member' account (never owner).
+CREATE TABLE IF NOT EXISTS access_requests (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  name TEXT,
+  reason TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','completed')) DEFAULT 'pending',
+  setup_token_hash TEXT UNIQUE,
+  setup_expires_at TEXT,
+  used_at TEXT,
+  requested_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  completed_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Optional device-trust ledger (backend/auth/approvals.mjs). Only consulted when
+-- REQUIRE_DEVICE_APPROVAL is enabled; ordinary logins are never gated by default.
+CREATE TABLE IF NOT EXISTS device_trust (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL,
+  label TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending','trusted','rejected')) DEFAULT 'pending',
+  requested_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  last_seen_at TEXT,
+  UNIQUE (user_id, device_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -424,6 +470,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_status ON chat_messages(tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_tenant_user ON messages(tenant_id, user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status, requested_at);
+CREATE INDEX IF NOT EXISTS idx_access_requests_email ON access_requests(lower(email), status);
+CREATE INDEX IF NOT EXISTS idx_device_trust_user ON device_trust(user_id, status);
 
 -- GitHub connections: per-tenant OAuth/installation credentials. The access
 -- token is stored encrypted (AES-256-GCM via the secrets vault); only the
