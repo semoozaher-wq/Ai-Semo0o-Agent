@@ -169,6 +169,9 @@ test('production trial: real backend boots in production config and runs Goal->P
       ...process.env,
       NODE_ENV: 'production',
       SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'),
+      // Private-by-default: production refuses open sign-up unless it is
+      // explicitly opted in. This trial needs a fresh account, so it opts in.
+      ALLOW_PUBLIC_REGISTRATION: 'true',
       DATABASE_FILE: path.join(dir, 'db', 'agent.sqlite'),
       WORKSPACE_ROOT: path.join(dir, 'workspace'),
       ALLOWED_ORIGIN: 'https://app.semo0o.example',
@@ -201,7 +204,10 @@ test('production trial: real backend boots in production config and runs Goal->P
     assert.equal(registered.status, 201, JSON.stringify(registered.body));
     // No external email provider is configured, so the API must never claim an
     // email was sent: it only *queues* into the local outbox and says so.
-    assert.equal(registered.body.verificationRequired, true);
+    // Verification is not required unless REQUIRE_EMAIL_VERIFICATION is set, so
+    // the account is enrolled immediately with a live session.
+    assert.equal(registered.body.verificationRequired, false);
+    assert.ok(registered.body.session?.token, 'open registration must return a live session');
     assert.equal(registered.body.delivery, 'queued');
     assert.ok(typeof registered.body.outboxId === 'string' && registered.body.outboxId.length > 0, 'queued delivery must carry a real outbox id');
     const login = await request('/auth/login', { method: 'POST', body: { email: 'prod-trial@e2e.test', password: PASSWORD } });
