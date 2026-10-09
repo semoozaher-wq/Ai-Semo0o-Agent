@@ -21,12 +21,11 @@ import { Chip } from '../components/ui/Chip';
 import { Sparkline } from '../components/charts/Sparkline';
 import { useAppStore } from '../store/useAppStore';
 import { useAgentsStore } from '../store/useAgentsStore';
-import { useStoreStore } from '../store/useStoreStore';
 import { useFilesStore } from '../store/useFilesStore';
 import { useAnalyticsStore, computeTotals } from '../store/useAnalyticsStore';
 import { useChatStore } from '../store/useChatStore';
 import { QUICK_ACTIONS } from '../data/quickActions';
-import { featuredAgents } from '../data/agents';
+import { featuredAgents, AGENTS } from '../data/agents';
 import { PROVIDERS, getModel, getProvider, modelsByProvider } from '../data/models';
 import { ProviderId } from '../types/model';
 import { Attachment } from '../types/chat';
@@ -47,7 +46,6 @@ export function Dashboard() {
   const settings = useAppStore((s) => s.settings);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
   const tasks = useAgentsStore((s) => s.tasks);
-  const installed = useStoreStore((s) => s.installed);
   const files = useFilesStore((s) => s.files);
   const report = useFilesStore((s) => s.report);
   const usage = useAnalyticsStore((s) => s.usage);
@@ -192,11 +190,11 @@ export function Dashboard() {
         </View>
         <View style={[styles.statsRow, { paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.md }]}>
           <StatCard
-            label="وكلاء مثبّتون"
-            value={formatNumber(installed.length)}
-            icon="grid-outline"
+            label="وكلاء متاحون"
+            value={formatNumber(AGENTS.length)}
+            icon="rocket-outline"
             tone={theme.colors.highlight}
-            onPress={() => router.push('/store')}
+            onPress={() => router.push('/library')}
           />
           <StatCard
             label="ملفات مفحوصة"
@@ -226,7 +224,7 @@ export function Dashboard() {
 
         {/* ------------------------ creation studio ------------------------- */}
         <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.md }}>
-          <Card onPress={() => router.push('/creation')} gradient="aurora">
+          <Card onPress={() => router.push('/studio')} gradient="aurora">
             <View style={styles.rowBetween}>
               <View style={{ flex: 1 }}>
                 <Text variant="subtitle" weight="bold" style={{ color: '#FFFFFF' }}>
@@ -297,8 +295,8 @@ export function Dashboard() {
             <SectionHeader
               title="وكلاء مميّزون"
               icon="star-outline"
-              actionLabel="المتجر"
-              onAction={() => router.push('/store')}
+              actionLabel="المكتبة"
+              onAction={() => router.push('/library')}
             />
           </View>
           <ScrollView

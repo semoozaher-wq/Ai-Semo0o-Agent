@@ -1,5 +1,6 @@
+export { Auth } from './Auth';
 export { Dashboard } from './Dashboard';
-export { Store } from './Store';
+export { AgentLibrary } from './AgentLibrary';
 export { AgentDetail } from './AgentDetail';
 export { Chat } from './Chat';
 export { Agents } from './Agents';

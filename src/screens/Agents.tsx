@@ -1,4 +1,5 @@
 import React from 'react';
+import { useRouter } from 'expo-router';
 import {
   Modal,
   Pressable,
@@ -242,6 +243,7 @@ export function Agents() {
   const reject = useAgentsStore((s) => s.reject);
   const removeTask = useAgentsStore((s) => s.removeTask);
   const clear = useAgentsStore((s) => s.clear);
+  const router = useRouter();
 
   const settings = useAppStore((s) => s.settings);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
@@ -277,9 +279,14 @@ export function Agents() {
             title="الوكلاء الأذكياء"
             subtitle="محرّك تنفيذ ذاتي يخطّط وينفّذ ويتحقّق تلقائيًا"
             right={
-              <Pressable onPress={() => void clear()} style={styles.iconBtn}>
-                <Icon name="trash-outline" size={20} tone="muted" />
-              </Pressable>
+              <>
+                <Pressable onPress={() => router.push('/library')} style={styles.iconBtn}>
+                  <Icon name="apps-outline" size={20} tone="muted" />
+                </Pressable>
+                <Pressable onPress={() => void clear()} style={styles.iconBtn}>
+                  <Icon name="trash-outline" size={20} tone="muted" />
+                </Pressable>
+              </>
             }
           />
         </View>

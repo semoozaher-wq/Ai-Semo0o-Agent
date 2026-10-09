@@ -251,10 +251,10 @@ export function Analytics() {
 
         <Card padded={false} style={{ marginTop: theme.spacing.lg }}>
           <View style={{ padding: theme.spacing.lg, paddingBottom: 0 }}>
-            <SectionHeader title="ملخص المتجر" icon="storefront-outline" />
+            <SectionHeader title="ملخص مكتبة الوكلاء" icon="apps-outline" />
           </View>
           <ListRow
-            title="وكلاء مثبّتون"
+            title="وكلاء مُفعّلون"
             subtitle="من إجمالي الكتالوج"
             icon="download-outline"
             right={
