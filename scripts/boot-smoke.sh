@@ -25,6 +25,12 @@ export SECRETS_MASTER_KEY="${SECRETS_MASTER_KEY:-0123456789abcdef0123456789abcde
 export DATABASE_FILE="${DATABASE_FILE:-$TMP/db/agent.sqlite}"
 export WORKSPACE_ROOT="${WORKSPACE_ROOT:-$TMP/workspace}"
 export ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://ci.invalid}"
+# This smoke gate boots the server with NODE_ENV=production (to exercise the real
+# production env contract) and then registers a throwaway account. Production is
+# fail-closed for self-service sign-up unless explicitly opted in, so the harness
+# opts in here. This is a TEST-ONLY switch: it does not change the production
+# default (which stays closed unless the operator sets ALLOW_PUBLIC_REGISTRATION).
+export ALLOW_PUBLIC_REGISTRATION="${ALLOW_PUBLIC_REGISTRATION:-1}"
 export PORT BIND_HOST
 export DISABLE_WORKER="${DISABLE_WORKER:-1}"
 
