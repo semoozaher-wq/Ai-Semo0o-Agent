@@ -38,6 +38,7 @@ export interface CreationState {
   select(jobId: string): Promise<void>;
   cancel(jobId: string): Promise<void>;
   clearNotice(): void;
+  reset(): void;
   artifactUrl(jobId: string, name: 'gif' | 'avi' | 'bundle' | 'mp4'): string;
 }
 
@@ -135,6 +136,23 @@ export const useCreationStore = create<CreationState>((set, get) => ({
 
   clearNotice() {
     set({ notice: null });
+  },
+
+  /** Stop polling and drop the previous account's jobs (called on sign-out). */
+  reset() {
+    stopPolling();
+    set({
+      capabilities: null,
+      jobs: [],
+      activeJob: null,
+      events: [],
+      loading: false,
+      submitting: false,
+      busy: null,
+      error: null,
+      notice: null,
+      loadedAt: null,
+    });
   },
 
   artifactUrl(jobId, name) {
