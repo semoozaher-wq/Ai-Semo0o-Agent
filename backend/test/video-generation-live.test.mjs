@@ -29,11 +29,33 @@ const optedIn = String(process.env.VIDEO_LIVE_TEST || '') === '1';
 const hasGoogle = Boolean(process.env.VIDEO_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
 const hasReplicate = Boolean(process.env.REPLICATE_API_TOKEN && process.env.REPLICATE_VIDEO_VERSION);
 
+// COST LIMIT: a paid call is only ever made when the operator has explicitly
+// declared a positive budget. `VIDEO_LIVE_BUDGET_USD` caps the total estimated
+// spend for the whole file; `VIDEO_LIVE_COST_USD` is the (conservative, operator-
+// overridable) estimated cost of one call. The shared ledger below refuses any
+// call that would exceed the budget, so a runaway loop can never spend without
+// bound - the tests skip with a clear reason instead of silently paying.
+const budgetUsd = Number(process.env.VIDEO_LIVE_BUDGET_USD || 0);
+const costPerCallUsd = Number(process.env.VIDEO_LIVE_COST_USD || 1.5);
+let spentUsd = 0;
+
+/** Returns true when a paid call fits the budget; otherwise marks the test skipped. */
+function budgetGate(t) {
+  if (spentUsd + costPerCallUsd > budgetUsd) {
+    t.skip(`video live budget reached (spent $${spentUsd.toFixed(2)} of $${budgetUsd.toFixed(2)}; next call ~$${costPerCallUsd.toFixed(2)})`);
+    return false;
+  }
+  return true;
+}
+function charge() { spentUsd += costPerCallUsd; }
+
 const reason = !optedIn
   ? 'set VIDEO_LIVE_TEST=1 to run live video tests (they cost money)'
   : (!hasGoogle && !hasReplicate)
     ? 'no real video credentials (VIDEO_API_KEY / GEMINI_API_KEY / GOOGLE_API_KEY or REPLICATE_API_TOKEN+REPLICATE_VIDEO_VERSION)'
-    : false;
+    : !(budgetUsd > 0)
+      ? 'set VIDEO_LIVE_BUDGET_USD to a positive cap to authorise paid calls'
+      : false;
 
 const skip = reason || undefined;
 
@@ -46,11 +68,13 @@ function assertLooksLikeVideo(buffer, mimeType) {
   if (mimeType) assert.match(mimeType, /video\//);
 }
 
-test('LIVE: text-to-video produces a brand-new MP4 from a prompt', { skip }, async () => {
+test('LIVE: text-to-video produces a brand-new MP4 from a prompt', { skip }, async (t) => {
+  if (!budgetGate(t)) return;
   const service = createVideoGenerationService();
   assert.equal(service.capabilities.textToVideo, true, 'a real text-to-video provider is configured');
 
   const started = Date.now();
+  charge();
   const result = await service.textToVideo({
     prompt: 'A cinematic drone shot flying over a snowy pine forest at sunrise, soft golden light, ultra realistic, 4k',
     durationSeconds: Number(process.env.VIDEO_LIVE_DURATION || 5),
@@ -68,7 +92,7 @@ test('LIVE: text-to-video produces a brand-new MP4 from a prompt', { skip }, asy
   console.log(`[live] ${result.provider}/${result.model} → ${out} (${buffer.length} bytes, ${Math.round((Date.now() - started) / 1000)}s)`);
 });
 
-test('LIVE: image-to-video animates a supplied frame into an MP4', { skip }, async () => {
+test('LIVE: image-to-video animates a supplied frame into an MP4', { skip }, async (t) => {
   const service = createVideoGenerationService();
   if (!service.capabilities.imageToVideo) {
     // Honest: not every backend supports I2V. Skip rather than fake it.
@@ -76,9 +100,11 @@ test('LIVE: image-to-video animates a supplied frame into an MP4', { skip }, asy
   }
   const sourceImage = process.env.VIDEO_LIVE_IMAGE;
   if (!sourceImage) return; // no source frame supplied → nothing to animate
+  if (!budgetGate(t)) return;
 
   const { readFile } = await import('node:fs/promises');
   const image = await readFile(sourceImage);
+  charge();
   const result = await service.imageToVideo({
     prompt: process.env.VIDEO_LIVE_I2V_PROMPT || 'gently animate the scene with natural motion, subtle camera push-in',
     image: { base64: image.toString('base64'), mimeType: sourceImage.endsWith('.jpg') || sourceImage.endsWith('.jpeg') ? 'image/jpeg' : 'image/png' },
@@ -90,15 +116,17 @@ test('LIVE: image-to-video animates a supplied frame into an MP4', { skip }, asy
   await writeFile(process.env.VIDEO_LIVE_I2V_OUT || 'live-image-to-video.mp4', buffer);
 });
 
-test('LIVE: registry video.generate writes a real MP4 into the workspace', { skip }, async () => {
+test('LIVE: registry video.generate writes a real MP4 into the workspace', { skip }, async (t) => {
+  if (!budgetGate(t)) return;
   const registry = createLiveToolRegistry();
-  const status = registry.status().tools.find((t) => t.id === 'video.generate');
+  const status = registry.status().tools.find((tool) => tool.id === 'video.generate');
   assert.equal(status.state, 'live', 'video.generate is wired to a live provider');
 
   const { mkdtemp } = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-live-'));
+  charge();
   const out = await registry.run('video.generate', {
     prompt: 'a neon koi fish swimming through dark water, macro, cinematic',
     path: 'live/generated.mp4',
@@ -109,14 +137,16 @@ test('LIVE: registry video.generate writes a real MP4 into the workspace', { ski
   assertLooksLikeVideo(buffer);
 });
 
-test('LIVE: conversational video edit routes to a genuine editor (skips if none)', { skip }, async () => {
+test('LIVE: conversational video edit routes to a genuine editor (skips if none)', { skip }, async (t) => {
   const editor = createVideoEditProvider();
   if (!editor) return; // honest: no V2V editor configured
   const sourceVideo = process.env.VIDEO_LIVE_SOURCE_VIDEO;
   if (!sourceVideo) return;
+  if (!budgetGate(t)) return;
   const { readFile } = await import('node:fs/promises');
   const video = await readFile(sourceVideo);
   const { conversationalVideoEdit } = await import('../creation/video-gen.mjs');
+  charge();
   const result = await conversationalVideoEdit({
     conversation: process.env.VIDEO_LIVE_EDIT_PROMPT || 'make the scene look like it is snowing',
     sourceVideo: { base64: video.toString('base64'), mimeType: 'video/mp4' },

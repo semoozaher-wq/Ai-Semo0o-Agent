@@ -86,3 +86,31 @@ test('quota consumption is atomic and leaves counters unchanged when rejected', 
     assert.equal(db.get('SELECT runs FROM usage_counters WHERE tenant_id=?', owner.tenant_id).runs, 1);
   } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('cost usage is measured and the monthly spending limit is enforced atomically', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'semo0o-cost-'));
+  const db = new Database(path.join(dir, 'agent.sqlite'));
+  try {
+    const owner = createUser(db, { email: 'cost@saas.test', password: 'correct horse battery staple', tenantName: 'Cost' });
+    // Default free plan carries a hard monthly spend cap.
+    assert.equal(db.get('SELECT monthly_cost_usd FROM usage_quotas WHERE tenant_id=?', owner.tenant_id).monthly_cost_usd, 10);
+    // Tighten the cap so the boundary is deterministic.
+    db.run('UPDATE usage_quotas SET monthly_cost_usd=0.05 WHERE tenant_id=?', owner.tenant_id);
+    const first = consumeQuota(db, owner.tenant_id, { costUsd: 0.02 });
+    assert.equal(first.costUsd, 0.02);
+    assert.equal(db.get('SELECT cost_usd FROM usage_counters WHERE tenant_id=?', owner.tenant_id).cost_usd, 0.02);
+    // A second charge within the cap accumulates.
+    const second = consumeQuota(db, owner.tenant_id, { costUsd: 0.03 });
+    assert.equal(second.costUsd, 0.05);
+    assert.equal(db.get('SELECT cost_usd FROM usage_counters WHERE tenant_id=?', owner.tenant_id).cost_usd, 0.05);
+    // Crossing the cap is rejected and must NOT partially write the counter.
+    assert.throws(() => consumeQuota(db, owner.tenant_id, { costUsd: 0.01 }), /MONTHLY_COST_QUOTA_EXCEEDED/);
+    assert.equal(db.get('SELECT cost_usd FROM usage_counters WHERE tenant_id=?', owner.tenant_id).cost_usd, 0.05);
+    // Negative cost deltas are rejected outright.
+    assert.throws(() => consumeQuota(db, owner.tenant_id, { costUsd: -1 }), /INVALID_QUOTA_DELTA/);
+    // Zero-cost consumption stays a no-op on the cost column.
+    const zero = consumeQuota(db, owner.tenant_id, { tokens: 5 });
+    assert.equal(zero.costUsd, 0.05);
+    assert.equal(db.get('SELECT cost_usd FROM usage_counters WHERE tenant_id=?', owner.tenant_id).cost_usd, 0.05);
+  } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
+});

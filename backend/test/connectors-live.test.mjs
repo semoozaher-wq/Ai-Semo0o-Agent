@@ -173,7 +173,13 @@ test('connectors stay fail-closed with no credentials (no fake success)', async 
       MEDIA_ANALYZE_HTTP_URL: undefined,
     },
     async () => {
-      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, videoEdit: false, audio: false, mediaAnalysis: false });
+      // The boolean connector contract is unchanged; the additive video detail
+      // (videoProvider / videoCapabilities / videoEditing) is asserted separately.
+      const { videoProvider, videoCapabilities, videoEditing, ...connectors } = connectorStatus(process.env);
+      assert.deepEqual(connectors, { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, videoEdit: false, audio: false, mediaAnalysis: false });
+      assert.equal(videoProvider, null);
+      assert.deepEqual(videoCapabilities, { textToVideo: false, imageToVideo: false, videoExtension: false, videoEditing: false });
+      assert.equal(videoEditing, false);
       assert.equal(createImageProvider(process.env), null);
       assert.equal(createCalendarProvider(process.env), null);
       assert.equal(createEmailSendProvider(process.env), null);
