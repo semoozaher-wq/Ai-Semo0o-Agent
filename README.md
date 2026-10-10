@@ -12,7 +12,7 @@ operations layer with billing, quotas, monitoring, backups, and a self-improveme
 loop.
 
 - **Version:** 2.0.0 (private)
-- **Runtime:** Node.js `>=22.5.0` (uses the built-in `node:sqlite`), npm `>=10.9.0`
+- **Runtime:** Node.js `>=22.13.0` (uses the built-in `node:sqlite`), npm `>=10.9.0`
 - **Client:** Expo SDK 57 · React Native 0.86 · React 19 · TypeScript · Zustand · expo-router
 - **Backend:** Node 22 (`node:sqlite`), a durable run queue, a supervised worker
 
@@ -223,7 +223,7 @@ the production trial (`npm run trial:self-improve`) and the agent benchmark
 Two workflows gate every change:
 
 - **`.github/workflows/ci.yml`** — runs the full suite on the Node floor
-  (`22.5`) and the deployed runtime (`22.11.0`), plus the dependency-audit gate.
+  (`22.13.0`) and the deployed runtime (`22.23.2`), plus the dependency-audit gate.
 - **`.github/workflows/quality.yml`** — secret/SAST scan, audit gate, import
   verification, typecheck, lint, tests, Expo doctor, web export, browser smoke,
   browser E2E, agent E2E benchmark, backend boot smoke, and the self-improvement
