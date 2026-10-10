@@ -11,3 +11,4 @@ export { Settings } from './Settings';
 export { Anatomy } from './Anatomy';
 export { Operations } from './Operations';
 export { Creation } from './Creation';
+export { Integrations } from './Integrations';

@@ -15,11 +15,11 @@ import {
   Icon,
   IconButton,
   Input,
-  Logo,
   SegmentedControl,
   Text,
 } from '../components/ui';
 import type { IconName } from '../components/ui';
+import { Semo0oMark } from '../components/brand/Semo0oLogo';
 import { useResponsive } from '../hooks/useResponsive';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -48,7 +48,7 @@ function HeroPanel() {
     <Gradient name="nebula" style={styles.heroPanel}>
       <View style={styles.heroPanelInner}>
         <View style={styles.heroBrandRow}>
-          <Logo size={52} />
+          <Semo0oMark size={52} />
           <View style={{ marginStart: 12 }}>
             <Text weight="extrabold" style={{ color: '#FFFFFF', fontSize: theme.fontSize.xl }}>
               Semo0o AI
@@ -120,7 +120,7 @@ function CompactHero() {
   const theme = useTheme();
   return (
     <View style={styles.compactHero}>
-      <Logo size={60} />
+      <Semo0oMark size={60} />
       <Text variant="title" weight="extrabold" align="center" style={{ marginTop: theme.spacing.md }}>
         Semo0o AI
       </Text>
