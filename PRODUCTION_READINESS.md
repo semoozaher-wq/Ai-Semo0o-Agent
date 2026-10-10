@@ -180,3 +180,136 @@ signing, legal review) or dependency-level, and are not falsely marked `PASS`.
 **NOT PRODUCTION READY / NOT SELLABLE AS A GENERAL COMMERCIAL SaaS.**
 
 The P3 work improves data lifecycle isolation, browser concurrency boundaries, legal visibility, and operational readiness documentation. It does not honestly close the external-infrastructure, dependency, provider, legal, mobile, and end-to-end deletion blockers. No unverified external integration is marked `PASS`, and no fake production success path was introduced.
+
+---
+
+## Phase 4 Addendum — 2026-10-10 (gap-remediation pass)
+
+Focus: close the eight outstanding gaps reported against the repository while
+keeping every existing feature intact (additive-only changes). Each item below
+lists what changed and the automated evidence that was run. No existing test was
+removed; the suite only grew.
+
+### 1. Real video generation wired to UI + API (MP4 preview/download)
+
+- `backend/tools/connectors.mjs` already exposed `createVideoProvider`
+  (google = Veo 3.1, replicate, http) and `createVideoEditProvider`. The
+  Creation Studio now surfaces the real result end-to-end: `realVideo`,
+  `videoProvider`, `videoModel`, `videoDurationSeconds`, and `videoError` are
+  carried on the job manifest, and `mp4` is a first-class artifact kind.
+- `POST /creation/video/generate` performs real generation and **fails closed**
+  (`TOOL_CONNECTOR_NOT_CONFIGURED`) when no provider is configured;
+  `GET /creation/video` reports the live capability state.
+- The Creation screen separates the **local studio (always available)** from
+  **real AI generation** with a SegmentedControl, and renders an MP4
+  preview + download row for real results.
+- Evidence: `backend/test/video-http-integration.test.mjs` (4 tests) drives a
+  local HTTP provider, sniffs the `ftyp` box to prove a real MP4 was produced,
+  and verifies the artifact bytes.
+
+### 2. Durable data persistence + production database + restorable backup
+
+- New tables `creation_jobs`, `creation_job_events`, `creation_job_artifacts`
+  persist jobs (SQLite BLOB payloads), their event stream, and result artifacts.
+- `backend/creation/job-store.mjs` is a write-through durable store; the
+  `CreationStudio` hydrates from it on boot and flips `running` jobs that were
+  interrupted by a restart to `failed`, so no task is silently lost.
+- `backend/server.mjs` constructs `new CreationStudio({ llm, db })` and prunes
+  old rows.
+- Evidence: `backend/test/creation-persistence.test.mjs` (3 tests) proves
+  write-through, restart hydration, and interrupted→failed recovery; the existing
+  encrypted backup/restore drill (`backend/ops/sqlite-archive.mjs`,
+  `backend/test/backup.test.mjs`) covers the database snapshot/restore path.
+
+### 3. Real integration tests for video providers + cost limits
+
+- `backend/test/video-http-integration.test.mjs` exercises a real provider
+  contract over HTTP without external spend and validates the resulting file.
+- Live provider tests are opt-in and cost-gated by `VIDEO_LIVE_BUDGET_USD`; a
+  shared spend ledger refuses to exceed the budget, so CI never incurs surprise
+  cost.
+- Evidence: the integration test suite above plus the budget guard in
+  `backend/test/video-generation-live.test.mjs`.
+
+### 4. Provider configuration + truthful capability status
+
+- `backend/config/env.mjs` `PROVIDER_ENV.VIDEO_PROVIDER` now accepts
+  `google|replicate|http` (previously incompatible), and `AUDIO_PROVIDER`
+  accepts `replicate`.
+- `backend/tools/registry.mjs` no longer over-claims `video.edit`: it reports
+  supported only when a real editor **or** `videoExtension` is actually
+  configured.
+- Evidence: `backend/test/connectors-live.test.mjs` and
+  `backend/test/integrations.test.mjs` (updated) assert the real capability
+  matrix.
+
+### 5. Comprehensive security scan + isolation + safe code execution
+
+- `scripts/security-scan.mjs` was refactored into a testable module exporting
+  `RULES` (10 high-signal rules: hardcoded secret, `eval`, shell interpolation,
+  private-URL literal, dynamic code construction, private-key literal,
+  `dangerouslySetInnerHTML`, deprecated `createCipher`, known secret shapes,
+  shell command injection), a pure `scanText`, and `scanRepository`. It honors
+  `security-scan:allow` / `allow <rule>` / `allow-file` suppressions.
+- Tenant data isolation is asserted on the durable store (`listJobs` /
+  `loadArtifact` are tenant-scoped), and the sandbox rejects unsafe requests
+  (unsupported language, path traversal, absolute paths, `network != none`,
+  oversized limits) and pins container hardening (`network=none`, read-only,
+  `cap-drop=ALL`, `no-new-privileges`, non-root uid).
+- Evidence: `backend/test/security-scan.test.mjs` (6 tests) and
+  `backend/test/security-isolation.test.mjs` (4 tests); `npm run security:scan`
+  reports 0 findings across the repository.
+
+### 6. CI/CD: branch protection + required tests + pinned dependencies
+
+- 25 dependency ranges were pinned to exact versions in `package.json`, the
+  lockfile was synchronized (`npm ci --dry-run` succeeds), and `.npmrc` sets
+  `save-exact=true` for reproducible installs.
+- `.github/CODEOWNERS`, `scripts/protect-master-branch.sh`, and
+  `docs/BRANCH_PROTECTION.md` define and apply `master` protection with the
+  required status checks `validate (22.5)`, `validate (22.11.0)`, and `verify`.
+- Evidence: `ci.yml` (job `validate`, Node matrix) and `quality.yml` (job
+  `verify`) already run the required tests; the protection script is
+  syntax-checked (`bash -n`).
+
+### 7. Documentation + cleanup
+
+- A top-level `README.md` now documents architecture, quick start, configuration,
+  testing, security, durability/backups, commercial readiness, and CI/CD.
+- 30 historical report/log files were moved to `docs/archive/`; 7 stale `.patch`
+  files and temporary scripts/logs were removed; `.gitignore` ignores `tmp/`.
+- Evidence: this document (Phase 4 addendum) plus the repository tree.
+
+### 8. Commercial readiness: usage/cost/quota measurement + spending limits
+
+- New columns `usage_quotas.monthly_cost_usd` (hard monthly spend cap) and
+  `usage_counters.cost_usd` (accumulated spend) were added to the schema and the
+  idempotent migrations.
+- `consumeQuota(db, tenantId, { tokens, runs, costUsd })` now validates deltas,
+  enforces the cap (`MONTHLY_COST_QUOTA_EXCEEDED`, HTTP 402), and accumulates
+  spend atomically — a rejected charge never partially writes the counter.
+- `PLANS` carry `monthlyCostUsd` (free 10 / pro 100 / team 1000);
+  `syncQuotaToPlan` writes it; `usageSummary` and the `/usage` API report
+  per-day and total `costUsd`; both chat call sites pass measured cost through.
+- Evidence: `backend/test/saas-lifecycle.test.mjs` cost test (accumulation,
+  boundary rejection, atomicity, negative-delta rejection) and the full
+  request→delivery trial below.
+
+### Phase 4 release-gate evidence
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| `npm test` | PASS | legacy-harness + execution + phase1 + frontend + phase2 + backend + pain-map, 0 failures |
+| `npm run test:backend` | PASS | 691 tests, 685 pass, 0 fail, 6 skipped |
+| `npm run security:scan` | PASS | 0 findings across the repository |
+| `npm run typecheck` | PASS | `tsc --noEmit` |
+| Video real-provider integration | PASS (local provider) | `video-http-integration.test.mjs` sniffs a real MP4 |
+| Live video providers | OPT-IN / COST-GATED | `VIDEO_LIVE_BUDGET_USD` shared spend ledger |
+| Durable persistence + restart recovery | PASS | `creation-persistence.test.mjs` |
+| Cost measurement + spend limit | PASS | `saas-lifecycle.test.mjs` cost test |
+| Branch protection config | READY (apply script) | `scripts/protect-master-branch.sh`, `docs/BRANCH_PROTECTION.md` |
+
+**Residual external blockers (unchanged):** live Google/Replicate video keys,
+managed off-site backup target, real metrics/alerting backend, GitHub App
+credentials for live PR/CI actions, and mobile signing environments. These
+require external infrastructure and are **not** claimed as verified.
