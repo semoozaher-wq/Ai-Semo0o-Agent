@@ -13,7 +13,7 @@ import { resetUserDataStores } from './session-reset';
  * access key), and sign-out. It never fabricates a session — `restore()` only
  * trusts a token the server confirms via `GET /auth/session`.
  */
-export type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
+export type AuthStatus = 'loading' | 'anonymous' | 'authenticated' | 'unavailable';
 
 export interface AccessPolicy {
   private: boolean;
@@ -79,14 +79,36 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
     try {
-      const user = await backendApi.restoreSession();
-      // Bind (or clear) the account namespace BEFORE the bootstrap effect
-      // hydrates the data stores, so the stores read the correct account's data.
-      adoptAccountScope(user);
-      set({ status: user ? 'authenticated' : 'anonymous', user, error: null });
+      // `restoreSessionResult()` distinguishes a DEFINITIVE rejection (expired /
+      // revoked token) from a TRANSIENT failure (network down, 5xx, timeout).
+      const result = await backendApi.restoreSessionResult();
+      if (result.kind === 'restored') {
+        // Bind the account namespace BEFORE the bootstrap effect hydrates the
+        // data stores, so the stores read the correct account's data.
+        adoptAccountScope(result.user);
+        set({ status: 'authenticated', user: result.user, error: null });
+        void get().refreshPolicy();
+        return;
+      }
+      if (result.kind === 'unavailable') {
+        // TRANSIENT: the persisted token was KEPT by the client. Do NOT clear the
+        // session and do NOT fall back to 'anonymous' — that would render the
+        // sign-in screen and imply the user was signed out. Surface a dedicated
+        // state whose retry re-runs this exact restore.
+        set({ status: 'unavailable', user: null, error: AUTH_MESSAGES.SESSION_UNAVAILABLE ?? 'SESSION_UNAVAILABLE' });
+        return;
+      }
+      // 'none' (no token) or 'rejected' (the server definitively expired/revoked
+      // it): there is genuinely no live session, so clear the namespace and sign
+      // the user out.
+      adoptAccountScope(null);
+      set({ status: 'anonymous', user: null, error: null });
       void get().refreshPolicy();
     } catch (error) {
-      set({ status: 'anonymous', user: null, error: humanizeAuthError(error) });
+      // `restoreSessionResult()` does not throw for an auth/transport failure, so
+      // reaching here is unexpected. Fail SAFE: keep any persisted session and
+      // offer a retry instead of silently signing the user out.
+      set({ status: 'unavailable', user: null, error: humanizeAuthError(error) });
     }
   },
 
@@ -129,8 +151,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         });
         return { ok: false, verificationRequired };
       }
-      set({ status: 'authenticated', user: result.user, busy: false, error: null, pendingVerificationEmail: null });
+      // Bind the account namespace BEFORE flipping the status to `authenticated`:
+      // the bootstrap effect hydrates the data stores the instant the status
+      // changes, so the scope (and the reset of any previous account's in-memory
+      // slice) MUST already be in place or the new user could hydrate the prior
+      // account's data.
       adoptAccountScope(result.user);
+      set({ status: 'authenticated', user: result.user, busy: false, error: null, pendingVerificationEmail: null });
       return { ok: true, verificationRequired };
     } catch (error) {
       set({ busy: false, status: 'anonymous', error: humanizeAuthError(error) });
