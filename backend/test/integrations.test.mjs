@@ -46,7 +46,7 @@ test('connectors fail closed when nothing is configured', () => {
   assert.equal(createDiscordProvider(env), null);
   assert.equal(createNotionProvider(env), null);
   assert.equal(createWebhookProvider(env), null);
-  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, audio: false, mediaAnalysis: false });
+  assert.deepEqual(connectorStatus(env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, videoEdit: false, audio: false, mediaAnalysis: false });
 });
 
 test('image.generate performs a real OpenAI-compatible call and returns bytes', async () => {

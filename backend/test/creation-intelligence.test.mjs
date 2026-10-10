@@ -173,7 +173,7 @@ test('critic: async critique without a model is deterministic-only', async () =>
 
 test('providers: local-only set reports honest capabilities', () => {
   const providers = createLocalOnlyProviders();
-  assert.deepEqual(providers.capabilities, { image: false, vision: false, tts: false, video: false, music: false, mediaAnalysis: false });
+  assert.deepEqual(providers.capabilities, { image: false, vision: false, tts: false, video: false, videoEdit: false, music: false, mediaAnalysis: false });
   const status = providers.status();
   assert.equal(status.localStudio, true);
 });

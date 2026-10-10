@@ -167,12 +167,13 @@ test('connectors stay fail-closed with no credentials (no fake success)', async 
       GENERIC_WEBHOOK_URL: undefined,
       STT_PROVIDER: undefined, STT_API_KEY: undefined, STT_HTTP_URL: undefined,
       TTS_PROVIDER: undefined, TTS_API_KEY: undefined, TTS_HTTP_URL: undefined, ELEVENLABS_API_KEY: undefined,
-      VIDEO_PROVIDER: undefined, VIDEO_HTTP_URL: undefined,
+      VIDEO_PROVIDER: undefined, VIDEO_HTTP_URL: undefined, VIDEO_API_KEY: undefined, VIDEO_API_BASE: undefined, VIDEO_MODEL: undefined,
+      VIDEO_EDIT_PROVIDER: undefined, VIDEO_EDIT_HTTP_URL: undefined, REPLICATE_API_TOKEN: undefined, REPLICATE_VIDEO_VERSION: undefined, REPLICATE_VIDEO_EDIT_VERSION: undefined,
       AUDIO_PROVIDER: undefined, AUDIO_HTTP_URL: undefined,
       MEDIA_ANALYZE_HTTP_URL: undefined,
     },
     async () => {
-      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, audio: false, mediaAnalysis: false });
+      assert.deepEqual(connectorStatus(process.env), { image: false, vision: false, calendar: false, email: false, slack: false, teams: false, discord: false, notion: false, webhook: false, stt: false, tts: false, video: false, videoEdit: false, audio: false, mediaAnalysis: false });
       assert.equal(createImageProvider(process.env), null);
       assert.equal(createCalendarProvider(process.env), null);
       assert.equal(createEmailSendProvider(process.env), null);
