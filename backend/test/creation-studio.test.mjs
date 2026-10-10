@@ -216,6 +216,46 @@ test('creation routes are tenant-scoped and return honest 404s', async () => {
   } finally { await fx.close(); }
 });
 
+test('creation jobs are isolated across tenants end-to-end', async () => {
+  const fx = await fixture();
+  try {
+    // Two independent tenants.
+    createUser(fx.db, { email: 'studio-a@test', password: 'correct horse battery staple', tenantName: 'TenantA' });
+    createUser(fx.db, { email: 'studio-b@test', password: 'correct horse battery staple', tenantName: 'TenantB' });
+    const loginA = await fx.request('/auth/login', { method: 'POST', body: { email: 'studio-a@test', password: 'correct horse battery staple' } });
+    const loginB = await fx.request('/auth/login', { method: 'POST', body: { email: 'studio-b@test', password: 'correct horse battery staple' } });
+    const tokenA = loginA.body.session.token;
+    const tokenB = loginB.body.session.token;
+
+    const started = await fx.request('/creation/jobs', {
+      method: 'POST', token: tokenA,
+      body: { goal: 'Tenant A private launch video', resolution: 'draft', fps: 8, duration: 6 },
+    });
+    assert.equal(started.status, 202);
+    const id = started.body.id;
+
+    // Tenant B can neither read, list, stream, download nor cancel tenant A's job.
+    const read = await fx.request(`/creation/jobs/${id}`, { token: tokenB });
+    assert.equal(read.status, 404);
+    assert.match(read.body.error, /CREATION_JOB_NOT_FOUND/);
+
+    const listB = await fx.request('/creation/jobs', { token: tokenB });
+    assert.equal(listB.status, 200);
+    assert.ok(!listB.body.jobs.some((j) => j.id === id));
+
+    const artifact = await fx.request(`/creation/jobs/${id}/artifacts/gif`, { token: tokenB });
+    assert.equal(artifact.status, 404);
+
+    const cancel = await fx.request(`/creation/jobs/${id}/cancel`, { method: 'POST', token: tokenB });
+    assert.equal(cancel.status, 404);
+
+    // The owner still sees its own job.
+    const listA = await fx.request('/creation/jobs', { token: tokenA });
+    assert.equal(listA.status, 200);
+    assert.ok(listA.body.jobs.some((j) => j.id === id));
+  } finally { await fx.close(); }
+});
+
 /* ------------------------------------------------------------------ */
 /* studio.* tools                                                      */
 /* ------------------------------------------------------------------ */
