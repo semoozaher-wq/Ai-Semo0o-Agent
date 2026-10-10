@@ -1,8 +1,7 @@
-import { Platform } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { resolveBackendUrl } from './backend-url';
 import { consumeSse } from './sse';
 import { restoreSessionWith } from './session-restore';
+import type { RestoreResult } from './session-restore';
 import { createAccountApi } from '../account/api';
 import type {
   ApiAccount,
@@ -297,41 +296,74 @@ export interface ApiVideoStatus {
 const SESSION_STORAGE_KEY = 'semo0o.backend.session';
 
 /**
- * Session token persistence. The token (never the password) is kept so a
- * returning, already-authorised user stays signed in across reloads. Web uses
- * localStorage; native uses the OS keychain via SecureStore.
+ * Session-token persistence seam.
+ *
+ * The token (never the password) is kept so a returning, already-authorised user
+ * stays signed in across reloads. Web uses `localStorage`; native uses the OS
+ * keychain via SecureStore. The platform modules are loaded LAZILY (dynamic
+ * import) so this module \u2014 the transport + auth logic \u2014 stays importable in a
+ * plain Node process (tests, tooling) without pulling in react-native.
  */
-async function readStoredToken(): Promise<string | null> {
-  try {
-    if (Platform.OS === 'web') return globalThis.localStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
-    return await SecureStore.getItemAsync(SESSION_STORAGE_KEY);
-  } catch { return null; }
+export interface TokenStorage {
+  read(): Promise<string | null>;
+  write(token: string | null): Promise<void>;
 }
-async function writeStoredToken(token: string | null): Promise<void> {
-  try {
-    if (Platform.OS === 'web') {
-      if (token) globalThis.localStorage?.setItem(SESSION_STORAGE_KEY, token);
-      else globalThis.localStorage?.removeItem(SESSION_STORAGE_KEY);
-      return;
-    }
-    if (token) await SecureStore.setItemAsync(SESSION_STORAGE_KEY, token, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
-    else await SecureStore.deleteItemAsync(SESSION_STORAGE_KEY);
-  } catch { /* keep the in-memory session if secure persistence is unavailable */ }
+
+/**
+ * In-memory token storage. Used as the fallback when the platform store is
+ * unavailable, and by tests that drive the real client without a device.
+ */
+export function createMemoryTokenStorage(initial: string | null = null): TokenStorage {
+  let value = initial;
+  return {
+    async read() { return value; },
+    async write(token) { value = token; },
+  };
+}
+
+/** Platform token storage (localStorage on web, SecureStore on native), lazy. */
+function createPlatformTokenStorage(): TokenStorage {
+  return {
+    async read() {
+      try {
+        const { Platform } = await import('react-native');
+        if (Platform.OS === 'web') return globalThis.localStorage?.getItem(SESSION_STORAGE_KEY) ?? null;
+        const SecureStore = await import('expo-secure-store');
+        return await SecureStore.getItemAsync(SESSION_STORAGE_KEY);
+      } catch { return null; }
+    },
+    async write(token) {
+      try {
+        const { Platform } = await import('react-native');
+        if (Platform.OS === 'web') {
+          if (token) globalThis.localStorage?.setItem(SESSION_STORAGE_KEY, token);
+          else globalThis.localStorage?.removeItem(SESSION_STORAGE_KEY);
+          return;
+        }
+        const SecureStore = await import('expo-secure-store');
+        if (token) await SecureStore.setItemAsync(SESSION_STORAGE_KEY, token, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
+        else await SecureStore.deleteItemAsync(SESSION_STORAGE_KEY);
+      } catch { /* keep the in-memory session if secure persistence is unavailable */ }
+    },
+  };
 }
 
 class BackendApiClient {
   private token: string | null = null;
   private user: ApiUser | null = null;
-  constructor(private readonly baseUrl = resolveBackendUrl()) {}
+  private readonly storage: TokenStorage;
+  constructor(private readonly baseUrl = resolveBackendUrl(), storage?: TokenStorage) {
+    this.storage = storage ?? createPlatformTokenStorage();
+  }
   get enabled(): boolean { return Boolean(this.baseUrl); }
   get currentUser(): ApiUser | null { return this.user; }
   get authenticated(): boolean { return Boolean(this.token && this.user); }
   setSession(session: ApiSession | null, user?: ApiUser): void {
     this.token = session?.token ?? null;
     if (user) this.user = user;
-    void writeStoredToken(this.token);
+    void this.storage.write(this.token);
   }
-  clearSession(): void { this.token = null; this.user = null; void writeStoredToken(null); }
+  clearSession(): void { this.token = null; this.user = null; void this.storage.write(null); }
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
@@ -362,10 +394,10 @@ class BackendApiClient {
    * never silently sign a user out on a flaky connection. NEVER creates an
    * account — the previous device auto-registration backdoor is gone.
    */
-  async restoreSession(): Promise<ApiUser | null> {
-    if (this.token && this.user) return this.user;
-    const result = await restoreSessionWith<ApiUser>({
-      readToken: () => readStoredToken(),
+  async restoreSessionResult(): Promise<RestoreResult<ApiUser>> {
+    if (this.token && this.user) return { kind: 'restored', user: this.user };
+    return restoreSessionWith<ApiUser>({
+      readToken: () => this.storage.read(),
       validate: async (token) => {
         // Present the persisted token for this validation call only; a
         // non-definitive failure keeps it in memory (see `keepSession`).
@@ -376,14 +408,27 @@ class BackendApiClient {
       clearSession: () => this.clearSession(),
       keepSession: (token) => { this.token = token; this.user = null; },
     });
+  }
+  /**
+   * Cold-start session restore, collapsed to the resolved user (or null). Callers
+   * that must tell an EXPIRED session apart from a transient network/server
+   * failure should use `restoreSessionResult()` instead.
+   */
+  async restoreSession(): Promise<ApiUser | null> {
+    const result = await this.restoreSessionResult();
     return result.kind === 'restored' ? result.user : null;
   }
-  /** Returns the authenticated user or throws AUTH_REQUIRED (gate enforcement). */
+  /**
+   * Returns the authenticated user or throws (gate enforcement). A definitive
+   * rejection throws `AUTH_REQUIRED`; a transient failure throws
+   * `SESSION_UNAVAILABLE` so the caller can retry WITHOUT dropping the session.
+   */
   async requireSession(): Promise<ApiUser> {
     if (this.token && this.user) return this.user;
-    const restored = await this.restoreSession();
-    if (!restored) throw new Error('AUTH_REQUIRED');
-    return restored;
+    const result = await this.restoreSessionResult();
+    if (result.kind === 'restored') return result.user;
+    if (result.kind === 'unavailable') throw new Error('SESSION_UNAVAILABLE');
+    throw new Error('AUTH_REQUIRED');
   }
   /** Secret-free view of the deployment's enrolment gate (access key, open sign-up). */
   async getAccessPolicy(): Promise<{ private: boolean; registration: { open: boolean; requiresAccessKey: boolean; requiresEmailVerification: boolean } }> {

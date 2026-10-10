@@ -20,6 +20,7 @@ export const AUTH_MESSAGES: Record<string, string> = {
   EMAIL_VERIFICATION_REQUIRED: 'يجب تأكيد البريد الإلكتروني قبل الدخول.',
   ACCOUNT_TOKEN_INVALID_OR_EXPIRED: 'رمز التأكيد غير صحيح أو انتهت صلاحيته. اطلب رمزًا جديدًا.',
   BACKEND_API_NOT_CONFIGURED: 'لم يتم ضبط عنوان الخادم (Backend).',
+  SESSION_UNAVAILABLE: 'تعذّر الاتصال بالخادم. تحقّق من اتصالك بالشبكة ثم أعد المحاولة.',
   RATE_LIMITED: 'محاولات كثيرة جدًا. انتظر قليلًا ثم أعد المحاولة.',
 };
 
