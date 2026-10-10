@@ -20,14 +20,23 @@ import { uid } from '../../utils/id';
 import { formatBytes } from '../../utils/format';
 
 export interface ComposerProps {
-  /** Called with the trimmed text and the collected attachments when the user sends. */
-  onSubmit: (text: string, attachments: Attachment[]) => void;
+  /**
+   * Called with the trimmed text, the collected attachments and the chosen
+   * turn mode when the user sends. `mode: 'agent'` routes the turn to a real
+   * agent run (planner → tools → verification) instead of a plain chat reply.
+   */
+  onSubmit: (text: string, attachments: Attachment[], mode: TurnMode) => void;
   placeholder?: string;
   /** While true the send button becomes a stop button. */
   busy?: boolean;
   onStop?: (() => void) | undefined;
   autoFocus?: boolean;
+  /** Initial turn mode. Defaults to 'chat'. */
+  initialMode?: TurnMode;
 }
+
+/** A turn is either a plain chat reply or a real agent run. */
+export type TurnMode = 'chat' | 'agent';
 
 const KIND_ICON: Record<AttachmentKind, IconName> = {
   image: 'image-outline',
@@ -70,12 +79,43 @@ function mimeFromName(name: string): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
+/** Largest device file we will read into memory and upload as base64. Mirrors
+ *  the backend's MAX_ATTACHMENT_BYTES so the client fails fast with a clear
+ *  message instead of letting the server reject an oversized payload. */
+export const MAX_INLINE_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+export interface PickedFile {
+  name: string;
+  sizeBytes: number;
+  mimeType: string;
+  /** Base64 of the file's real bytes (no data-URL prefix), present only when the
+   *  file was small enough to read. */
+  dataBase64?: string;
+  /** True when the file exceeded MAX_INLINE_UPLOAD_BYTES and was NOT read. */
+  tooLarge?: boolean;
+}
+
+/** Read a browser File into a bare base64 string (strips the data-URL prefix). */
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('READ_FAILED'));
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
- * Open the platform file picker and capture the chosen file's real metadata.
+ * Open the platform file picker and capture the chosen file's real bytes.
  * Web only — returns `null` on native/unsupported so the caller can surface an
- * honest notice instead of pretending a file was attached.
+ * honest notice instead of pretending a file was attached. Files larger than
+ * MAX_INLINE_UPLOAD_BYTES are reported (tooLarge) without being read.
  */
-function pickDeviceFile(): Promise<{ name: string; sizeBytes: number; mimeType: string } | null> {
+function pickDeviceFile(): Promise<PickedFile | null> {
   if (typeof document === 'undefined') return Promise.resolve(null);
   return new Promise((resolve) => {
     const input = document.createElement('input');
@@ -87,11 +127,15 @@ function pickDeviceFile(): Promise<{ name: string; sizeBytes: number; mimeType: 
         resolve(null);
         return;
       }
-      resolve({
-        name: file.name,
-        sizeBytes: file.size,
-        mimeType: file.type || mimeFromName(file.name),
-      });
+      const mimeType = file.type || mimeFromName(file.name);
+      const base = { name: file.name, sizeBytes: file.size, mimeType };
+      if (file.size > MAX_INLINE_UPLOAD_BYTES) {
+        resolve({ ...base, tooLarge: true });
+        return;
+      }
+      readFileAsBase64(file)
+        .then((dataBase64) => resolve({ ...base, dataBase64 }))
+        .catch(() => resolve(base));
     };
     document.body.appendChild(input);
     input.click();
@@ -114,6 +158,7 @@ export function Composer({
   busy = false,
   onStop,
   autoFocus = false,
+  initialMode = 'chat',
 }: ComposerProps) {
   const theme = useTheme();
   const workspaceFiles = useWorkspaceStore((s) => s.workspace.files);
@@ -124,6 +169,7 @@ export function Composer({
   const [urlInput, setUrlInput] = React.useState('');
   const [urlError, setUrlError] = React.useState('');
   const [notice, setNotice] = React.useState('');
+  const [mode, setMode] = React.useState<TurnMode>(initialMode);
 
   const addAttachment = React.useCallback((attachment: Attachment) => {
     setAttachments((prev) => [...prev, attachment]);
@@ -152,8 +198,13 @@ export function Composer({
       mimeType: picked.mimeType,
       sizeBytes: picked.sizeBytes,
       kind: attachmentKind(picked.name, picked.mimeType),
+      ...(picked.dataBase64 ? { dataBase64: picked.dataBase64 } : {}),
     });
-    setNotice('');
+    setNotice(
+      picked.tooLarge
+        ? `الملف أكبر من ${formatBytes(MAX_INLINE_UPLOAD_BYTES)}؛ أُرفق بالاسم فقط ولم يُقرأ محتواه.`
+        : '',
+    );
   }, [addAttachment, closeSheet]);
 
   const onPickWorkspace = React.useCallback(
@@ -200,7 +251,7 @@ export function Composer({
 
   const handleSend = () => {
     if (!canSend || busy) return;
-    onSubmit(text.trim(), attachments);
+    onSubmit(text.trim(), attachments, mode);
     setText('');
     setAttachments([]);
     setNotice('');
@@ -258,6 +309,30 @@ export function Composer({
           autoFocus={autoFocus}
           style={[styles.input, { color: theme.colors.text }]}
         />
+        <Pressable
+          onPress={() => setMode((prev) => (prev === 'agent' ? 'chat' : 'agent'))}
+          disabled={busy}
+          style={[
+            styles.modeBtn,
+            {
+              backgroundColor: mode === 'agent' ? theme.colors.accent : theme.colors.surface,
+              borderColor: mode === 'agent' ? theme.colors.accent : theme.colors.border,
+              borderRadius: theme.radius.pill,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: mode === 'agent' }}
+          accessibilityLabel={mode === 'agent' ? 'وضع الوكيل مُفعّل' : 'تفعيل وضع الوكيل'}
+        >
+          <Icon name="sparkles-outline" size={14} color={mode === 'agent' ? '#FFFFFF' : theme.colors.textSubtle} />
+          <Text
+            variant="caption"
+            weight="bold"
+            style={{ color: mode === 'agent' ? '#FFFFFF' : theme.colors.textSubtle, marginLeft: 4 }}
+          >
+            وكيل
+          </Text>
+        </Pressable>
         <Pressable
           onPress={busy ? onStop : handleSend}
           disabled={!busy && !canSend}
@@ -412,6 +487,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  modeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 34,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    marginBottom: 3,
+  },
   input: {
     flex: 1,
     fontSize: 15,

@@ -1,10 +1,11 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, View } from 'react-native';
 import { useTheme } from '../../theme';
 import { Attachment, AttachmentKind, Message } from '../../types/chat';
 import { Text } from '../ui/Text';
 import { Icon, IconName } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
+import { backendApi } from '../../services/api/client';
 
 export interface ChatBubbleProps {
   message: Message;
@@ -51,6 +52,49 @@ function AttachmentPill({ attachment, onPrimary }: { attachment: Attachment; onP
       </Text>
     </View>
   );
+}
+
+/** Normalise a stored attachment's inline bytes into a usable `data:` URL. */
+function inlineImageUrl(attachment: Attachment): string | null {
+  if (attachment.kind !== 'image') return null;
+  const raw = attachment.dataBase64;
+  if (!raw) return null;
+  return raw.startsWith('data:') ? raw : `data:${attachment.mimeType || 'image/png'};base64,${raw}`;
+}
+
+/**
+ * Render an image attachment as a real thumbnail — from the inline bytes when
+ * present, otherwise by fetching the stored bytes with the session token. Any
+ * failure falls back to the name/icon pill, never a broken image.
+ */
+function AttachmentPreview({ attachment, onPrimary }: { attachment: Attachment; onPrimary: boolean }) {
+  const theme = useTheme();
+  const [uri, setUri] = React.useState<string | null>(() => inlineImageUrl(attachment));
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    if (uri || failed || attachment.kind !== 'image' || !attachment.backendId) return;
+    let active = true;
+    void backendApi.fetchAttachmentDataUrl(attachment.backendId).then((dataUrl) => {
+      if (!active) return;
+      if (dataUrl) setUri(dataUrl);
+      else setFailed(true);
+    });
+    return () => { active = false; };
+  }, [uri, failed, attachment.kind, attachment.backendId]);
+
+  if (uri && !failed) {
+    return (
+      <Image
+        source={{ uri }}
+        style={[styles.thumb, { borderColor: onPrimary ? 'rgba(255,255,255,0.28)' : theme.colors.border }]}
+        resizeMode="cover"
+        onError={() => setFailed(true)}
+        accessibilityLabel={attachment.name}
+      />
+    );
+  }
+  return <AttachmentPill attachment={attachment} onPrimary={onPrimary} />;
 }
 
 export function ChatBubble({ message, onRetry }: ChatBubbleProps) {
@@ -105,7 +149,7 @@ export function ChatBubble({ message, onRetry }: ChatBubbleProps) {
         {hasAttachments ? (
           <View style={[styles.attachments, { marginTop: message.content ? 8 : 0 }]}>
             {message.attachments!.map((attachment) => (
-              <AttachmentPill key={attachment.id} attachment={attachment} onPrimary={isUser} />
+              <AttachmentPreview key={attachment.id} attachment={attachment} onPrimary={isUser} />
             ))}
           </View>
         ) : null}
@@ -153,6 +197,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  thumb: {
+    width: 132,
+    height: 132,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(127,127,127,0.12)',
   },
   interrupted: {
     flexDirection: 'row',
