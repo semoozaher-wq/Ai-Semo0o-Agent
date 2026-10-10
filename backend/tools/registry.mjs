@@ -9,7 +9,7 @@ import { runBrowserTask } from '../browser/runner.mjs';
 import { resolveCdpEndpoint, browserBinaryAvailable } from '../browser/launcher.mjs';
 import { assertSafeUrlResolved, assertWorkspacePath, safeFetchText } from '../security/validators.mjs';
 import { DANGEROUS_TOOLS, TOOL_BY_ID, TOOL_CATALOG } from '../agent/catalog.mjs';
-import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, createSpeechToTextProvider, createTextToSpeechProvider, createVideoProvider, createAudioProvider, createMediaAnalysisProvider, connectorStatus } from './connectors.mjs';
+import { createImageProvider, createVisionProvider, createCalendarProvider, createEmailSendProvider, createSlackProvider, createTeamsProvider, createDiscordProvider, createNotionProvider, createWebhookProvider, createSpeechToTextProvider, createTextToSpeechProvider, createVideoProvider, createVideoEditProvider, createAudioProvider, createMediaAnalysisProvider, connectorStatus } from './connectors.mjs';
 import { probeMedia, sniffMediaType } from '../media/media.mjs';
 import { createGitHubClient, githubStatus, parseRepoSlug } from '../github/service.mjs';
 import { resolveGitHubToken } from '../github/connections.mjs';
@@ -22,7 +22,7 @@ import { CodebaseReasoner } from '../../phase2-core/reasoning.mjs';
 import { assertValidArgs, strictArgsEnabled } from '../agent/tool-schema.mjs';
 import { ArtifactStore, guessMimeType } from '../artifacts/store.mjs';
 import { createDocx, createOdt, createPptx, createXlsx, editDocx, editOdt, editPptx, editXlsx } from '../authoring/office.mjs';
-import { planCreation, runDirector, renderToArtifacts, composeTimeline, parseTimeline } from '../creation/index.mjs';
+import { planCreation, runDirector, renderToArtifacts, composeTimeline, parseTimeline, conversationalVideoEdit } from '../creation/index.mjs';
 
 function bounded(value, max, name) {
   const text = String(value ?? '');
@@ -647,6 +647,28 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
     if (m.includes('mp4')) return 'mp4';
     return fallback;
   };
+  // Read a workspace image as a base64 media object for the video adapters.
+  const readWorkspaceImage = async (context, imagePath) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const { resolved } = await workspacePath(context.workspaceRoot, imagePath);
+    const bytes = await readFile(resolved);
+    return { base64: bytes.toString('base64'), mimeType: mimeTypeFor(imagePath) };
+  };
+  // Read a workspace video as a base64 media object (used by video.edit).
+  const readWorkspaceVideo = async (context, videoPath) => {
+    if (!context.workspaceRoot) throw new Error('WORKSPACE_ROOT_REQUIRED');
+    const { resolved } = await workspacePath(context.workspaceRoot, videoPath);
+    const bytes = await readFile(resolved);
+    const info = sniffMediaType(bytes);
+    return { base64: bytes.toString('base64'), mimeType: info.kind === 'video' ? info.mimeType : 'video/mp4' };
+  };
+  // Run a video provider and persist the produced bytes into the workspace.
+  const writeGeneratedVideo = async (context, result, target) => {
+    const bytes = Buffer.from(result.base64, 'base64');
+    const info = sniffMediaType(bytes);
+    const ext = info.extension === 'bin' ? extensionForMime(result.mimeType, 'mp4') : info.extension;
+    return writeMedia(context, bytes, target || `generated/video-${Date.now()}.${ext}`, 'video', info.kind === 'unknown' ? result.mimeType : info.mimeType);
+  };
   tools.set('media.probe', async (args, context = {}) => {
     const { resolved, safe } = await workspacePath(context.workspaceRoot, args.path);
     const bytes = await readFile(resolved);
@@ -692,13 +714,46 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
   tools.set('video.generate', async (args, context = {}) => {
     const provider = createVideoProvider();
     if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:video.generate');
-    const result = await provider.generate({ prompt: bounded(args.prompt, 10000, 'PROMPT'), durationSeconds: args.durationSeconds });
-    const bytes = Buffer.from(result.base64, 'base64');
-    const info = sniffMediaType(bytes);
-    const ext = info.extension === 'bin' ? extensionForMime(result.mimeType, 'mp4') : info.extension;
-    const target = args.path || `generated/video-${Date.now()}.${ext}`;
-    const output = await writeMedia(context, bytes, target, 'video', info.kind === 'unknown' ? result.mimeType : info.mimeType);
+    const input = {
+      prompt: bounded(args.prompt, 10000, 'PROMPT'),
+      durationSeconds: args.durationSeconds,
+      aspectRatio: args.aspectRatio,
+      resolution: args.resolution,
+      negativePrompt: args.negativePrompt,
+    };
+    // An optional source image turns a text-to-video call into image-to-video.
+    if (args.imagePath) input.image = await readWorkspaceImage(context, args.imagePath);
+    const output = await writeGeneratedVideo(context, await provider.generate(input), args.path);
+    return { output: { ...output, provider: provider.id, model: provider.model } };
+  });
+  tools.set('video.imageToVideo', async (args, context = {}) => {
+    const provider = createVideoProvider();
+    if (!provider) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:video.generate');
+    if (!provider.capabilities?.imageToVideo) throw new Error('VIDEO_IMAGE_TO_VIDEO_UNSUPPORTED');
+    const image = await readWorkspaceImage(context, args.imagePath);
+    const result = await provider.generate({
+      prompt: bounded(args.prompt, 10000, 'PROMPT'),
+      image,
+      durationSeconds: args.durationSeconds,
+      aspectRatio: args.aspectRatio,
+      resolution: args.resolution,
+      negativePrompt: args.negativePrompt,
+    });
+    const output = await writeGeneratedVideo(context, result, args.path);
     return { output: { ...output, provider: result.provider, model: result.model } };
+  });
+  tools.set('video.edit', async (args, context = {}) => {
+    const editor = createVideoEditProvider();
+    const provider = createVideoProvider();
+    // Editing needs a genuine video-to-video model, OR (for a pure "extend this
+    // clip" request) a provider with real video-extension support. Otherwise we
+    // fail closed instead of pretending we can edit.
+    if (!editor && !provider?.capabilities?.videoExtension) throw new Error('TOOL_CONNECTOR_NOT_CONFIGURED:video.edit');
+    const source = await readWorkspaceVideo(context, args.videoPath);
+    const conversation = Array.isArray(args.conversation) ? args.conversation : (args.instruction ?? args.prompt);
+    const result = await conversationalVideoEdit({ conversation, sourceVideo: source, llm, model: args.model });
+    const output = await writeGeneratedVideo(context, result, args.path);
+    return { output: { ...output, provider: result.provider, model: result.model, operation: result.operation, instruction: result.instruction } };
   });
   tools.set('audio.generate', async (args, context = {}) => {
     const provider = createAudioProvider();
@@ -840,6 +895,8 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
         ['speech.transcribe', { ok: connectors.stt, reason: 'stt_provider_not_configured' }],
         ['speech.synthesize', { ok: connectors.tts, reason: 'tts_provider_not_configured' }],
         ['video.generate', { ok: connectors.video, reason: 'video_provider_not_configured' }],
+        ['video.imageToVideo', { ok: connectors.video, reason: 'video_provider_not_configured' }],
+        ['video.edit', { ok: connectors.videoEdit || connectors.video, reason: 'video_edit_provider_not_configured' }],
         ['audio.generate', { ok: connectors.audio, reason: 'audio_provider_not_configured' }],
       ]);
       // GitHub tools are ready when an operator token exists or any tenant has a

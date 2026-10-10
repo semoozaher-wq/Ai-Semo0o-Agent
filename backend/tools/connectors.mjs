@@ -768,16 +768,42 @@ function videoReplicateConfig(env) {
   if (!apiKey || !env.REPLICATE_VIDEO_VERSION) return null;
   return { id: 'replicate', apiKey, baseUrl: (env.REPLICATE_API_BASE || 'https://api.replicate.com/v1').replace(/\/$/, ''), version: env.REPLICATE_VIDEO_VERSION, model: env.REPLICATE_VIDEO_MODEL || 'replicate/video', maxPolls: Number(env.REPLICATE_MAX_POLLS) || 60, pollIntervalMs: Number(env.REPLICATE_POLL_MS) || 2000 };
 }
+
+// Google Veo (Gemini API) — a first-party text-to-video AND image-to-video model.
+// Generation is long-running: POST :predictLongRunning returns an operation name
+// and we poll the operation until `done`, then download the produced MP4. Veo 3.1
+// additionally supports first/last-frame interpolation, up to three reference
+// images and video EXTENSION (video-to-video continuation). It does NOT support
+// arbitrary editing of existing footage (re-scene / re-light a clip) — that needs
+// a dedicated video-to-video model, wired through createVideoEditProvider().
+function videoGoogleConfig(env) {
+  const apiKey = env.VIDEO_API_KEY || env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  if (!apiKey) return null;
+  return {
+    id: 'google',
+    apiKey,
+    baseUrl: (env.VIDEO_API_BASE || env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
+    model: env.VIDEO_MODEL || 'veo-3.1-generate-001',
+    maxPolls: Number(env.VIDEO_MAX_POLLS) || 60,
+    pollIntervalMs: Number(env.VIDEO_POLL_MS) || 5000,
+    capabilities: { textToVideo: true, imageToVideo: true, videoExtension: true, videoEditing: false },
+  };
+}
+
 /** Resolve a video-generation provider from the environment. @returns {{id:string, generate:Function}|null} */
 export function createVideoProvider(env = process.env) {
   const explicit = String(env.VIDEO_PROVIDER || '').toLowerCase();
-  const builders = [['http', videoHttpConfig], ['replicate', videoReplicateConfig]];
+  // Google (Veo) is preferred when configured; the pre-existing http/replicate
+  // backends are unchanged and still selected when no explicit provider is set
+  // and no Google key is present.
+  const builders = [['google', videoGoogleConfig], ['replicate', videoReplicateConfig], ['http', videoHttpConfig]];
   const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
   for (const [name, build] of order) {
     const config = build(env);
     if (!config) continue;
-    if (name === 'http') return { id: 'http', model: 'http', generate: (input) => httpGenerateVideo(config, input, env) };
-    if (name === 'replicate') return { id: 'replicate', model: config.model, generate: (input) => replicateGenerate(config, input, env, 'VIDEO') };
+    if (name === 'google') return { id: 'google', model: config.model, capabilities: config.capabilities, generate: (input) => googleGenerateVideo(config, input, env) };
+    if (name === 'http') return { id: 'http', model: 'http', capabilities: { textToVideo: true, imageToVideo: true, videoExtension: false, videoEditing: false }, generate: (input) => httpGenerateVideo(config, input, env) };
+    if (name === 'replicate') return { id: 'replicate', model: config.model, capabilities: { textToVideo: true, imageToVideo: true, videoExtension: false, videoEditing: false }, generate: (input) => replicateGenerate(config, input, env, 'VIDEO') };
   }
   return null;
 }
@@ -821,13 +847,74 @@ async function resolveMediaPayload(payload, kind, config, env, label) {
   throw new Error(`CONNECTOR_${label}_EMPTY_RESPONSE`);
 }
 
-async function httpGenerateVideo(config, { prompt, durationSeconds }, env) {
-  const body = JSON.stringify({ prompt, durationSeconds: durationSeconds ?? null });
+async function httpGenerateVideo(config, input, env) {
+  const body = JSON.stringify({
+    prompt: input.prompt,
+    durationSeconds: input.durationSeconds ?? null,
+    ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+    ...(input.resolution ? { resolution: input.resolution } : {}),
+    ...(input.negativePrompt ? { negativePrompt: input.negativePrompt } : {}),
+    ...(input.image ? { image: input.image } : {}),
+    ...(input.video ? { video: input.video } : {}),
+  });
   const headers = { 'content-type': 'application/json' };
   if (config.secret) headers['x-connector-signature'] = config.secret;
   const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'VIDEO_TIMEOUT_MS', 300_000) });
   const payload = await readJson(response, text, config);
   return resolveMediaPayload(payload, 'video', config, env, 'VIDEO');
+}
+
+// Normalise a generation input into a Veo `instances[0]` object. Only the fields
+// the caller actually supplied are attached, so a plain text-to-video request
+// stays a plain text-to-video request.
+function veoInstance({ prompt, image, lastFrame, referenceImages, video }) {
+  const instance = { prompt };
+  const inline = (media, fallback) => (media && media.base64 ? { inlineData: { mimeType: media.mimeType || fallback, data: media.base64 } } : null);
+  const first = inline(image, 'image/png');
+  if (first) instance.image = first;
+  const last = inline(lastFrame, 'image/png');
+  if (last) instance.lastFrame = last;
+  if (Array.isArray(referenceImages) && referenceImages.length) {
+    instance.referenceImages = referenceImages.slice(0, 3)
+      .map((ref) => ({ image: inline(ref, 'image/png'), referenceType: ref.referenceType || 'asset' }))
+      .filter((ref) => ref.image);
+  }
+  const vid = inline(video, 'video/mp4');
+  if (vid) instance.video = vid;
+  return instance;
+}
+
+// Veo 3.1 via the Gemini API: start a long-running operation, poll it to
+// completion, then download the produced MP4 (signed URL, time-limited).
+async function googleGenerateVideo(config, input, env) {
+  const parameters = { sampleCount: 1, personGeneration: input.personGeneration || 'allow_adult' };
+  if (input.aspectRatio) parameters.aspectRatio = input.aspectRatio;
+  if (input.durationSeconds) parameters.durationSeconds = Math.round(input.durationSeconds);
+  if (input.resolution) parameters.resolution = input.resolution;
+  if (input.negativePrompt) parameters.negativePrompt = input.negativePrompt;
+  const body = JSON.stringify({ instances: [veoInstance(input)], parameters });
+  const headers = { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey };
+  const startUrl = `${config.baseUrl}/models/${encodeURIComponent(config.model)}:predictLongRunning`;
+  const start = await fetchWithTimeout(startUrl, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'VIDEO_TIMEOUT_MS', 120_000), config });
+  let operation = await readJson(start.response, start.text, config);
+  const operationName = operation?.name;
+  if (!operationName) throw new Error('VIDEO_OPERATION_MISSING');
+  let attempts = 0;
+  while (operation?.done !== true && attempts < config.maxPolls) {
+    await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs));
+    const poll = await fetchWithTimeout(`${config.baseUrl}/${operationName}`, { headers: { 'x-goog-api-key': config.apiKey } }, { timeoutMs: 30_000, config });
+    operation = await readJson(poll.response, poll.text, config);
+    attempts += 1;
+  }
+  if (operation?.done !== true) throw new Error('VIDEO_OPERATION_TIMEOUT');
+  if (operation?.error) throw new Error(`VIDEO_OPERATION_FAILED:${scrubSecrets(String(operation.error.message || operation.error).slice(0, 200), config)}`);
+  const sample = operation?.response?.generateVideoResponse?.generatedSamples?.[0]
+    ?? operation?.response?.generatedVideos?.[0]
+    ?? operation?.response?.videos?.[0];
+  const uri = sample?.video?.uri ?? sample?.video?.url ?? sample?.uri;
+  if (!uri) throw new Error('VIDEO_OPERATION_EMPTY');
+  const { response, buffer } = await fetchBinary(uri, { headers: { 'x-goog-api-key': config.apiKey } }, { timeoutMs: timeoutMs(env, 'VIDEO_DOWNLOAD_TIMEOUT_MS', 300_000), maxBytes: MAX_MEDIA_BYTES, config });
+  return { provider: config.id, model: config.model, mimeType: response.headers.get('content-type') || 'video/mp4', base64: buffer.toString('base64') };
 }
 
 async function httpGenerateAudio(config, { prompt, durationSeconds }, env) {
@@ -856,11 +943,65 @@ async function runReplicatePrediction(config, { version, input }, env, label) {
   return payload;
 }
 
-async function replicateGenerate(config, { prompt, durationSeconds }, env, label) {
-  const input = { prompt, ...(durationSeconds ? { duration: durationSeconds } : {}) };
-  const payload = await runReplicatePrediction(config, { version: config.version, input }, env, label);
+async function replicateGenerate(config, input, env, label) {
+  const { prompt, durationSeconds, image, video } = input;
+  const payloadInput = { prompt, ...(durationSeconds ? { duration: durationSeconds } : {}) };
+  if (image?.base64) payloadInput.image = `data:${image.mimeType || 'image/png'};base64,${image.base64}`;
+  if (video?.base64) payloadInput.video = `data:${video.mimeType || 'video/mp4'};base64,${video.base64}`;
+  const payload = await runReplicatePrediction(config, { version: config.version, input: payloadInput }, env, label);
   const output = Array.isArray(payload?.output) ? payload.output[0] : payload?.output;
   return resolveMediaPayload({ output, model: config.model }, label === 'VIDEO' ? 'video' : 'audio', config, env, label);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Video editing (video-to-video)                                            */
+/* -------------------------------------------------------------------------- */
+//
+// Genuine video EDITING (restyle / re-scene / re-light existing footage) is a
+// distinct capability from generation: it needs a video-to-video model. This is
+// deliberately a SEPARATE provider from createVideoProvider() so the system can
+// report honestly that a generation-only backend (e.g. plain Veo) cannot edit.
+// Configure either an operator HTTP editing endpoint or a Replicate model
+// version that accepts { prompt, video }.
+
+function videoEditHttpConfig(env) {
+  if (!env.VIDEO_EDIT_HTTP_URL) return null;
+  return { id: 'http', url: env.VIDEO_EDIT_HTTP_URL, secret: env.VIDEO_EDIT_HTTP_SECRET || '' };
+}
+function videoEditReplicateConfig(env) {
+  const apiKey = env.REPLICATE_API_TOKEN;
+  if (!apiKey || !env.REPLICATE_VIDEO_EDIT_VERSION) return null;
+  return { id: 'replicate', apiKey, baseUrl: (env.REPLICATE_API_BASE || 'https://api.replicate.com/v1').replace(/\/$/, ''), version: env.REPLICATE_VIDEO_EDIT_VERSION, model: env.REPLICATE_VIDEO_EDIT_MODEL || 'replicate/video-edit', maxPolls: Number(env.REPLICATE_MAX_POLLS) || 60, pollIntervalMs: Number(env.REPLICATE_POLL_MS) || 2000 };
+}
+/** Resolve a genuine video-EDITING (video-to-video) provider. @returns {{id:string, edit:Function}|null} */
+export function createVideoEditProvider(env = process.env) {
+  const explicit = String(env.VIDEO_EDIT_PROVIDER || '').toLowerCase();
+  const builders = [['http', videoEditHttpConfig], ['replicate', videoEditReplicateConfig]];
+  const order = explicit ? builders.filter(([name]) => name === explicit) : builders;
+  for (const [name, build] of order) {
+    const config = build(env);
+    if (!config) continue;
+    if (name === 'http') return { id: 'http', model: 'http', edit: (input) => httpEditVideo(config, input, env) };
+    if (name === 'replicate') return { id: 'replicate', model: config.model, edit: (input) => replicateEditVideo(config, input, env) };
+  }
+  return null;
+}
+
+async function httpEditVideo(config, { video, prompt, mimeType }, env) {
+  const body = JSON.stringify({ video: { base64: video?.base64 ?? null, mimeType: mimeType || video?.mimeType || 'video/mp4' }, prompt });
+  const headers = { 'content-type': 'application/json' };
+  if (config.secret) headers['x-connector-signature'] = config.secret;
+  const { response, text } = await fetchWithTimeout(config.url, { method: 'POST', headers, body }, { timeoutMs: timeoutMs(env, 'VIDEO_EDIT_TIMEOUT_MS', 300_000), config });
+  const payload = await readJson(response, text, config);
+  return resolveMediaPayload(payload, 'video', config, env, 'VIDEO_EDIT');
+}
+
+async function replicateEditVideo(config, { video, prompt, mimeType }, env) {
+  const input = { prompt };
+  if (video?.base64) input.video = `data:${mimeType || video.mimeType || 'video/mp4'};base64,${video.base64}`;
+  const payload = await runReplicatePrediction(config, { version: config.version, input }, env, 'VIDEO_EDIT');
+  const output = Array.isArray(payload?.output) ? payload.output[0] : payload?.output;
+  return resolveMediaPayload({ output, model: config.model }, 'video', config, env, 'VIDEO_EDIT');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -902,6 +1043,7 @@ export function connectorStatus(env = process.env) {
     stt: Boolean(createSpeechToTextProvider(env)),
     tts: Boolean(createTextToSpeechProvider(env)),
     video: Boolean(createVideoProvider(env)),
+    videoEdit: Boolean(createVideoEditProvider(env)),
     audio: Boolean(createAudioProvider(env)),
     mediaAnalysis: Boolean(createMediaAnalysisProvider(env)),
   };
