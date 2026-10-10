@@ -3,9 +3,11 @@ import { id, now } from '../db/client.mjs';
 import { createStripeAdapter } from './stripe.mjs';
 
 export const PLANS = Object.freeze({
-  free: Object.freeze({ id: 'free', monthlyRuns: 1000, monthlyTokens: 100000 }),
-  pro: Object.freeze({ id: 'pro', monthlyRuns: 10000, monthlyTokens: 2000000 }),
-  team: Object.freeze({ id: 'team', monthlyRuns: 100000, monthlyTokens: 20000000 }),
+  // `monthlyCostUsd` is a hard spending cap: a request that would push the
+  // tenant past it is refused (MONTHLY_COST_QUOTA_EXCEEDED, HTTP 402).
+  free: Object.freeze({ id: 'free', monthlyRuns: 1000, monthlyTokens: 100000, monthlyCostUsd: 10 }),
+  pro: Object.freeze({ id: 'pro', monthlyRuns: 10000, monthlyTokens: 2000000, monthlyCostUsd: 100 }),
+  team: Object.freeze({ id: 'team', monthlyRuns: 100000, monthlyTokens: 20000000, monthlyCostUsd: 1000 }),
 });
 
 const SUBSCRIPTION_STATUSES = new Set(['trialing', 'active', 'past_due', 'canceled', 'incomplete', 'unpaid']);
@@ -54,7 +56,7 @@ function extractSubscription(payload) {
 }
 
 function syncQuotaToPlan(db, tenantId, plan) {
-  db.run('INSERT INTO usage_quotas(tenant_id,monthly_tokens,monthly_runs,updated_at) VALUES(?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET monthly_tokens=excluded.monthly_tokens,monthly_runs=excluded.monthly_runs,updated_at=excluded.updated_at', tenantId, plan.monthlyTokens, plan.monthlyRuns, now());
+  db.run('INSERT INTO usage_quotas(tenant_id,monthly_tokens,monthly_runs,monthly_cost_usd,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET monthly_tokens=excluded.monthly_tokens,monthly_runs=excluded.monthly_runs,monthly_cost_usd=excluded.monthly_cost_usd,updated_at=excluded.updated_at', tenantId, plan.monthlyTokens, plan.monthlyRuns, plan.monthlyCostUsd ?? 0, now());
 }
 
 /**
