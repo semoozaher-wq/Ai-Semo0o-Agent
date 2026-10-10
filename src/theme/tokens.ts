@@ -5,6 +5,19 @@
  */
 
 export const palette = {
+  // Deep navy canvas — the Semo0o "space" background (reference design)
+  navy50: '#EEF1FF',
+  navy100: '#DDE3FF',
+  navy200: '#B9C6FF',
+  navy300: '#8FA3FF',
+  navy400: '#5B6FD6',
+  navy500: '#2A3A7A',
+  navy600: '#1B2757',
+  navy700: '#131C42',
+  navy800: '#0C1230',
+  navy900: '#080C22',
+  navy950: '#050818',
+
   // Brand — violet/indigo core
   indigo50: '#EEF0FF',
   indigo100: '#DDE1FF',
@@ -196,6 +209,10 @@ export const gradients = {
   nebula: ['#241E5E', '#6C5CE7', '#00D2D3'] as const,
   dawn: ['#FF9BC1', '#FFC46B'] as const,
   graphite: ['#2A2C45', '#14162B'] as const,
+  // Side rail tint — a subtle navy wash for the navigation column.
+  rail: ['#0B1130', '#080C22'] as const,
+  // Soft brand glow used behind the hero mark.
+  glow: ['#7C5CFA', '#22D3EE'] as const,
 } as const;
 
 export type GradientName = keyof typeof gradients;

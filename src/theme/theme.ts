@@ -94,31 +94,31 @@ export interface Theme {
 }
 
 const darkColors: ThemeColors = {
-  background: palette.slate950,
-  backgroundElevated: palette.slate900,
-  surface: '#14162B',
-  surfaceElevated: '#1B1D36',
-  surfaceMuted: '#20223D',
-  surfaceHover: '#262845',
-  border: 'rgba(255,255,255,0.08)',
-  borderStrong: 'rgba(255,255,255,0.16)',
-  overlay: 'rgba(4,5,12,0.72)',
-  scrim: 'rgba(4,5,12,0.62)',
+  background: palette.navy950,
+  backgroundElevated: palette.navy900,
+  surface: '#10173A',
+  surfaceElevated: '#161D45',
+  surfaceMuted: '#1C2350',
+  surfaceHover: '#232C5E',
+  border: 'rgba(148,163,255,0.14)',
+  borderStrong: 'rgba(148,163,255,0.26)',
+  overlay: 'rgba(3,6,20,0.74)',
+  scrim: 'rgba(3,6,20,0.64)',
 
-  glass: 'rgba(27,29,54,0.66)',
-  glassBorder: 'rgba(255,255,255,0.12)',
+  glass: 'rgba(20,26,61,0.66)',
+  glassBorder: 'rgba(148,163,255,0.18)',
 
-  text: '#F2F3FA',
-  textMuted: '#A9ADC9',
-  textSubtle: '#71748F',
-  textInverse: '#0A0B14',
+  text: '#F3F5FF',
+  textMuted: '#A7B0D8',
+  textSubtle: '#6E78A8',
+  textInverse: '#050818',
 
-  primary: palette.indigo500,
-  primarySoft: 'rgba(108,92,231,0.16)',
+  primary: '#7C5CFA',
+  primarySoft: 'rgba(124,92,250,0.18)',
   onPrimary: '#FFFFFF',
 
-  accent: palette.cyan500,
-  accentSoft: 'rgba(0,210,211,0.14)',
+  accent: '#22D3EE',
+  accentSoft: 'rgba(34,211,238,0.15)',
 
   highlight: palette.pink500,
   highlightSoft: 'rgba(253,121,168,0.16)',
@@ -132,8 +132,8 @@ const darkColors: ThemeColors = {
   info: palette.info,
   infoSoft: palette.infoSoft,
 
-  shadow: '#05060F',
-  focusRing: 'rgba(123,132,255,0.55)',
+  shadow: '#02040E',
+  focusRing: 'rgba(124,92,250,0.6)',
 };
 
 const lightColors: ThemeColors = {
