@@ -40,9 +40,9 @@ export const TASK_TYPE_MODELS = Object.freeze({
   code: ['claude-sonnet-4-6', 'gpt-5', 'gemini-3.1-pro-preview', 'claude-haiku-4-5', 'gpt-5-mini', 'gemini-3-flash-preview'],
   reasoning: ['gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview', 'gpt-5-mini', 'claude-haiku-4-5', 'gemini-3-flash-preview'],
   vision: ['gemini-3.1-pro-preview', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3-flash-preview', 'gpt-5-mini', 'claude-haiku-4-5'],
-  long_context: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gpt-5-mini', 'claude-haiku-4-5'],
-  fast: ['gpt-5-mini', 'gemini-2.5-flash-lite', 'claude-haiku-4-5', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6'],
-  general: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-2.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'],
+  long_context: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gpt-5-mini', 'claude-haiku-4-5'],
+  fast: ['gpt-5-mini', 'gemini-3.5-flash-lite', 'claude-haiku-4-5', 'gemini-3-flash-preview', 'gpt-5', 'claude-sonnet-4-6'],
+  general: ['gpt-5-mini', 'claude-haiku-4-5', 'gemini-3.5-flash-lite', 'gpt-5', 'claude-sonnet-4-6', 'gemini-3.1-pro-preview'],
 });
 
 // Capability + cost/latency/quality hints used for capability-aware selection and
@@ -53,7 +53,7 @@ export const TASK_TYPE_MODELS = Object.freeze({
 const MODEL_META = Object.freeze({
   'gpt-5-mini': { vision: true, tools: true, json: true, quality: 0.78, latencyMs: 120 },
   'gpt-5': { vision: true, tools: true, json: true, quality: 0.95, latencyMs: 220 },
-  'gemini-2.5-flash-lite': { vision: true, tools: true, json: true, quality: 0.6, latencyMs: 90 },
+  'gemini-3.5-flash-lite': { vision: true, tools: true, json: true, quality: 0.72, latencyMs: 90 },
   'gemini-3-flash-preview': { vision: true, tools: true, json: true, quality: 0.82, latencyMs: 100 },
   'gemini-3.1-pro-preview': { vision: true, tools: true, json: true, quality: 0.92, latencyMs: 200 },
   'claude-haiku-4-5': { vision: true, tools: true, json: true, quality: 0.75, latencyMs: 140 },
@@ -96,6 +96,30 @@ export function classifyTask(input = {}) {
     if (TASK_HINTS[taskType].test(text)) return taskType;
   }
   return 'general';
+}
+
+/** Provider of a model id, never throwing (used on the failure path). */
+function safeProvider(model) {
+  try {
+    return modelProvider(model);
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Statuses a DIFFERENT model/provider could plausibly survive. A 400/401/403/422
+// is a request/auth problem that another model will not fix, so the fallback
+// stops early instead of burning the whole chain on a hopeless call.
+const RECOVERABLE_STATUS = new Set([404, 408, 409, 425, 429, 500, 502, 503, 504, 529]);
+
+/** Normalise an arbitrary error into the structured diagnostic used in attempts. */
+function describeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = Number(error?.status) || undefined;
+  const code = typeof error?.code === 'string' ? error.code : undefined;
+  const hint = typeof error?.hint === 'string' ? error.hint : undefined;
+  const retryable = status ? RECOVERABLE_STATUS.has(status) : undefined;
+  return { message, status, code, hint, retryable };
 }
 
 function descriptorFor(id, priority) {
@@ -306,18 +330,113 @@ export class MaestroModelRouter {
       try {
         const result = await run(model);
         this.updateHealth(model, true);
-        attempts.push({ model, provider: modelProvider(model), ok: true });
-        return { ok: true, model, provider: modelProvider(model), result, attempts };
+        attempts.push({ model, provider: safeProvider(model), ok: true });
+        return { ok: true, model, provider: safeProvider(model), result, attempts };
       } catch (error) {
         lastError = error;
         this.updateHealth(model, false);
-        attempts.push({ model, provider: modelProvider(model), ok: false, error: error instanceof Error ? error.message : String(error) });
+        // Prefer the llm's OWN per-model/per-provider attempts when it performed
+        // the failover internally (the providers router attaches `error.attempts`),
+        // so the terminal failure carries the REAL reason for every model that was
+        // tried — not just the single chain entry. Otherwise fall back to a
+        // structured diagnostic for this chain entry.
+        const nested = Array.isArray(error?.attempts) ? error.attempts : null;
+        if (nested && nested.length) {
+          for (const entry of nested) {
+            attempts.push({
+              model: entry.model ?? model,
+              provider: entry.provider ?? safeProvider(model),
+              ok: false,
+              error: entry.error,
+              status: entry.status,
+              code: entry.code,
+              retryable: entry.retryable,
+              hint: entry.hint,
+            });
+          }
+        } else {
+          const info = describeError(error);
+          attempts.push({
+            model,
+            provider: safeProvider(model),
+            ok: false,
+            error: info.message,
+            status: info.status,
+            code: info.code,
+            retryable: info.retryable,
+            hint: info.hint,
+          });
+        }
       }
     }
     const error = new Error(`MAESTRO_ALL_MODELS_FAILED:${attempts.map((attempt) => `${attempt.model}:${attempt.error}`).join('|')}`);
     error.attempts = attempts;
     error.cause = lastError;
+    error.code = 'MAESTRO_ALL_MODELS_FAILED';
+    error.failureKind = 'MODEL_ROUTING_FAILURE';
+    error.summary = `Every model in the fallback chain failed (${attempts.length} attempt${attempts.length === 1 ? '' : 's'}): ` +
+      attempts.map((attempt) => `${attempt.model}[${attempt.provider}]${attempt.status ? ` ${attempt.status}` : ''}${attempt.code ? ` ${attempt.code}` : ''}`).join(', ');
     throw error;
+  }
+
+  /**
+   * Resolve a fallback chain into the ACTUAL provider/model pairs each candidate
+   * will be dispatched to, given the providers the underlying llm has configured.
+   * Used purely for observability: it lets the runtime report the real dispatch
+   * (e.g. "gpt-5 requested, gemini-3.5-flash-lite served") instead of implying the
+   * requested family was used. Never throws; returns null when the llm cannot
+   * describe itself.
+   */
+  resolveDispatch(chain, llm) {
+    if (!llm || typeof llm.plan !== 'function') return null;
+    try {
+      return chain.map((model) => {
+        const family = safeProvider(model);
+        let plan = null;
+        try { plan = llm.plan(model); } catch { plan = null; }
+        const first = Array.isArray(plan) && plan.length ? plan[0] : null;
+        return {
+          model,
+          family,
+          dispatchProvider: first?.provider ?? family,
+          dispatchModel: first?.model ?? model,
+          substituted: first ? first.substituted === true : false,
+        };
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Collapse a fallback chain to AT MOST ONE candidate per provider the
+   * underlying llm would actually dispatch to.
+   *
+   * The Maestro chain is a routing POLICY (the best model per task type, and it
+   * deliberately spans every family). When the llm can describe its dispatch
+   * (exposes `plan()`), re-trying every chain entry would re-hit the SAME
+   * providers once per entry — e.g. with only a Gemini key configured, all six
+   * chain candidates remap to Gemini, so the "fallback" would call Gemini six
+   * times. Collapsing keeps the policy ORDER (the first, best candidate per
+   * provider wins) while letting the llm perform the within-provider failover
+   * itself. Plain/fake llms (no `plan`) keep the full chain unchanged.
+   */
+  collapseByDispatch(chain, llm) {
+    if (!Array.isArray(chain) || chain.length < 2) return chain;
+    if (!llm || typeof llm.plan !== 'function') return chain;
+    const seen = new Set();
+    const collapsed = [];
+    for (const model of chain) {
+      let provider = safeProvider(model);
+      try {
+        const plan = llm.plan(model);
+        if (Array.isArray(plan) && plan.length && plan[0].provider) provider = plan[0].provider;
+      } catch { /* keep the family provider */ }
+      if (seen.has(provider)) continue;
+      seen.add(provider);
+      collapsed.push(model);
+    }
+    return collapsed.length ? collapsed : chain;
   }
 
   /**
@@ -340,6 +459,9 @@ export class MaestroModelRouter {
             if (chain[0] !== requested) chain = [requested, ...chain.filter((id) => id !== requested)];
           } catch { /* ignore an invalid requested model and keep the routed chain */ }
         }
+        // Keep the chain a routing POLICY: one entry per provider the llm will
+        // actually dispatch to, so a provider is not re-tried once per candidate.
+        chain = router.collapseByDispatch(chain, llm);
         const outcome = await router.runWithFallback(chain, (candidate) => llm.complete({ ...input, model: candidate }));
         return {
           ...outcome.result,
@@ -349,10 +471,15 @@ export class MaestroModelRouter {
           routedProvider: outcome.provider,
           routeTaskType: decision.taskType,
           routeChain: chain,
+          routeDispatch: router.resolveDispatch(chain, llm),
           routeAttempts: outcome.attempts,
         };
       },
     };
+    // Observability: expose the resolved provider/model dispatch for a chain so
+    // callers can log exactly where a request will go (and whether it will be
+    // transparently substituted) BEFORE the call is made.
+    wrapper.resolve = (chain) => router.resolveDispatch(Array.isArray(chain) ? chain : [], llm);
     if (typeof llm.status === 'function') wrapper.status = (...args) => llm.status(...args);
     if (typeof llm.stream === 'function') wrapper.stream = (...args) => llm.stream(...args);
     return wrapper;
