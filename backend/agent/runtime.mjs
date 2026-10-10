@@ -278,12 +278,21 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
       // type was detected and which cross-provider chain will be used.
       try {
         const decision = runRouter.route({ ...criteria, taskType: payload.taskType });
+        const requestedChain = honorRequestedModel && requestedModel
+          ? [requestedModel, ...decision.chain.filter((candidate) => candidate !== requestedModel)]
+          : decision.chain;
+        // Report the RESOLVED dispatch — which provider/model each chain candidate
+        // will ACTUALLY be sent to. This is what makes a "gpt-5 requested but
+        // served by Gemini" transparent substitution visible up-front, so it reads
+        // as an intentional remap instead of a provider/model conflict.
+        const dispatch = typeof routedLlm.resolve === 'function' ? routedLlm.resolve(requestedChain) : null;
         emit(RECOVERY_EVENTS.routingDecision, {
           taskType: decision.taskType,
           model: honorRequestedModel ? requestedModel : decision.model,
-          chain: honorRequestedModel ? [requestedModel, ...decision.chain.filter((candidate) => candidate !== requestedModel)] : decision.chain,
+          chain: requestedChain,
           requestedModel,
           honorRequestedModel,
+          dispatch,
           experienceApplied: decision.experienceApplied === true,
           experience: decision.experience ?? null,
         });
@@ -509,9 +518,22 @@ export function createAgentRunHandler({ db, tools, llm, costFor = () => 0, resol
     } catch (error) {
       // Reroute: surface a clear, auditable event when the router exhausted every
       // provider in the chain, so operators can see it was a routing failure and
-      // not a planner/tool failure.
-      if (error && typeof error.message === 'string' && error.message.startsWith('MAESTRO_ALL_MODELS_FAILED')) {
-        emit(RECOVERY_EVENTS.rerouteFailed, { attempts: error.attempts ?? [], error: error.message });
+      // not a planner/tool failure. This is emitted BEFORE the error is re-thrown
+      // (and therefore before the queue persists the terminal `failed` status), so
+      // the run NEVER appears failed before the REAL reason is logged: the event
+      // carries the per-model/per-provider attempts (provider, model, status,
+      // code, retryable, hint) plus a human-readable summary.
+      const isRoutingFailure = error && (
+        error.code === 'MAESTRO_ALL_MODELS_FAILED' ||
+        (typeof error.message === 'string' && error.message.startsWith('MAESTRO_ALL_MODELS_FAILED'))
+      );
+      if (isRoutingFailure) {
+        emit(RECOVERY_EVENTS.rerouteFailed, {
+          failureKind: error.failureKind ?? 'MODEL_ROUTING_FAILURE',
+          summary: error.summary ?? null,
+          attempts: error.attempts ?? [],
+          error: error.message,
+        });
       }
       // Long-running autonomous execution: a bounded wall-clock stop mid-plan is
       // NOT a failure. When the run is allowed to continue and a durable plan
