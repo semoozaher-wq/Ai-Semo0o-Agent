@@ -7,6 +7,7 @@ import { useFonts } from 'expo-font';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { FONT_ASSETS } from '../src/theme/fonts';
 import { useBootstrap } from '../src/hooks/useBootstrap';
+import { useAuthStore } from '../src/store/useAuthStore';
 import { Auth } from '../src/screens';
 import { AppShell } from '../src/components/layout/AppShell';
 import { Semo0oLogo } from '../src/components/brand/Semo0oLogo';
@@ -32,11 +33,28 @@ function BootSplash() {
 function RootNavigator() {
   const theme = useTheme();
   const { ready, error, retry, status } = useBootstrap();
+  const authError = useAuthStore((s) => s.error);
 
   // HARD GATE: while the session is being restored show a splash; with no live
   // session render ONLY the sign-in screen. No application route is mounted for
   // an unauthenticated visitor, so possessing the URL is not enough to open it.
   if (status === 'loading') return <BootSplash />;
+
+  // TRANSIENT restore failure (network/server down): a persisted session may
+  // still exist, so this is deliberately NOT the sign-in screen. Show a retry
+  // that re-runs the restore WITHOUT dropping the session.
+  if (status === 'unavailable') {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: theme.colors.background, gap: 16 }}>
+        <Text style={{ color: theme.colors.text, fontSize: 18, textAlign: 'center' }}>تعذّر الاتصال بالخادم</Text>
+        <Text style={{ color: theme.colors.textMuted, textAlign: 'center' }}>{authError}</Text>
+        <Pressable onPress={retry} style={{ backgroundColor: theme.colors.primary, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>إعادة المحاولة</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   if (status === 'anonymous') {
     return (
       <>
