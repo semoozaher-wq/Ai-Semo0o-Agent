@@ -10,6 +10,7 @@ import {
   createVisionProvider,
   createTextToSpeechProvider,
   createVideoProvider,
+  createVideoEditProvider,
   createAudioProvider,
   createMediaAnalysisProvider,
   connectorStatus,
@@ -41,6 +42,7 @@ export function createCreationProviders(env = process.env) {
   const vision = createVisionProvider(env);
   const tts = createTextToSpeechProvider(env);
   const video = createVideoProvider(env);
+  const videoEdit = createVideoEditProvider(env);
   const music = createAudioProvider(env);
   const mediaAnalysis = createMediaAnalysisProvider(env);
 
@@ -71,7 +73,11 @@ export function createCreationProviders(env = process.env) {
     : null;
 
   const videoAdapter = video
-    ? { id: video.id, model: video.model, generate: (input) => video.generate(input) }
+    ? { id: video.id, model: video.model, capabilities: video.capabilities || {}, generate: (input) => video.generate(input) }
+    : null;
+
+  const videoEditAdapter = videoEdit
+    ? { id: videoEdit.id, model: videoEdit.model, edit: (input) => videoEdit.edit(input) }
     : null;
 
   const musicAdapter = music
@@ -87,6 +93,7 @@ export function createCreationProviders(env = process.env) {
     vision: !!visionAdapter,
     tts: !!ttsAdapter,
     video: !!videoAdapter,
+    videoEdit: !!videoEditAdapter,
     music: !!musicAdapter,
     mediaAnalysis: !!analysisAdapter,
   };
@@ -96,6 +103,7 @@ export function createCreationProviders(env = process.env) {
     vision: visionAdapter,
     tts: ttsAdapter,
     video: videoAdapter,
+    videoEdit: videoEditAdapter,
     music: musicAdapter,
     mediaAnalysis: analysisAdapter,
     capabilities,
@@ -116,9 +124,10 @@ export function createLocalOnlyProviders() {
     vision: null,
     tts: null,
     video: null,
+    videoEdit: null,
     music: null,
     mediaAnalysis: null,
-    capabilities: { image: false, vision: false, tts: false, video: false, music: false, mediaAnalysis: false },
+    capabilities: { image: false, vision: false, tts: false, video: false, videoEdit: false, music: false, mediaAnalysis: false },
     status() {
       return { capabilities: this.capabilities, connectors: {}, localStudio: true };
     },

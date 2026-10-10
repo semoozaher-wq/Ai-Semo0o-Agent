@@ -42,6 +42,13 @@ export class CreationStudio {
       kernel: true,
       localStudio: true,
       providers: this.providers.capabilities,
+      // Additive real-video capability (does not change the deterministic
+      // `formats` contract above). `available` is true only when a real
+      // video-generation provider is configured.
+      video: this.providers.video
+        ? { id: this.providers.video.id, model: this.providers.video.model, capabilities: this.providers.video.capabilities || {}, formats: ['mp4'] }
+        : null,
+      videoEdit: this.providers.videoEdit ? { id: this.providers.videoEdit.id, model: this.providers.videoEdit.model, formats: ['mp4'] } : null,
       formats: ['gif', 'avi', 'png', 'bundle'],
       resolutions: ['draft', 'standard', 'high', 'full'],
     };
@@ -152,6 +159,7 @@ export class CreationStudio {
         gif: result.media.gif || null,
         avi: result.media.avi || null,
         bundle: result.media.bundle || null,
+        mp4: result.media.mp4 || null,
       };
       job.elapsedMs = Date.now() - job.startedAt;
       this.#push(job, 'job.completed', { manifest: result.manifest, elapsedMs: job.elapsedMs });
@@ -204,6 +212,7 @@ export class CreationStudio {
         gif: job.artifacts.gif ? { bytes: job.artifacts.gif.length, mimeType: 'image/gif' } : null,
         avi: job.artifacts.avi ? { bytes: job.artifacts.avi.length, mimeType: 'video/x-msvideo' } : null,
         bundle: job.artifacts.bundle ? { bytes: job.artifacts.bundle.length, mimeType: 'application/zip' } : null,
+        mp4: job.artifacts.mp4 ? { bytes: job.artifacts.mp4.length, mimeType: 'video/mp4' } : null,
       },
     };
   }
@@ -228,7 +237,7 @@ export class CreationStudio {
     if (!job) return null;
     const buffer = job.artifacts[name];
     if (!buffer) return null;
-    const mimeType = name === 'gif' ? 'image/gif' : name === 'avi' ? 'video/x-msvideo' : name === 'bundle' ? 'application/zip' : 'application/octet-stream';
+    const mimeType = name === 'gif' ? 'image/gif' : name === 'avi' ? 'video/x-msvideo' : name === 'bundle' ? 'application/zip' : name === 'mp4' ? 'video/mp4' : 'application/octet-stream';
     return { buffer, mimeType, filename: `semo0o-${job.id}.${name === 'bundle' ? 'zip' : name}` };
   }
 

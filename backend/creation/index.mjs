@@ -12,6 +12,7 @@ export { compileShotPrompts, compileVideoPrompt, compileStoryboardPrompts, compi
 export { composeTimeline, fitScale } from './local-studio.mjs';
 export { critique, critiqueDeterministic } from './critic.mjs';
 export { createCreationProviders, createLocalOnlyProviders, decodeImageBytes } from './providers.mjs';
+export { createVideoGenerationService, conversationalVideoEdit, normalizeVideoInput } from './video-gen.mjs';
 export { buildBundle } from './bundle.mjs';
 // Creation Kernel (deterministic media engine) — re-exported so the whole
 // creation stack is reachable through one import.

@@ -13,7 +13,7 @@
 import { buildBrief } from './brief.mjs';
 import { buildStoryboard, normalizeStoryboard } from './storyboard.mjs';
 import { buildBiblesAsync } from './bibles.mjs';
-import { compileStoryboardPrompts } from './promptsmith.mjs';
+import { compileStoryboardPrompts, compileVideoPrompt } from './promptsmith.mjs';
 import { composeTimeline } from './local-studio.mjs';
 import { renderTimeline, framesToGif, framesToAvi, framesToPngSequence } from '../media/render.mjs';
 import { critique } from './critic.mjs';
@@ -286,6 +286,38 @@ export async function runDirector(goal, options = {}) {
     if (options.pngSequence) media.pngs = framesToPngSequence(frames);
   }
 
+  // 9b. Optional REAL generative video (additive, non-destructive).
+  // When a video-generation provider is configured AND the caller explicitly
+  // asked for a real video, compile ONE prompt from the winning brief +
+  // storyboard and generate a brand-new video with the provider (e.g. Veo 3.1).
+  // This is a genuine generative model, NOT the deterministic frame composition
+  // above. It is best-effort and non-fatal: the deterministic deliverable is
+  // always kept and any failure is reported honestly in the manifest instead of
+  // being faked.
+  let videoMeta = null;
+  let videoError = null;
+  if (options.realVideo === true && providers.video?.generate) {
+    guard();
+    emit('stage', { stage: 'video' });
+    try {
+      const scene = best.storyboard?.scenes?.[0];
+      const videoPrompt = scene ? compileVideoPrompt(scene, bibles, best.brief) : { positive: best.brief.goal, negative: '' };
+      emit('video_start', { provider: providers.video.id, model: providers.video.model, prompt: String(videoPrompt.positive).slice(0, 160) });
+      const generated = await providers.video.generate({
+        prompt: videoPrompt.positive,
+        negativePrompt: videoPrompt.negative || undefined,
+        durationSeconds: options.videoDurationSeconds || Math.max(4, Math.min(8, Math.round(best.brief.duration || 4))),
+        aspectRatio: width >= height ? '16:9' : '9:16',
+      });
+      media.mp4 = Buffer.from(generated.base64, 'base64');
+      videoMeta = { provider: generated.provider, model: generated.model, mimeType: generated.mimeType || 'video/mp4' };
+      emit('video_done', { provider: videoMeta.provider, model: videoMeta.model, bytes: media.mp4.length });
+    } catch (error) {
+      videoError = String(error?.message || error);
+      emit('video_error', { error: videoError });
+    }
+  }
+
   const manifest = {
     title: best.brief.title,
     goal: best.brief.goal,
@@ -298,7 +330,11 @@ export async function runDirector(goal, options = {}) {
     duration,
     frameCount: frames.length,
     hasAudio: !!audio,
-    formats: [media.gif && 'gif', media.avi && 'avi', media.pngs && 'png'].filter(Boolean),
+    formats: [media.gif && 'gif', media.avi && 'avi', media.pngs && 'png', media.mp4 && 'mp4'].filter(Boolean),
+    realVideo: !!media.mp4,
+    videoProvider: videoMeta?.provider || null,
+    videoModel: videoMeta?.model || null,
+    videoError: videoError || undefined,
     score: best.score,
     iterations: iterations.length,
     providers: providers.capabilities,
