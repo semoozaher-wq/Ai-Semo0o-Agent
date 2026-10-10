@@ -216,6 +216,21 @@ test('creation routes are tenant-scoped and return honest 404s', async () => {
   } finally { await fx.close(); }
 });
 
+test('artifact downloads require a Bearer token (the URL is NOT token-free)', async () => {
+  // Regression guard for the "download button 401s" incident: the client used
+  // to hand the bare artifact URL to Linking.openURL, but the route is
+  // tenant-scoped and Bearer-authenticated (no cookies). An unauthenticated
+  // request must fail closed with 401 — before any job lookup — so the UI is
+  // forced to download through the authenticated client.
+  const fx = await fixture();
+  try {
+    const anon = await fx.request('/creation/jobs/cre_anything/artifacts/gif');
+    assert.equal(anon.status, 401, 'an unauthenticated artifact download must be rejected');
+    const anonBundle = await fx.request('/creation/jobs/cre_anything/artifacts/bundle');
+    assert.equal(anonBundle.status, 401, 'every artifact kind requires auth');
+  } finally { await fx.close(); }
+});
+
 test('creation jobs are isolated across tenants end-to-end', async () => {
   const fx = await fixture();
   try {
