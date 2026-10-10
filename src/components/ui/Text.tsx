@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text as RNText, TextProps as RNTextProps } from 'react-native';
 import { ThemeColors, useTheme } from '../../theme';
+import { ARABIC_FAMILY } from '../../theme/fonts';
 
 export type TextVariant =
   | 'display'
@@ -74,6 +75,9 @@ export function Text({
     caption: 'medium',
   };
 
+  const resolvedWeight = weight ?? weightFor[variant];
+  const family = ARABIC_FAMILY[resolvedWeight] ?? ARABIC_FAMILY.regular;
+
   return (
     <RNText
       {...rest}
@@ -81,7 +85,10 @@ export function Text({
         {
           color: theme.colors[TONE_KEYS[tone]],
           fontSize: sizeFor[variant],
-          fontWeight: theme.fontWeight[weight ?? weightFor[variant]],
+          fontFamily: family,
+          // The loaded family already encodes its weight; a numeric weight on
+          // top of a single-face family would trigger faux-bold on web.
+          fontWeight: 'normal',
           textAlign: align,
           lineHeight: Math.round(sizeFor[variant] * theme.lineHeight.normal),
         },
