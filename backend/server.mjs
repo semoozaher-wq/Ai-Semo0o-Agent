@@ -56,6 +56,7 @@ import { buildChangeSet, describeChangeSet } from '../phase2-core/changeset.mjs'
 import { CodebaseReasoner } from '../phase2-core/reasoning.mjs';
 import { buildCapabilityScorecard, collectCapabilitySignals, describeScorecard, loadProofArtifacts, runAgentBenchmark } from './ops/capability-benchmark.mjs';
 import { CreationStudio, CREATION_TERMINAL_STATES } from './creation/studio.mjs';
+import { createVideoGenerationService } from './creation/video-gen.mjs';
 import { FORMATS as CREATION_FORMATS, PALETTES as CREATION_PALETTES } from './creation/brief.mjs';
 
 const SERVICE_VERSION = '2.0.0';
@@ -281,10 +282,10 @@ function workspaceReader(root) {
 function usageSummary(db, tenantId, days = 30) {
   const safeDays = Math.max(1, Math.min(90, Number.isFinite(days) ? Math.floor(days) : 30));
   const period = new Date().toISOString().slice(0, 7);
-  const quota = db.get('SELECT monthly_tokens,monthly_runs FROM usage_quotas WHERE tenant_id=?', tenantId)
-    ?? { monthly_tokens: 100000, monthly_runs: 1000 };
-  const counter = db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period)
-    ?? { tokens: 0, runs: 0 };
+  const quota = db.get('SELECT monthly_tokens,monthly_runs,monthly_cost_usd FROM usage_quotas WHERE tenant_id=?', tenantId)
+    ?? { monthly_tokens: 100000, monthly_runs: 1000, monthly_cost_usd: 10 };
+  const counter = db.get('SELECT tokens,runs,cost_usd FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period)
+    ?? { tokens: 0, runs: 0, cost_usd: 0 };
   const since = new Date(Date.now() - safeDays * 86_400_000).toISOString();
   const daily = db.all(
     `SELECT substr(created_at,1,10) AS date,
@@ -404,7 +405,9 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   // Creation Studio: the async job layer behind /creation/*. It reuses the same
   // server LLM router (optional) and auto-detects configured media providers,
   // falling back to the deterministic Local Studio so a video is always produced.
-  const creationStudio = new CreationStudio({ llm });
+  // It is wired to the database so jobs, events and artifacts are durable
+  // (write-through) and survive a restart instead of living only in memory.
+  const creationStudio = new CreationStudio({ llm, db });
   // Optional Sentry-compatible error tracking. Null when unconfigured so we
   // never report a fake "errors are tracked" state.
   let errorTracker = null;
@@ -564,6 +567,38 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           const input = await body(request);
           const goal = validateText(input.goal, 'GOAL', 4000);
           return send(response, 200, await creationStudio.plan(goal, creationOptions(input)));
+        }
+        // Dedicated REAL-video surface, kept separate from the deterministic
+        // Local Studio job above. `GET` discloses exactly what this server can
+        // do (provider, model, honest capabilities) so the UI never over-claims;
+        // `POST /generate` performs a genuine generative call and returns the
+        // MP4 bytes. It fails closed with a classified reason when no real video
+        // provider is configured — it never fakes a video.
+        if (method === 'GET' && parts[1] === 'video' && parts.length === 2) {
+          const status = createVideoGenerationService(process.env).status();
+          return send(response, 200, {
+            available: Boolean(status.provider),
+            provider: status.provider,
+            editor: status.editor,
+            capabilities: status.capabilities,
+            formats: status.provider ? ['mp4'] : [],
+            reason: status.provider ? null : 'video_provider_not_configured',
+          });
+        }
+        if (method === 'POST' && parts[1] === 'video' && parts[2] === 'generate' && parts.length === 3) {
+          const service = createVideoGenerationService(process.env);
+          if (!service.provider) throw new Error('VIDEO_PROVIDER_NOT_CONFIGURED');
+          const input = await body(request);
+          const normalized = { prompt: validateText(input.prompt, 'PROMPT', 10000) };
+          if (typeof input.negativePrompt === 'string' && input.negativePrompt.trim()) normalized.negativePrompt = input.negativePrompt.trim().slice(0, 2000);
+          if (typeof input.aspectRatio === 'string') normalized.aspectRatio = input.aspectRatio.slice(0, 16);
+          if (typeof input.resolution === 'string') normalized.resolution = input.resolution.slice(0, 16);
+          const duration = Number(input.durationSeconds);
+          if (Number.isFinite(duration)) normalized.durationSeconds = Math.max(2, Math.min(60, Math.round(duration)));
+          if (input.image && typeof input.image.base64 === 'string') normalized.image = { base64: input.image.base64, mimeType: typeof input.image.mimeType === 'string' ? input.image.mimeType : 'image/png' };
+          const result = normalized.image ? await service.imageToVideo(normalized) : await service.textToVideo(normalized);
+          const bytes = Buffer.from(result.base64, 'base64');
+          return send(response, 200, { provider: result.provider, model: result.model, mimeType: result.mimeType || 'video/mp4', bytes: bytes.length, base64: result.base64 });
         }
         if (parts[1] === 'jobs' && parts.length >= 3) {
           const jobId = parts[2];
@@ -962,7 +997,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
             else if (frame.type === 'done') { usage = frame.usage; provider = frame.provider; }
           }
           const streamTokens = Number(usage?.totalTokens) || 0;
-          if (streamTokens > 0) consumeQuota(db, user.tenantId, { tokens: streamTokens });
+          const streamCost = Number(usage?.costUsd ?? usage?.cost_usd) || 0;
+          if (streamTokens > 0 || streamCost > 0) consumeQuota(db, user.tenantId, { tokens: streamTokens, costUsd: streamCost });
           chat.updateMessage({ tenantId: user.tenantId, messageId: assistantMessage.id, patch: { content: text, status: 'complete', provider, usage } });
           db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.stream.completed', 'chat', user.id, JSON.stringify({ conversationId, provider, model, usage, chars: text.length }), now());
           writeFrame('done', { conversationId, assistantMessageId: assistantMessage.id, provider, usage, chars: text.length });
@@ -990,7 +1026,8 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           { role: 'user', content: message },
         ] });
         const chatTokens = Number(result.usage?.totalTokens ?? result.usage?.total_tokens) || 0;
-        if (chatTokens > 0) consumeQuota(db, user.tenantId, { tokens: chatTokens });
+        const chatCost = Number(result.usage?.costUsd ?? result.usage?.cost_usd) || 0;
+        if (chatTokens > 0 || chatCost > 0) consumeQuota(db, user.tenantId, { tokens: chatTokens, costUsd: chatCost });
         const assistantMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, role: 'assistant', content: result.text ?? '', status: 'complete', provider: result.provider, model, usage: result.usage });
         db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.completed', 'chat', user.id, JSON.stringify({ conversationId, provider: result.provider, model: model || null, usage: result.usage }), now());
         return send(response, 200, { conversationId, messageId: assistantMessage.id, text: result.text, provider: result.provider, usage: result.usage });
@@ -1378,7 +1415,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','ACCESS_REQUESTS_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND','ACCESS_REQUEST_NOT_FOUND','DEVICE_REQUEST_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED','ACCESS_REQUEST_NOT_PENDING','ACCESS_REQUEST_EMAIL_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED','ACCESS_REQUEST_TOKEN_INVALID'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','ACCESS_REQUESTS_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND','ACCESS_REQUEST_NOT_FOUND','DEVICE_REQUEST_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED','MONTHLY_COST_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED','ACCESS_REQUEST_NOT_PENDING','ACCESS_REQUEST_EMAIL_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED','ACCESS_REQUEST_TOKEN_INVALID','VIDEO_IMAGE_TO_VIDEO_UNSUPPORTED','VIDEO_SOURCE_IMAGE_REQUIRED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       if (status >= 500 && errorTracker) {
         // Fire-and-forget: reporting must never delay or break the response.
         Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
