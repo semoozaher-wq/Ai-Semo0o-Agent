@@ -22,8 +22,10 @@ jobs:
         uses: actions/setup-node@v5
         with:
           # Pinned to the production runtime (see render.yaml / backend/Dockerfile).
-          # node:sqlite requires Node >= 22.5.0.
-          node-version: '22.11.0'
+          # The React Native / Metro toolchain requires
+          # `^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0`, and node:sqlite needs
+          # >= 22.5.0, so the effective floor on the 22.x line is 22.13.0.
+          node-version: '22.23.2'
           cache: npm
 
       - name: Install dependencies
