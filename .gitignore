@@ -34,3 +34,8 @@ backend/data/
 # --- OS / editor noise -------------------------------------------------------
 .DS_Store
 Thumbs.db
+
+# --- Transient scratch / one-off verification scripts ------------------------
+# The tmp/ directory is for throwaway verification scripts that must never be
+# committed; the durable tooling lives in scripts/.
+tmp/
