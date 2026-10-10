@@ -47,6 +47,8 @@ import { deleteTenantAccount, deleteUserAccount } from './account/deletion.mjs';
 import { evaluateAlerts, renderAlertMetrics } from './observability/alerts.mjs';
 import { createErrorTracker, errorTrackerStatus } from './observability/error-tracking.mjs';
 import { ChatStore } from './chat/store.mjs';
+import { createAttachmentStore, MAX_ATTACHMENT_BYTES } from './chat/attachments.mjs';
+import { buildChatContent, buildAgentGoal } from './chat/content.mjs';
 import { Capability, createExecutionEngine } from '../execution-core/engine.mjs';
 import { provisionTaskWorkspace, createTaskEngineResolver } from '../execution-core/task-workspace.mjs';
 import { createContinuationSupervisor } from './agent/long-running.mjs';
@@ -128,6 +130,13 @@ function rawBody(request, limit = 2_000_000) {
     request.on('end', () => resolve(raw));
     request.on('error', reject);
   });
+}
+// JSON body with a caller-chosen size limit. The default `body()` caps at 2 MB,
+// which is far too small for an attachment upload (base64 inflates the payload
+// by ~4/3); the attachment route raises the ceiling explicitly.
+async function jsonBody(request, limit) {
+  const raw = await rawBody(request, limit);
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw new Error('INVALID_JSON'); }
 }
 function send(response, status, data) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -402,6 +411,10 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
   const memory = new MemoryStore(db);
   const tools = liveTools ?? createLiveToolRegistry({ db, codeRunner, llm, engineAvailable: true, memory });
   const chat = new ChatStore(db);
+  // Tenant-scoped attachment storage. The chat pipeline loads uploaded bytes
+  // back through this store so the model receives the ACTUAL file content
+  // (inlined text / vision image parts) instead of a name-only reference.
+  const attachments = createAttachmentStore(db);
   // Creation Studio: the async job layer behind /creation/*. It reuses the same
   // server LLM router (optional) and auto-detects configured media providers,
   // falling back to the deterministic Local Studio so a video is always produced.
@@ -964,20 +977,63 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           return send(response, 201, message);
         }
       }
+      // ---- Attachments (real file content) -----------------------------------
+      // The client uploads the actual bytes (base64) so the model can receive the
+      // file content, not merely its name/size. Storage is tenant+user scoped and
+      // the on-disk path is derived from the generated id, never the user's name.
+      if (method === 'POST' && parts.join('/') === 'attachments') {
+        const input = await jsonBody(request, MAX_ATTACHMENT_BYTES * 2 + 100_000);
+        const record = attachments.save({
+          tenantId: user.tenantId,
+          userId: user.id,
+          name: input.name,
+          mimeType: input.mimeType,
+          dataBase64: input.dataBase64 ?? input.data,
+          conversationId: input.conversationId ?? null,
+        });
+        db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'attachment.uploaded', 'attachment', record.id, JSON.stringify({ kind: record.kind, mimeType: record.mimeType, sizeBytes: record.sizeBytes }), now());
+        return send(response, 201, record);
+      }
+      if (parts[0] === 'attachments' && parts[1]) {
+        if (method === 'GET' && parts.length === 2) {
+          const record = attachments.getMeta({ tenantId: user.tenantId, userId: user.id, attachmentId: parts[1] });
+          if (!record) throw new Error('NOT_FOUND');
+          return send(response, 200, record);
+        }
+        if (method === 'GET' && parts[2] === 'content') {
+          const { record, buffer } = attachments.getContent({ tenantId: user.tenantId, userId: user.id, attachmentId: parts[1] });
+          return sendBinary(response, 200, buffer, record.mimeType || 'application/octet-stream', record.name);
+        }
+        if (method === 'DELETE' && parts.length === 2) {
+          return send(response, 200, attachments.remove({ tenantId: user.tenantId, userId: user.id, attachmentId: parts[1] }));
+        }
+      }
       if (method === 'POST' && parts.join('/') === 'chat/stream') {
         const input = await body(request);
-        const message = validateText(input.message, 'MESSAGE', 12000);
+        const attachmentIds = Array.isArray(input.attachmentIds) ? input.attachmentIds.filter((value) => typeof value === 'string') : [];
+        const rawMessage = typeof input.message === 'string' ? input.message : '';
+        // A turn is valid with text OR at least one attachment (an image-only
+        // message must still reach the model).
+        if (!rawMessage.trim() && attachmentIds.length === 0) throw new Error('INVALID_MESSAGE');
+        const message = rawMessage.slice(0, 12000);
         const model = normalizeModelId(input.model);
         if (typeof llm.stream !== 'function') throw new Error('STREAMING_NOT_SUPPORTED');
+        // Load the real bytes for every referenced attachment (owner-scoped; a
+        // foreign/unknown id fails closed) and build the model content.
+        const loadedAttachments = attachmentIds.length
+          ? attachments.loadMany({ tenantId: user.tenantId, userId: user.id, attachmentIds })
+          : [];
+        const built = buildChatContent({ text: message, attachments: loadedAttachments });
         // Quota is checked BEFORE any bytes are written so an over-quota tenant still
         // receives a clean JSON 402 from the outer error handler.
         consumeQuota(db, user.tenantId, {});
         // Resolve or create the conversation and persist the user turn BEFORE the
         // first byte, so a dropped connection never loses the user's message.
+        const storedText = message.trim() ? message : `[${loadedAttachments.length} attachment(s)]`;
         const conversationId = input.conversationId
           ? chat.getConversation({ tenantId: user.tenantId, userId: user.id, conversationId: input.conversationId }).id
-          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: message.slice(0, 80), mode: 'chat' }).id;
-        const userMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: message, status: 'complete' });
+          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: storedText.slice(0, 80), mode: 'chat' }).id;
+        const userMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: storedText, status: 'complete' });
         // The assistant row is created as `streaming` up front. If this process
         // dies mid-stream the row is left `streaming` and `recoverInterrupted`
         // sweeps it to `interrupted` for retry — no silent data loss.
@@ -991,7 +1047,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         try {
           for await (const frame of llm.stream({ model, messages: [
             { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
-            { role: 'user', content: message },
+            { role: 'user', content: built.content },
           ] })) {
             if (frame.type === 'token') { text += frame.text; writeFrame('token', { text: frame.text }); }
             else if (frame.type === 'done') { usage = frame.usage; provider = frame.provider; }
@@ -1014,16 +1070,24 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       }
       if (method === 'POST' && parts.join('/') === 'chat') {
         const input = await body(request);
-        const message = validateText(input.message, 'MESSAGE', 12000);
+        const attachmentIds = Array.isArray(input.attachmentIds) ? input.attachmentIds.filter((value) => typeof value === 'string') : [];
+        const rawMessage = typeof input.message === 'string' ? input.message : '';
+        if (!rawMessage.trim() && attachmentIds.length === 0) throw new Error('INVALID_MESSAGE');
+        const message = rawMessage.slice(0, 12000);
         const model = normalizeModelId(input.model);
+        const loadedAttachments = attachmentIds.length
+          ? attachments.loadMany({ tenantId: user.tenantId, userId: user.id, attachmentIds })
+          : [];
+        const built = buildChatContent({ text: message, attachments: loadedAttachments });
         consumeQuota(db, user.tenantId, {});
+        const storedText = message.trim() ? message : `[${loadedAttachments.length} attachment(s)]`;
         const conversationId = input.conversationId
           ? chat.getConversation({ tenantId: user.tenantId, userId: user.id, conversationId: input.conversationId }).id
-          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: message.slice(0, 80), mode: 'chat' }).id;
-        chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: message, status: 'complete' });
+          : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: storedText.slice(0, 80), mode: 'chat' }).id;
+        chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: storedText, status: 'complete' });
         const result = await llm.complete({ model, messages: [
           { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
-          { role: 'user', content: message },
+          { role: 'user', content: built.content },
         ] });
         const chatTokens = Number(result.usage?.totalTokens ?? result.usage?.total_tokens) || 0;
         const chatCost = Number(result.usage?.costUsd ?? result.usage?.cost_usd) || 0;
@@ -1066,7 +1130,15 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         // request for the Phase E router to choose by task type, not a concrete
         // model. Only explicit, real model IDs are normalised/validated here.
         if (kind === 'agent.run' && input.model !== undefined && !isRoutingSentinel(input.model)) input.model = normalizeModelId(input.model);
-        const goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
+        let goal = validateText(input.goal || 'code execution', 'GOAL', 4000);
+        // Agent runs work from a text goal: inline the real content of any
+        // referenced attachments (text files) and describe images so the planner
+        // acts on the actual material rather than a filename.
+        const runAttachmentIds = Array.isArray(input.attachmentIds) ? input.attachmentIds.filter((value) => typeof value === 'string') : [];
+        if (runAttachmentIds.length) {
+          const loadedAttachments = attachments.loadMany({ tenantId: user.tenantId, userId: user.id, attachmentIds: runAttachmentIds });
+          goal = buildAgentGoal({ goal, attachments: loadedAttachments }).slice(0, 60000);
+        }
         const requestedIdempotencyKey = input.idempotencyKey ?? request.headers['idempotency-key'];
         const idempotencyKey = requestedIdempotencyKey ? validateText(requestedIdempotencyKey, 'IDEMPOTENCY_KEY', 128) : null;
         const project = db.get('SELECT * FROM projects WHERE id=? AND tenant_id=?', input.projectId, user.tenantId);
@@ -1415,7 +1487,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
       throw new Error('NOT_FOUND');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','ACCESS_REQUESTS_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND','ACCESS_REQUEST_NOT_FOUND','DEVICE_REQUEST_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED','MONTHLY_COST_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED','ACCESS_REQUEST_NOT_PENDING','ACCESS_REQUEST_EMAIL_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED','ACCESS_REQUEST_TOKEN_INVALID','VIDEO_IMAGE_TO_VIDEO_UNSUPPORTED','VIDEO_SOURCE_IMAGE_REQUIRED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
+      const status = ['UNAUTHORIZED','INVALID_CREDENTIALS','MFA_REQUIRED','MFA_CODE_INVALID'].includes(message) ? 401 : ['FORBIDDEN','CORS_ORIGIN_DENIED','SELF_APPROVAL_FORBIDDEN','ACCESS_KEY_INVALID','REGISTRATION_DISABLED','ACCESS_REQUESTS_DISABLED','EMAIL_VERIFICATION_REQUIRED'].includes(message) ? 403 : ['NOT_FOUND','ATTACHMENT_NOT_FOUND','ATTACHMENT_FILE_MISSING','BILLING_CUSTOMER_NOT_FOUND','BILLING_SUBSCRIPTION_NOT_FOUND','SELF_IMPROVE_PROPOSAL_NOT_FOUND','ORG_MEMBER_NOT_FOUND','ORG_INVITATION_NOT_FOUND','CONVERSATION_NOT_FOUND','CHAT_MESSAGE_NOT_FOUND','PROJECT_NOT_FOUND','ACCOUNT_NOT_FOUND','CREATION_JOB_NOT_FOUND','CREATION_ARTIFACT_NOT_FOUND','ACCESS_REQUEST_NOT_FOUND','DEVICE_REQUEST_NOT_FOUND'].includes(message) ? 404 : ['MONTHLY_TOKEN_QUOTA_EXCEEDED','MONTHLY_RUN_QUOTA_EXCEEDED','MONTHLY_COST_QUOTA_EXCEEDED'].includes(message) ? 402 : ['BILLING_PROVIDER_NOT_CONFIGURED','BILLING_PROVIDER_CREDENTIALS_REQUIRED','EMAIL_PROVIDER_NOT_CONFIGURED','GITHUB_OAUTH_NOT_CONFIGURED','GITHUB_NOT_CONFIGURED','GITHUB_TOKEN_REQUIRED','SENTRY_DSN_INVALID','SECRETS_MASTER_KEY_REQUIRED'].includes(message) ? 503 : ['BILLING_PROVIDER_UNSUPPORTED'].includes(message) ? 501 : ['ORG_LAST_OWNER_PROTECTED','ORG_OWNER_TRANSFER_REQUIRES_DEDICATED_FLOW','ORG_INVITATION_ALREADY_ACCEPTED','ORG_OWNER_TRANSFER_REQUIRED','ORG_TENANT_HAS_OTHER_MEMBERS','WORKSPACE_EXISTS','EMAIL_ALREADY_REGISTERED','ACCESS_REQUEST_NOT_PENDING','ACCESS_REQUEST_EMAIL_REGISTERED'].includes(message) ? 409 : (message.startsWith('INVALID_') || message.startsWith('UNSUPPORTED_') || message.startsWith('DELETE_') || message.startsWith('AGENT_') || message.startsWith('SELF_IMPROVE_') || message.startsWith('ORG_') || message.startsWith('CHAT_') || message.startsWith('ACCOUNT_TOKEN_') || ['INVALID_JSON','ATTACHMENT_DATA_REQUIRED','ATTACHMENT_DATA_INVALID','ATTACHMENT_TOO_LARGE','ATTACHMENT_OWNER_REQUIRED','BODY_TOO_LARGE','PASSWORD_POLICY_FAILED','WORKSPACE_ROOT_REQUIRED','WORKSPACE_PATH_OUTSIDE_ROOT','BASE_ROOT_REQUIRED','DEFAULT_BRANCH_FORBIDDEN','GIT_CLONE_FAILED','GIT_INIT_FAILED','GIT_BRANCH_FAILED','BILLING_WEBHOOK_INVALID','BILLING_WEBHOOK_SIGNATURE_INVALID','BILLING_PLAN_NOT_PURCHASABLE','BILLING_PRICE_NOT_CONFIGURED','STREAMING_NOT_SUPPORTED','GITHUB_OAUTH_STATE_INVALID','GITHUB_REPO_INVALID','GITHUB_ACTION_UNSUPPORTED','GITHUB_OAUTH_EXCHANGE_FAILED','ACCESS_REQUEST_TOKEN_INVALID','VIDEO_IMAGE_TO_VIDEO_UNSUPPORTED','VIDEO_SOURCE_IMAGE_REQUIRED'].includes(message)) ? 400 : message === 'RATE_LIMITED' ? 429 : 500;
       if (status >= 500 && errorTracker) {
         // Fire-and-forget: reporting must never delay or break the response.
         Promise.resolve(errorTracker.captureException(error, { transaction: `${request.method} ${new URL(request.url, 'http://localhost').pathname}`, tags: { requestId } })).catch(() => {});
