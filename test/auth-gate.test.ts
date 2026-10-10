@@ -63,9 +63,12 @@ test('client restores and enforces a real server-validated session', () => {
   assert.ok(source.includes('/auth/policy'), 'policy must come from GET /auth/policy');
 });
 
-test('the store screen and store tab are removed (platform, not a store)', () => {
-  const tabs = readFileSync(new URL('../app/(tabs)/_layout.tsx', import.meta.url), 'utf8');
-  assert.equal(tabs.includes("name: 'store'"), false, 'the store tab must be gone');
-  assert.ok(tabs.includes("name: 'studio'"), 'the creation studio tab must exist');
-  assert.ok(tabs.includes("name: 'operations'"), 'the operations tab must exist');
+test('the store screen and store nav entry are removed (platform, not a store)', () => {
+  // Navigation now lives in a single source of truth consumed by the responsive
+  // AppShell (sidebar / rail / bottom bar) instead of the old tab layout.
+  const nav = readFileSync(new URL('../src/navigation/navItems.ts', import.meta.url), 'utf8');
+  assert.equal(nav.includes("key: 'store'"), false, 'the store nav entry must be gone');
+  assert.equal(nav.includes("href: '/store'"), false, 'no route may point at a store');
+  assert.ok(nav.includes("key: 'studio'"), 'the creation studio entry must exist');
+  assert.ok(nav.includes("key: 'operations'"), 'the operations entry must exist');
 });
