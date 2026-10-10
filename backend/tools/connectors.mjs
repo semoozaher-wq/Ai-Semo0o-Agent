@@ -1030,6 +1030,15 @@ async function httpAnalyzeMedia(config, { base64, mimeType, kind, prompt }, env)
 
 /** Report which connector families are configured (for honest status output). */
 export function connectorStatus(env = process.env) {
+  // Resolve the video providers once so the status can report the REAL
+  // capabilities of the configured backend instead of a single boolean. This is
+  // what lets the tool registry tell the truth about `video.edit`: a
+  // generation-only backend (plain Veo) can extend a clip but cannot restyle
+  // existing footage, so `videoEditing` stays false unless a dedicated
+  // video-to-video editor is configured.
+  const videoProvider = createVideoProvider(env);
+  const videoEditProvider = createVideoEditProvider(env);
+  const videoCapabilities = videoProvider?.capabilities || { textToVideo: false, imageToVideo: false, videoExtension: false, videoEditing: false };
   return {
     image: Boolean(createImageProvider(env)),
     vision: Boolean(createVisionProvider(env)),
@@ -1042,8 +1051,12 @@ export function connectorStatus(env = process.env) {
     webhook: Boolean(createWebhookProvider(env)),
     stt: Boolean(createSpeechToTextProvider(env)),
     tts: Boolean(createTextToSpeechProvider(env)),
-    video: Boolean(createVideoProvider(env)),
-    videoEdit: Boolean(createVideoEditProvider(env)),
+    video: Boolean(videoProvider),
+    videoEdit: Boolean(videoEditProvider),
+    // Additive, honest detail (does not change the boolean contract above).
+    videoProvider: videoProvider ? { id: videoProvider.id, model: videoProvider.model, capabilities: videoCapabilities } : null,
+    videoCapabilities,
+    videoEditing: Boolean(videoEditProvider) || videoCapabilities.videoEditing === true,
     audio: Boolean(createAudioProvider(env)),
     mediaAnalysis: Boolean(createMediaAnalysisProvider(env)),
   };

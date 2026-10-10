@@ -895,8 +895,13 @@ export function createLiveToolRegistry({ db, codeRunner, tavily = process.env.TA
         ['speech.transcribe', { ok: connectors.stt, reason: 'stt_provider_not_configured' }],
         ['speech.synthesize', { ok: connectors.tts, reason: 'tts_provider_not_configured' }],
         ['video.generate', { ok: connectors.video, reason: 'video_provider_not_configured' }],
-        ['video.imageToVideo', { ok: connectors.video, reason: 'video_provider_not_configured' }],
-        ['video.edit', { ok: connectors.videoEdit || connectors.video, reason: 'video_edit_provider_not_configured' }],
+        // imageToVideo is only "live" when the configured backend actually
+        // accepts a source image; a text-only backend must not claim it.
+        ['video.imageToVideo', { ok: connectors.video && connectors.videoCapabilities?.imageToVideo === true, reason: 'video_image_to_video_not_supported' }],
+        // Editing needs a genuine video-to-video editor OR a backend with real
+        // video-extension support (a plain generation backend cannot restyle
+        // existing footage). Never report it live just because generation works.
+        ['video.edit', { ok: connectors.videoEdit || connectors.videoCapabilities?.videoExtension === true, reason: 'video_edit_provider_not_configured' }],
         ['audio.generate', { ok: connectors.audio, reason: 'audio_provider_not_configured' }],
       ]);
       // GitHub tools are ready when an operator token exists or any tenant has a
