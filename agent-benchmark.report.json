@@ -1,18 +1,18 @@
 {
-  "startedAt": "2026-10-07T20:22:22.249Z",
-  "workspace": "/tmp/semo0o-agent-bench-mfasWR",
+  "startedAt": "2026-10-10T18:47:45.881Z",
+  "workspace": "/tmp/semo0o-agent-bench-USP2tN",
   "steps": [
     {
       "name": "setup",
       "register": 201,
       "project": 201,
-      "projectId": "project_6ebb6ad9-5af8-49df-a6a3-136b67a31a52"
+      "projectId": "project_ab363db5-060e-4d7f-b540-22b067bd71ab"
     },
     {
       "name": "enqueue agent.run",
       "status": 202,
-      "runId": "run_15259b8b-6555-45f8-8d3e-7eccc21c15d0",
-      "taskId": "task_11445fe4-5a3e-407a-92d4-08c9b8e02345"
+      "runId": "run_0573d861-45de-4b18-9bc6-d5263012a345",
+      "taskId": "task_18eed815-71e8-4a0a-be01-6b7c57790012"
     },
     {
       "name": "agent loop finished",
@@ -56,7 +56,7 @@
     {
       "name": "enqueue multi-agent run",
       "status": 202,
-      "runId": "run_f4ad8bc1-6e36-4d49-8831-865eccf9378b"
+      "runId": "run_8adb7c54-428e-4fc4-b3c4-ec69808a1233"
     },
     {
       "name": "multi-agent finished",
@@ -106,14 +106,14 @@
     {
       "name": "enqueue long-running run",
       "status": 202,
-      "runId": "run_089caf7a-b243-43d2-8c5b-38d6706cd56e"
+      "runId": "run_899ff1e8-f91b-41cb-a9f2-9447cc0d528a"
     },
     {
       "name": "long-running finished",
       "status": "completed_with_warnings",
       "continuation": {
         "scheduled": true,
-        "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
+        "runId": "run_79beb629-d075-49ab-9851-96ff13c49ce6",
         "continuations": 1
       },
       "continuationStatus": "completed_with_warnings",
@@ -153,7 +153,7 @@
     {
       "name": "code-intelligence benchmark",
       "workspace": {
-        "root": "/tmp/semo0o-agent-bench-mfasWR",
+        "root": "/tmp/semo0o-agent-bench-USP2tN",
         "files": 3,
         "symbols": 3
       },
@@ -198,13 +198,125 @@
           "score": 100
         }
       ]
+    },
+    {
+      "name": "enqueue self-healing run",
+      "status": 202,
+      "runId": "run_a6cbae0c-4735-46e6-9fe7-08b4d1853c57"
+    },
+    {
+      "name": "self-healing finished",
+      "status": "completed",
+      "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+      "selfHealingEvents": 1,
+      "repairEvents": 1,
+      "readOutcomes": [
+        false,
+        true
+      ],
+      "failedRead": true,
+      "repairedRead": true,
+      "toolResultEvents": 3,
+      "evidenceCount": 5
+    },
+    {
+      "name": "self-healing benchmark",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "completed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "repair-recorded": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "failed-then-succeeded": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-evidence": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-final": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "enqueue integrations run",
+      "status": 202,
+      "runId": "run_ea58dc97-6efb-4a21-af34-9400e540763a"
+    },
+    {
+      "name": "integrations finished",
+      "status": "completed",
+      "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+      "deliveredCount": 1,
+      "deliveredTo": [
+        "ops@example.com"
+      ],
+      "emailToolOk": true,
+      "emailMessageId": "msg-1",
+      "connectorLive": true,
+      "evidenceCount": 4
+    },
+    {
+      "name": "integrations benchmark",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 100,
+        "score": 100,
+        "byEvaluator": {
+          "completed": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "email-delivered": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "email-tool-ok": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "connector-live": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          },
+          "has-evidence": {
+            "passed": 1,
+            "failed": 0,
+            "rate": 100
+          }
+        }
+      }
     }
   ],
-  "finishedAt": "2026-10-07T20:22:23.965Z",
+  "finishedAt": "2026-10-10T18:47:47.725Z",
   "agentLoop": {
     "name": "agent-loop",
-    "startedAt": "2026-10-07T20:22:22.372Z",
-    "finishedAt": "2026-10-07T20:22:22.372Z",
+    "startedAt": "2026-10-10T18:47:46.013Z",
+    "finishedAt": "2026-10-10T18:47:46.013Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -285,8 +397,8 @@
   },
   "multiAgent": {
     "name": "multi-agent",
-    "startedAt": "2026-10-07T20:22:22.423Z",
-    "finishedAt": "2026-10-07T20:22:22.423Z",
+    "startedAt": "2026-10-10T18:47:46.072Z",
+    "finishedAt": "2026-10-10T18:47:46.072Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -380,8 +492,8 @@
   },
   "longRunning": {
     "name": "long-running",
-    "startedAt": "2026-10-07T20:22:23.681Z",
-    "finishedAt": "2026-10-07T20:22:23.681Z",
+    "startedAt": "2026-10-10T18:47:47.304Z",
+    "finishedAt": "2026-10-10T18:47:47.304Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -394,7 +506,7 @@
           "status": "completed_with_warnings",
           "continuation": {
             "scheduled": true,
-            "runId": "run_330abde9-74b2-40d6-93c1-1bc1fb1bc220",
+            "runId": "run_79beb629-d075-49ab-9851-96ff13c49ce6",
             "continuations": 1
           },
           "continuationStatus": "completed_with_warnings",
@@ -458,8 +570,8 @@
   },
   "codeIntelligence": {
     "name": "agent-code-intelligence",
-    "startedAt": "2026-10-07T20:22:23.961Z",
-    "finishedAt": "2026-10-07T20:22:23.965Z",
+    "startedAt": "2026-10-10T18:47:47.606Z",
+    "finishedAt": "2026-10-10T18:47:47.610Z",
     "durationMs": 4,
     "tasks": [
       {
@@ -467,7 +579,7 @@
         "name": "Codebase analysis",
         "weight": 2,
         "ok": true,
-        "durationMs": 1,
+        "durationMs": 0,
         "result": {
           "ok": true,
           "output": {
@@ -500,12 +612,12 @@
         "name": "ChangeSet construction",
         "weight": 2,
         "ok": true,
-        "durationMs": 2,
+        "durationMs": 3,
         "result": {
           "ok": true,
           "output": {
-            "id": "changeset_5f927a3e-2182-41e1-9dfb-a36dde46714b",
-            "generatedAt": "2026-10-07T20:22:23.964Z",
+            "id": "changeset_678f697d-d31c-4ca4-bd4d-8bcc71b6976c",
+            "generatedAt": "2026-10-10T18:47:47.609Z",
             "goal": "agent-benchmark",
             "summary": {
               "files": 0,
@@ -758,6 +870,208 @@
         },
         "has-output": {
           "passed": 4,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
+  "selfHealing": {
+    "name": "self-healing",
+    "startedAt": "2026-10-10T18:47:47.671Z",
+    "finishedAt": "2026-10-10T18:47:47.671Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "repair",
+        "name": "failing tool call -> diagnosis -> repair -> success",
+        "weight": 1,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "completed",
+          "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+          "selfHealingEvents": 1,
+          "repairEvents": 1,
+          "readOutcomes": [
+            false,
+            true
+          ],
+          "failedRead": true,
+          "repairedRead": true,
+          "toolResultEvents": 3,
+          "evidenceCount": 5
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "completed",
+            "name": "completed",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=completed"
+          },
+          {
+            "id": "repair-recorded",
+            "name": "repair-recorded",
+            "passed": true,
+            "weight": 1,
+            "detail": "repair_events=1"
+          },
+          {
+            "id": "failed-then-succeeded",
+            "name": "failed-then-succeeded",
+            "passed": true,
+            "weight": 1,
+            "detail": "failed_read=true repaired_read=true"
+          },
+          {
+            "id": "has-evidence",
+            "name": "has-evidence",
+            "passed": true,
+            "weight": 1,
+            "detail": "evidence=5"
+          },
+          {
+            "id": "has-final",
+            "name": "has-final",
+            "passed": true,
+            "weight": 1,
+            "detail": "ok"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "completed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "repair-recorded": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "failed-then-succeeded": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-evidence": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-final": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        }
+      }
+    }
+  },
+  "integrations": {
+    "name": "integrations",
+    "startedAt": "2026-10-10T18:47:47.725Z",
+    "finishedAt": "2026-10-10T18:47:47.725Z",
+    "durationMs": 0,
+    "tasks": [
+      {
+        "id": "email-connector",
+        "name": "live email.send delivered over a real connector",
+        "weight": 1,
+        "ok": true,
+        "durationMs": 0,
+        "result": {
+          "status": "completed",
+          "final": "تم فحص مساحة العمل وتحليل الملف بنجاح مع دليل من الأدوات.",
+          "deliveredCount": 1,
+          "deliveredTo": [
+            "ops@example.com"
+          ],
+          "emailToolOk": true,
+          "emailMessageId": "msg-1",
+          "connectorLive": true,
+          "evidenceCount": 4
+        },
+        "error": null,
+        "score": 100,
+        "evaluators": [
+          {
+            "id": "completed",
+            "name": "completed",
+            "passed": true,
+            "weight": 1,
+            "detail": "status=completed"
+          },
+          {
+            "id": "email-delivered",
+            "name": "email-delivered",
+            "passed": true,
+            "weight": 1,
+            "detail": "delivered=1 to=ops@example.com"
+          },
+          {
+            "id": "email-tool-ok",
+            "name": "email-tool-ok",
+            "passed": true,
+            "weight": 1,
+            "detail": "email_tool_ok=true"
+          },
+          {
+            "id": "connector-live",
+            "name": "connector-live",
+            "passed": true,
+            "weight": 1,
+            "detail": "email.send live=true"
+          },
+          {
+            "id": "has-evidence",
+            "name": "has-evidence",
+            "passed": true,
+            "weight": 1,
+            "detail": "evidence=4"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 100,
+      "score": 100,
+      "byEvaluator": {
+        "completed": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "email-delivered": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "email-tool-ok": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "connector-live": {
+          "passed": 1,
+          "failed": 0,
+          "rate": 100
+        },
+        "has-evidence": {
+          "passed": 1,
           "failed": 0,
           "rate": 100
         }

@@ -1,4 +1,4 @@
-node: v22.11.0  npm: 10.9.0
+node: v22.23.2  npm: 12.0.2
 CHROMIUM_BIN=/root/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome
 
 ================================================================
@@ -11,7 +11,7 @@ RESULT: PASS  (security:scan, 0s)
 >>> STEP: audit:gate
 >>> CMD : npm run audit:gate
 ================================================================
-RESULT: PASS  (audit:gate, 1s)
+RESULT: PASS  (audit:gate, 2s)
 
 ================================================================
 >>> STEP: verify-imports:backend
@@ -23,43 +23,43 @@ RESULT: PASS  (verify-imports:backend, 0s)
 >>> STEP: typecheck
 >>> CMD : npm run typecheck
 ================================================================
-RESULT: PASS  (typecheck, 7s)
+RESULT: PASS  (typecheck, 6s)
 
 ================================================================
 >>> STEP: lint
 >>> CMD : npm run lint
 ================================================================
-RESULT: PASS  (lint, 14s)
+RESULT: PASS  (lint, 12s)
 
 ================================================================
 >>> STEP: test
 >>> CMD : npm test
 ================================================================
-RESULT: PASS  (test, 128s)
+RESULT: PASS  (test, 121s)
 
 ================================================================
 >>> STEP: doctor
 >>> CMD : npm run doctor
 ================================================================
-RESULT: PASS  (doctor, 5s)
+RESULT: PASS  (doctor, 3s)
 
 ================================================================
 >>> STEP: build
 >>> CMD : npm run build
 ================================================================
-RESULT: PASS  (build, 4s)
+RESULT: PASS  (build, 2s)
 
 ================================================================
 >>> STEP: browser-smoke
 >>> CMD : node scripts/browser-smoke.mjs
 ================================================================
-RESULT: PASS  (browser-smoke, 0s)
+RESULT: PASS  (browser-smoke, 1s)
 
 ================================================================
 >>> STEP: browser-e2e
 >>> CMD : npm run test:browser-e2e
 ================================================================
-RESULT: PASS  (browser-e2e, 2s)
+RESULT: PASS  (browser-e2e, 1s)
 
 ================================================================
 >>> STEP: benchmark:agent
@@ -79,22 +79,22 @@ RESULT: PASS  (smoke:backend, 1s)
 ================================================================
 RESULT: PASS  (trial:self-improve, 0s)
 
-================================================================
-QUALITY SUMMARY  (node v22.11.0)
-================================================================
-  PASS  security:scan (0s)
-  PASS  audit:gate (1s)
-  PASS  verify-imports:backend (0s)
-  PASS  typecheck (7s)
-  PASS  lint (14s)
-  PASS  test (128s)
-  PASS  doctor (5s)
-  PASS  build (4s)
-  PASS  browser-smoke (0s)
-  PASS  browser-e2e (2s)
-  PASS  benchmark:agent (2s)
-  PASS  smoke:backend (1s)
-  PASS  trial:self-improve (0s)
-----------------------------------------------------------------
+==================================================================
+QUALITY SUMMARY  (node v22.23.2)
+==================================================================
+  PASS  security:scan
+  PASS  audit:gate
+  PASS  verify-imports:backend
+  PASS  typecheck
+  PASS  lint
+  PASS  test
+  PASS  doctor
+  PASS  build
+  PASS  browser-smoke
+  PASS  browser-e2e
+  PASS  benchmark:agent
+  PASS  smoke:backend
+  PASS  trial:self-improve
+------------------------------------------------------------------
 PASS=13 FAIL=0
-OVERALL: ALL QUALITY STEPS PASSED ✅
+OVERALL: ALL QUALITY STEPS PASSED

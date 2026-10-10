@@ -1,6 +1,6 @@
 {
-  "startedAt": "2026-10-07T20:23:24.423Z",
-  "pageUrl": "http://127.0.0.1:37175/",
+  "startedAt": "2026-10-10T18:47:44.626Z",
+  "pageUrl": "http://127.0.0.1:46745/",
   "scenarios": [
     {
       "name": "browser-agent-cdp",
@@ -105,10 +105,10 @@
   ],
   "browser": {
     "binary": "/root/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome",
-    "pageWebSocket": "ws://127.0.0.1:36699/devtools/page/4BE8818993F59A1C46E2A2F53220AF29",
-    "browserWebSocket": "ws://127.0.0.1:36699/devtools/browser/6a843e5e-bb84-4705-ab6d-25d3e563da46"
+    "pageWebSocket": "ws://127.0.0.1:35969/devtools/page/F1FAB4AEC48DCB1530FE05AD9935FC15",
+    "browserWebSocket": "ws://127.0.0.1:35969/devtools/browser/5ed7441c-3d63-4a27-8f10-5772ad60421e"
   },
-  "finishedAt": "2026-10-07T20:23:25.410Z",
+  "finishedAt": "2026-10-10T18:47:45.624Z",
   "passed": true,
   "summary": {
     "total": 3,

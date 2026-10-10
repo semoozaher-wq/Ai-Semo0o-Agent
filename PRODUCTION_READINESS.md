@@ -5,6 +5,19 @@ implemented and verified, and what remains blocked on external infrastructure,
 credentials, legal review, or device/signing environments. Nothing is marked
 `PASS` without command-level evidence.
 
+> **CURRENT VERIFIED STATE — 2026-10-10 (commit `c205bcf`).** The phase sections
+> below are historical snapshots; the authoritative current numbers are:
+> `npm test` = **1051 اختبار، 0 fail** (80 harness + 91 execution + 43 phase1 +
+> 94 frontend + 23 phase2 + 720 backend)؛ `npm run test:backend` = **720 tests،
+> 716 pass، 4 skipped، 0 fail**؛ `npm run security:scan` = **487 ملفًا، 0 findings**؛
+> `node scripts/verify-imports.mjs backend` = **563 import، 0 broken**؛
+> `npm run build` = **17 static routes**؛ `npm run doctor` = **21/21**؛
+> `npm run audit:gate` = **PASS** (17 advisory-affected package، كلها build-time
+> داخل baseline مُراجَع). Quality pipeline = **13/13 PASS**. الأدلة الحيّة:
+> `quality-run-full.log`، `capability-scorecard.json` (100/100)،
+> `agent-benchmark.report.json` (6/6)، `browser-e2e.report.json` (3/3)،
+> `FINAL_VERIFICATION_REPORT.md`.
+
 ---
 
 ## Phase 3 Addendum — 2026-10-06
@@ -267,7 +280,7 @@ removed; the suite only grew.
   `save-exact=true` for reproducible installs.
 - `.github/CODEOWNERS`, `scripts/protect-master-branch.sh`, and
   `docs/BRANCH_PROTECTION.md` define and apply `master` protection with the
-  required status checks `validate (22.5)`, `validate (22.11.0)`, and `verify`.
+  required status checks `validate (22.13.0)`, `validate (22.23.2)`, and `verify`.
 - Evidence: `ci.yml` (job `validate`, Node matrix) and `quality.yml` (job
   `verify`) already run the required tests; the protection script is
   syntax-checked (`bash -n`).

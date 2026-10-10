@@ -82,7 +82,7 @@
 
 ## 5) حالة CI / البناء / النشر
 
-- **CI**: `.github/workflows/ci.yml` (matrix Node 22.5 & 22.11.0: typecheck, `npm test`, `audit:gate`) و`.github/workflows/quality.yml` (security:scan, audit:gate, verify-imports backend, typecheck, lint, `npm test`, expo doctor, build, browser-smoke, browser-e2e, agent benchmark, boot-smoke, production trial). كل خطوة تُشغَّل محليًا بنجاح الآن. لم يُعدَّل أي workflow.
+- **CI**: `.github/workflows/ci.yml` (matrix Node 22.13.0 & 22.23.2: typecheck, `npm test`, `audit:gate`) و`.github/workflows/quality.yml` (security:scan, audit:gate, verify-imports backend, typecheck, lint, `npm test`, expo doctor, build, browser-smoke, browser-e2e, agent benchmark, boot-smoke, production trial). كل خطوة تُشغَّل محليًا بنجاح الآن. لم يُعدَّل أي workflow.
 - **البناء (Web)**: `expo export --platform web` ينجح (20 مسارًا ثابتًا).
 - **Docker**: أُصلح (FIX#3) وتحقّق عبر محاكاة كاملة.
 - **Render**: `render.yaml` (الجذر) + `server.js` shim يعملان؛ `scripts/render-env-sim.sh` يعيد HTTP 200.

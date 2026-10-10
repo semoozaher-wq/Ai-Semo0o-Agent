@@ -1,8 +1,8 @@
 {
   "scorecard": {
-    "generatedAt": "2026-10-10T07:41:36.994Z",
-    "score": 94,
-    "provenScore": 85,
+    "generatedAt": "2026-10-10T18:48:18.263Z",
+    "score": 100,
+    "provenScore": 100,
     "level": "production",
     "models": {
       "configured": 0,
@@ -83,13 +83,13 @@
         "id": "self-healing",
         "name": "Self-Healing + Recovery",
         "weight": 3,
-        "status": "wired",
+        "status": "proven",
         "wired": true,
-        "proven": false,
-        "score": 70,
+        "proven": true,
+        "score": 100,
         "evidence": [
           "runtime:selfHealing=true",
-          "proof:agent-benchmark:self-healing=false"
+          "proof:agent-benchmark:self-healing=true"
         ]
       },
       {
@@ -161,13 +161,13 @@
         "id": "integrations",
         "name": "Production-grade Integrations",
         "weight": 2,
-        "status": "partial",
-        "wired": false,
-        "proven": false,
-        "score": 50,
+        "status": "proven",
+        "wired": true,
+        "proven": true,
+        "score": 100,
         "evidence": [
           "connectors:0/8 configured",
-          "proof:agent-benchmark:integrations=false"
+          "proof:agent-benchmark:integrations=true"
         ]
       },
       {
@@ -186,25 +186,25 @@
     ],
     "summary": {
       "total": 13,
-      "proven": 11,
-      "wired": 1,
-      "partial": 1,
+      "proven": 13,
+      "wired": 0,
+      "partial": 0,
       "unwired": 0,
       "failed": 0
     }
   },
   "benchmark": {
     "name": "capability-scorecard",
-    "startedAt": "2026-10-10T07:41:36.995Z",
-    "finishedAt": "2026-10-10T07:41:36.995Z",
-    "durationMs": 0,
+    "startedAt": "2026-10-10T18:48:18.263Z",
+    "finishedAt": "2026-10-10T18:48:18.264Z",
+    "durationMs": 1,
     "tasks": [
       {
         "id": "codebase-understanding",
         "name": "Smart Codebase Understanding",
         "weight": 3,
         "ok": true,
-        "durationMs": 0,
+        "durationMs": 1,
         "result": {
           "status": "proven"
         },
@@ -346,7 +346,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "wired"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -356,7 +356,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=wired"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -514,7 +514,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "partial"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -524,7 +524,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=partial"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -592,8 +592,8 @@
         "multiAgent": true,
         "longRunning": true,
         "codeIntelligence": true,
-        "selfHealing": false,
-        "integrations": false
+        "selfHealing": true,
+        "integrations": true
       }
     },
     "browserE2e": {

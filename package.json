@@ -6,7 +6,7 @@
   "private": true,
   "packageManager": "npm@10.9.2",
   "engines": {
-    "node": ">=22.5.0",
+    "node": ">=22.13.0",
     "npm": ">=10.9.0"
   },
   "scripts": {
@@ -44,7 +44,12 @@
     "smoke:backend": "bash scripts/boot-smoke.sh",
     "benchmark:agent": "node --experimental-sqlite scripts/agent-benchmark.mjs",
     "benchmark:capabilities": "node --experimental-sqlite scripts/capability-benchmark.mjs",
-    "trial:self-improve": "node --experimental-sqlite scripts/production-trial.mjs"
+    "trial:self-improve": "node --experimental-sqlite scripts/production-trial.mjs",
+    "db:backup": "node --experimental-sqlite backend/ops/backup.mjs backup",
+    "db:verify": "node --experimental-sqlite backend/ops/backup.mjs verify",
+    "db:restore": "node --experimental-sqlite backend/ops/backup.mjs restore",
+    "db:drill": "node --experimental-sqlite backend/ops/backup.mjs drill",
+    "db:prune": "node --experimental-sqlite backend/ops/backup.mjs prune"
   },
   "dependencies": {
     "@expo/metro-runtime": "57.0.16",
