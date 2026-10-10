@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { normalizeModelId, modelProvider, defaultModelForProvider, isModelCompatible } from '../models/catalog.mjs';
+import { normalizeModelId, modelProvider, defaultModelForProvider, isModelCompatible, modelsForProvider } from '../models/catalog.mjs';
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const RETRIES = 2;
@@ -16,7 +16,7 @@ function truncateDetail(value, max = 300) {
 // replaces the opaque `LLM_HTTP_404` an operator used to see.
 function providerHint(provider, model) {
   if (provider === 'gemini') {
-    return `Gemini does not serve model "${model}". Set GEMINI_MODEL to a supported Gemini model (e.g. gemini-2.5-flash-lite) or configure OPENAI_API_KEY for OpenAI models.`;
+    return `Gemini does not serve model "${model}". Set GEMINI_MODEL to a supported Gemini model (e.g. gemini-3.5-flash-lite) or configure OPENAI_API_KEY for OpenAI models.`;
   }
   if (provider === 'anthropic') {
     return `Anthropic does not serve model "${model}". Set ANTHROPIC_MODEL to a supported Claude model (e.g. claude-haiku-4-5) or configure OPENAI_API_KEY.`;
@@ -121,6 +121,44 @@ function withTimeout(signal, timeoutMs = DEFAULT_TIMEOUT_MS) {
   };
 }
 
+// Parse a `Retry-After` header (seconds or HTTP-date) into milliseconds. Also
+// understands Gemini's `RetryInfo` body hint (e.g. "retryDelay":"3s"). Returns
+// undefined when absent/unparseable. This is what lets a 429 wait exactly as
+// long as the provider asked instead of a blind fixed backoff.
+function parseRetryAfterMs(headers, payload) {
+  let raw = null;
+  try {
+    raw = typeof headers?.get === 'function' ? headers.get('retry-after') : headers?.['retry-after'];
+  } catch {
+    raw = null;
+  }
+  if (raw != null && raw !== '') {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+    const date = Date.parse(String(raw));
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  }
+  const details = payload?.error?.details;
+  if (Array.isArray(details)) {
+    for (const detail of details) {
+      const delay = detail?.retryDelay ?? detail?.retry_delay;
+      const match = typeof delay === 'string' ? delay.match(/^([\d.]+)s$/) : null;
+      if (match) return Math.round(Number(match[1]) * 1000);
+    }
+  }
+  return undefined;
+}
+
+// Bounded exponential backoff, honouring the server's Retry-After when present.
+// Tunable via env so operators (and tests) can bound the wait.
+function retryDelayMs(attempt, retryAfterMs) {
+  const base = Math.max(0, Number(process.env.LLM_RETRY_BASE_MS ?? 500));
+  const max = Math.max(base, Number(process.env.LLM_MAX_RETRY_DELAY_MS ?? 30_000));
+  const backoff = Math.min(base * (2 ** attempt), max);
+  const delay = Number.isFinite(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : backoff;
+  return Math.min(delay, max);
+}
+
 async function requestJson(
   url,
   init,
@@ -161,6 +199,10 @@ async function requestJson(
         { ...context, endpoint: url }
       );
 
+      // Respect the provider's own backoff instruction (429 / 503).
+      const retryAfterMs = parseRetryAfterMs(response.headers, payload);
+      if (retryAfterMs !== undefined) error.retryAfterMs = retryAfterMs;
+
       if (
         !RETRYABLE_STATUS.includes(
           response.status
@@ -173,10 +215,7 @@ async function requestJson(
       lastError = error;
 
       await sleep(
-        Math.min(
-          500 * (2 ** attempt),
-          4000
-        )
+        retryDelayMs(attempt, retryAfterMs)
       );
     } catch (error) {
       lastError = error;
@@ -194,10 +233,7 @@ async function requestJson(
       }
 
       await sleep(
-        Math.min(
-          500 * (2 ** attempt),
-          4000
-        )
+        retryDelayMs(attempt, error?.retryAfterMs)
       );
     } finally {
       timeout.close();
@@ -1071,7 +1107,7 @@ export function createLLMRouter(
             env.GOOGLE_API_KEY,
           defaultModel:
             env.GEMINI_MODEL ||
-            'gemini-2.5-flash-lite',
+            'gemini-3.5-flash-lite',
         }
       : null,
 
@@ -1202,7 +1238,136 @@ export function createLLMRouter(
     );
   };
 
+  // Ordered models a provider can serve: the configured/catalog default first,
+  // then the provider's other catalog models. Deduped and filtered by the hard
+  // compatibility invariant, so it can never yield a model the provider lacks.
+  const providerModels = (provider) => {
+    const list = [compatibleModelFor(provider), ...modelsForProvider(provider.id)];
+    const seen = new Set();
+    return list.filter((id) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return isModelCompatible(id, provider.id);
+    });
+  };
+
+  // An error another model/provider CANNOT fix (auth / malformed request). For
+  // these we stop retrying the SAME provider instead of burning its whole model
+  // list; other configured providers are still tried.
+  const NON_RECOVERABLE_STATUS = new Set([400, 401, 403, 405, 415, 422]);
+  const isRecoverableAcrossModels = (error) => {
+    const status = Number(error?.status);
+    if (!status) return true; // network/timeout/unknown -> a different model may work
+    return !NON_RECOVERABLE_STATUS.has(status);
+  };
+
+  /*
+   * ROOT-CAUSE FIX (MAESTRO_ALL_MODELS_FAILED)
+   *
+   * Build the ordered list of { provider, model } pairs a request will actually
+   * be dispatched to. Previously, when the requested model's family was NOT
+   * configured (the common single-key case), EVERY candidate in the Maestro
+   * fallback chain was remapped to the SAME single (provider, default-model)
+   * pair. A broken default model (e.g. the now access-limited
+   * `gemini-2.5-flash-lite`) therefore failed N times in a row and the run died
+   * with MAESTRO_ALL_MODELS_FAILED even though other models/providers were
+   * available.
+   *
+   * The plan fixes that on two axes:
+   *   1. WITHIN a provider, a failure on one model falls through to a DIFFERENT
+   *      model on the same provider (so a 404/429 on the default is survivable).
+   *   2. ACROSS providers, an unconfigured family is remapped to every configured
+   *      provider, so a quota/outage on one still fails over to another.
+   *
+   * The first entry is always the exact requested model when its family is
+   * configured (the request is honoured first), so behaviour is unchanged in the
+   * happy path.
+   */
+  const buildDispatchPlan = (normalized, requestedFamily) => {
+    const plan = [];
+    const seen = new Set();
+    const push = (provider, model) => {
+      if (!isModelCompatible(model, provider.id)) return;
+      const key = `${provider.id}:${model}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      plan.push({ provider, model, substituted: model !== normalized });
+    };
+
+    const familyProvider = getProvider(requestedFamily);
+    if (familyProvider) {
+      // The requested family IS configured: honour the exact requested model
+      // first, then fall through to the SAME provider's other models. Cross-
+      // provider failover is the Maestro chain's job (it already spans every
+      // family), so we deliberately do NOT fan out to other providers here —
+      // doing so would re-try the same providers once per chain candidate.
+      push(familyProvider, normalized);
+      for (const model of providerModels(familyProvider)) push(familyProvider, model);
+    } else {
+      // The requested family is NOT configured: remap across EVERY configured
+      // provider, each with its FULL model list. This is the second half of the
+      // MAESTRO_ALL_MODELS_FAILED root-cause fix: a single broken default model
+      // on the first provider can no longer collapse the whole fallback, because
+      // every provider's other models are tried too.
+      for (const provider of providers) {
+        for (const model of providerModels(provider)) push(provider, model);
+      }
+    }
+    return plan;
+  };
+
   const substitutionNotices = new Set();
+  const noticeSubstitution = (normalized, provider, model) => {
+    const noticeKey = `${normalized}->${provider.id}:${model}`;
+    if (substitutionNotices.has(noticeKey)) return;
+    substitutionNotices.add(noticeKey);
+    process.emitWarning(
+      `llm: requested model "${normalized}" could not be served as-is; using "${model}" on "${provider.id}" instead`,
+      { code: 'LLM_MODEL_SUBSTITUTED' }
+    );
+  };
+
+  // Structured per-attempt diagnostic for the dispatch plan. This is what makes a
+  // terminal routing failure auditable (provider/model/status/code/retryable/hint)
+  // instead of an opaque "all models failed" string.
+  const describeDispatchError = (error, provider, model) => ({
+    provider: provider.id,
+    model,
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+    status: Number(error?.status) || undefined,
+    code: typeof error?.code === 'string' ? error.code : undefined,
+    retryable: isRecoverableAcrossModels(error),
+    hint: typeof error?.hint === 'string' ? error.hint : undefined,
+  });
+
+  // Build the error thrown when every candidate in the plan failed. The REQUESTED
+  // model's own diagnostic is surfaced (most actionable) but the full per-model /
+  // per-provider attempt list is attached so the real reason is never lost.
+  const aggregateDispatchError = ({ normalized, requestedFamily, attempts, firstError, lastError }) => {
+    const base =
+      firstError ??
+      lastError ??
+      new Error(`NO_HEALTHY_LLM_PROVIDER:${normalized}:${requestedFamily}`);
+    if (!Array.isArray(base.attempts)) base.attempts = attempts;
+    if (!base.summary) {
+      base.summary = attempts.length
+        ? `Every candidate for "${normalized}" failed (${attempts.length} attempt${attempts.length === 1 ? '' : 's'}): ` +
+          attempts
+            .map((attempt) => `${attempt.model}[${attempt.provider}]${attempt.status ? ` ${attempt.status}` : ''}${attempt.code ? ` ${attempt.code}` : ''}`)
+            .join(', ')
+        : `No configured provider could serve "${normalized}"`;
+    }
+    return base;
+  };
+
+  const noProviderError = () => {
+    const error = new Error(
+      'NO_SERVER_LLM_PROVIDER_CONFIGURED: set at least one of OPENAI_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY), ANTHROPIC_API_KEY'
+    );
+    error.code = 'NO_SERVER_LLM_PROVIDER_CONFIGURED';
+    return error;
+  };
 
   return {
     status: () =>
@@ -1222,13 +1387,26 @@ export function createLLMRouter(
         })
       ),
 
+    /*
+     * Describe, WITHOUT making a request, the exact provider/model pairs a model
+     * will be dispatched to (in order). Used by the Maestro router for
+     * observability so a "gpt-5 requested but served by Gemini" substitution is
+     * visible up-front instead of looking like a provider/model conflict.
+     */
+    plan(model) {
+      const normalized = normalizeModelId(model);
+      const requestedFamily = modelProvider(normalized);
+      return buildDispatchPlan(normalized, requestedFamily).map(({ provider, model: id, substituted }) => ({
+        provider: provider.id,
+        model: id,
+        requestedModel: normalized,
+        substituted,
+      }));
+    },
+
     async complete(input) {
       if (!providers.length) {
-        const error = new Error(
-          'NO_SERVER_LLM_PROVIDER_CONFIGURED: set at least one of OPENAI_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY), ANTHROPIC_API_KEY'
-        );
-        error.code = 'NO_SERVER_LLM_PROVIDER_CONFIGURED';
-        throw error;
+        throw noProviderError();
       }
 
       const normalized =
@@ -1241,77 +1419,19 @@ export function createLLMRouter(
           normalized
         );
 
-      /*
-       * ROOT-CAUSE FIX (LLM_HTTP_404)
-       *
-       * A model is only ever dispatched to a provider that actually serves its
-       * family. Previously the requested model ID was sent verbatim to whichever
-       * provider happened to be configured first, so an OpenAI model such as
-       * `gpt-5` was POSTed to the Gemini endpoint and Gemini answered 404
-       * (model not found).
-       *
-       *   1. If the requested model's provider IS configured -> use it with the
-       *      EXACT requested model. A failure here is a real provider error and
-       *      is surfaced as-is (never silently swapped for another family).
-       *   2. If the requested model's provider is NOT configured -> remap to a
-       *      configured provider using THAT provider's own compatible model.
-       *      This is a transparent substitution (flagged on the result and
-       *      logged), never a fake response.
-       */
-      const familyProvider =
-        getProvider(
-          requestedFamily
-        );
-
-      if (familyProvider) {
-        try {
-          const result =
-            await executeProvider({
-              provider: familyProvider,
-              model: normalized,
-              input,
-            });
-
-          markSuccess(familyProvider);
-
-          return {
-            ...result,
-            model: normalized,
-            requestedModel: normalized,
-            substituted: false,
-          };
-        } catch (error) {
-          // A failure on the DIRECTLY-configured provider must also update the
-          // health tracker. Previously only the remap loop below called
-          // markFailure, so `status()` could keep reporting `healthy: true`
-          // after a real failure on the requested provider (audit finding G1).
-          // The error is re-thrown unchanged: this only corrects the
-          // observability/health state, it never swaps the provider or hides
-          // the failure.
-          markFailure(familyProvider);
-          throw error;
-        }
-      }
-
+      const plan = buildDispatchPlan(normalized, requestedFamily);
+      const blocked = new Set();
+      const attempts = [];
+      let firstError;
       let lastError;
 
-      for (const provider of providers) {
-        const model =
-          compatibleModelFor(
-            provider
-          );
+      for (const { provider, model, substituted } of plan) {
+        // A provider that failed non-recoverably (auth/bad request) is skipped for
+        // its remaining models, but other providers are still tried.
+        if (blocked.has(provider.id)) continue;
 
         // Hard invariant: never send a model to a provider that does not serve it.
-        if (
-          !isModelCompatible(
-            model,
-            provider.id
-          )
-        ) {
-          throw new Error(
-            `LLM_MODEL_PROVIDER_MISMATCH: provider=${provider.id} model=${model}`
-          );
-        }
+        if (!isModelCompatible(model, provider.id)) continue;
 
         try {
           const result =
@@ -1323,46 +1443,32 @@ export function createLLMRouter(
 
           markSuccess(provider);
 
-          const noticeKey =
-            `${normalized}->${provider.id}:${model}`;
-
-          if (
-            !substitutionNotices.has(
-              noticeKey
-            )
-          ) {
-            substitutionNotices.add(
-              noticeKey
-            );
-
-            process.emitWarning(
-              `llm: requested model "${normalized}" belongs to provider "${requestedFamily}", which is not configured; using "${model}" on "${provider.id}" instead`,
-              { code: 'LLM_MODEL_SUBSTITUTED' }
-            );
-          }
+          if (substituted) noticeSubstitution(normalized, provider, model);
 
           return {
             ...result,
             model,
             requestedModel: normalized,
-            substituted: true,
+            substituted,
           };
         } catch (error) {
           lastError = error;
+          if (!firstError) firstError = error;
           markFailure(provider);
+          attempts.push(describeDispatchError(error, provider, model));
+          if (!isRecoverableAcrossModels(error)) blocked.add(provider.id);
         }
       }
 
-      throw lastError ?? new Error(
-        `NO_HEALTHY_LLM_PROVIDER:${normalized}:${requestedFamily}`
-      );
+      throw aggregateDispatchError({ normalized, requestedFamily, attempts, firstError, lastError });
     },
 
     /*
-     * Streaming counterpart of `complete`. It resolves the exact same
-     * provider/model pair (a model is only ever streamed to a provider that
-     * serves its family; an unconfigured family is transparently remapped to a
-     * compatible model) and yields normalised frames:
+     * Streaming counterpart of `complete`. It resolves the SAME provider/model
+     * dispatch plan (a model is only ever streamed to a provider that serves its
+     * family; an unconfigured family is transparently remapped to a compatible
+     * model, and a failure on one model falls through to the next) and yields
+     * normalised frames:
      *   { type: 'token', text }  and a terminal { type: 'done', ... }.
      *
      * If the runtime cannot stream the provider response, it degrades to a
@@ -1371,74 +1477,79 @@ export function createLLMRouter(
      */
     async *stream(input = {}) {
       if (!providers.length) {
-        const error = new Error(
-          'NO_SERVER_LLM_PROVIDER_CONFIGURED: set at least one of OPENAI_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY), ANTHROPIC_API_KEY'
-        );
-        error.code = 'NO_SERVER_LLM_PROVIDER_CONFIGURED';
-        throw error;
+        throw noProviderError();
       }
 
       const normalized = normalizeModelId(input.model);
       const requestedFamily = modelProvider(normalized);
-      const familyProvider = getProvider(requestedFamily);
+      const plan = buildDispatchPlan(normalized, requestedFamily);
+      const blocked = new Set();
+      const attempts = [];
+      let firstError;
+      let lastError;
 
-      let provider;
-      let model;
-      let substituted;
+      for (const { provider, model, substituted } of plan) {
+        if (blocked.has(provider.id)) continue;
 
-      if (familyProvider) {
-        provider = familyProvider;
-        model = normalized;
-        substituted = false;
-      } else {
-        provider =
-          providers.find(
-            (item) => (health.get(item.id)?.unavailableUntil ?? 0) <= Date.now()
-          ) ?? providers[0];
-        model = compatibleModelFor(provider);
-        substituted = true;
-      }
+        // Hard invariant: never stream a model to a provider that does not serve it.
+        if (!isModelCompatible(model, provider.id)) continue;
 
-      // Hard invariant: never stream a model to a provider that does not serve it.
-      if (!isModelCompatible(model, provider.id)) {
-        throw new Error(
-          `LLM_MODEL_PROVIDER_MISMATCH: provider=${provider.id} model=${model}`
-        );
-      }
-
-      try {
-        for await (const frame of streamProvider({ provider, model, input })) {
-          if (frame.type === 'done') {
-            markSuccess(provider);
-            yield { ...frame, model, requestedModel: normalized, substituted };
-          } else {
-            yield frame;
+        let started = false;
+        try {
+          for await (const frame of streamProvider({ provider, model, input })) {
+            if (frame.type === 'done') {
+              markSuccess(provider);
+              if (substituted) noticeSubstitution(normalized, provider, model);
+              yield { ...frame, model, requestedModel: normalized, substituted };
+            } else {
+              started = true;
+              yield frame;
+            }
           }
-        }
-      } catch (error) {
-        if (error?.code === 'LLM_STREAM_UNSUPPORTED') {
-          const result = await executeProvider({ provider, model, input });
-          markSuccess(provider);
-
-          if (result.text) {
-            yield { type: 'token', text: result.text };
-          }
-
-          yield {
-            type: 'done',
-            text: result.text,
-            usage: result.usage,
-            provider: provider.id,
-            model,
-            requestedModel: normalized,
-            substituted,
-          };
           return;
-        }
+        } catch (error) {
+          if (error?.code === 'LLM_STREAM_UNSUPPORTED') {
+            try {
+              const result = await executeProvider({ provider, model, input });
+              markSuccess(provider);
+              if (substituted) noticeSubstitution(normalized, provider, model);
 
-        markFailure(provider);
-        throw error;
+              if (result.text) {
+                yield { type: 'token', text: result.text };
+              }
+
+              yield {
+                type: 'done',
+                text: result.text,
+                usage: result.usage,
+                provider: provider.id,
+                model,
+                requestedModel: normalized,
+                substituted,
+              };
+              return;
+            } catch (bufferedError) {
+              lastError = bufferedError;
+              if (!firstError) firstError = bufferedError;
+              markFailure(provider);
+              attempts.push(describeDispatchError(bufferedError, provider, model));
+              if (!isRecoverableAcrossModels(bufferedError)) blocked.add(provider.id);
+              continue;
+            }
+          }
+
+          lastError = error;
+          if (!firstError) firstError = error;
+          markFailure(provider);
+          attempts.push(describeDispatchError(error, provider, model));
+          if (!isRecoverableAcrossModels(error)) blocked.add(provider.id);
+          // Once tokens have been yielded we cannot cleanly restart on another
+          // model, so a mid-stream failure is surfaced as-is.
+          if (started) throw error;
+        }
       }
+
+      throw aggregateDispatchError({ normalized, requestedFamily, attempts, firstError, lastError });
     },
   };
 }
