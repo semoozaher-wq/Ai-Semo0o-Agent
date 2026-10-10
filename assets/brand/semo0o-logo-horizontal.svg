@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 260" width="940" height="260" role="img" aria-label="Semo0o">
+  <defs>
+    <linearGradient id="hStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="0.5" stop-color="#6C5CE7"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="hNodeA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#C4B5FD"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="hNodeB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A5F3FC"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="hText" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#EDEBFF"/>
+      <stop offset="1" stop-color="#B9C6FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark -->
+  <g transform="translate(14,14) scale(0.44)">
+    <g stroke="url(#hStroke)" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.5">
+      <path d="M330 168 L392 168 L420 140"/>
+      <path d="M178 302 L120 302 L92 330"/>
+    </g>
+    <g fill="url(#hStroke)" opacity="0.7">
+      <circle cx="420" cy="140" r="10"/>
+      <circle cx="92" cy="330" r="10"/>
+    </g>
+    <path d="M330 168 C 330 132, 296 112, 256 112 C 210 112, 178 136, 178 172
+             C 178 206, 214 220, 256 230 C 298 240, 334 254, 334 292
+             C 334 330, 300 356, 256 356 C 210 356, 180 336, 178 302"
+          fill="none" stroke="url(#hStroke)" stroke-width="48"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="330" cy="168" r="30" fill="url(#hNodeA)"/>
+    <circle cx="330" cy="168" r="12" fill="#0C1230"/>
+    <circle cx="178" cy="302" r="30" fill="url(#hNodeB)"/>
+    <circle cx="178" cy="302" r="12" fill="#0C1230"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="300" y="172" font-family="Poppins" font-weight="700" font-size="132"
+        letter-spacing="-3" fill="url(#hText)">Semo0o</text>
+  <text x="304" y="214" font-family="Poppins" font-weight="500" font-size="34"
+        letter-spacing="8" fill="#7C8BD6" fill-opacity="0.85">AI AGENT PLATFORM</text>
+</svg>

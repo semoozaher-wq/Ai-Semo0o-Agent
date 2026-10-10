@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 260" width="940" height="260" role="img" aria-label="Semo0o">
+  <defs>
+    <linearGradient id="lStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="0.5" stop-color="#5A49D6"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="lNodeA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#6D28D9"/>
+    </linearGradient>
+    <linearGradient id="lNodeB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#0891B2"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(14,14) scale(0.44)">
+    <g stroke="url(#lStroke)" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.5">
+      <path d="M330 168 L392 168 L420 140"/>
+      <path d="M178 302 L120 302 L92 330"/>
+    </g>
+    <g fill="url(#lStroke)" opacity="0.7">
+      <circle cx="420" cy="140" r="10"/>
+      <circle cx="92" cy="330" r="10"/>
+    </g>
+    <path d="M330 168 C 330 132, 296 112, 256 112 C 210 112, 178 136, 178 172
+             C 178 206, 214 220, 256 230 C 298 240, 334 254, 334 292
+             C 334 330, 300 356, 256 356 C 210 356, 180 336, 178 302"
+          fill="none" stroke="url(#lStroke)" stroke-width="48"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="330" cy="168" r="30" fill="url(#lNodeA)"/>
+    <circle cx="330" cy="168" r="12" fill="#FFFFFF"/>
+    <circle cx="178" cy="302" r="30" fill="url(#lNodeB)"/>
+    <circle cx="178" cy="302" r="12" fill="#FFFFFF"/>
+  </g>
+
+  <text x="300" y="172" font-family="Poppins" font-weight="700" font-size="132"
+        letter-spacing="-3" fill="#14162B">Semo0o</text>
+  <text x="304" y="214" font-family="Poppins" font-weight="500" font-size="34"
+        letter-spacing="8" fill="#5E6280">AI AGENT PLATFORM</text>
+</svg>
