@@ -27,6 +27,29 @@ const DEFAULT_BUDGET = {
   threshold: 0.82,
 };
 
+// Upper bound on iterations so a pathological (or malicious) budget can never
+// spin the compose→render→critique loop unbounded; the wall-clock budget still
+// applies on top of this.
+const MAX_ITERATIONS = 50;
+
+/**
+ * Merge caller budget overrides onto the defaults and normalise `maxIterations`.
+ *
+ * The compose→render→critique loop is what produces the deliverable, so a run
+ * MUST iterate at least once. A `maxIterations` of 0 — or a negative, fractional,
+ * non-finite or non-numeric value — would otherwise leave the best-iteration
+ * record `null` and crash the encode stage (`best.rendered`). It is therefore
+ * normalised to a single pass (and capped) instead of throwing.
+ */
+export function normalizeBudget(options = {}) {
+  const merged = { ...DEFAULT_BUDGET, ...(options.budget || {}) };
+  const requested = Number(merged.maxIterations);
+  merged.maxIterations = Number.isFinite(requested)
+    ? Math.min(MAX_ITERATIONS, Math.max(1, Math.floor(requested)))
+    : DEFAULT_BUDGET.maxIterations;
+  return merged;
+}
+
 // Render-resolution presets cap the longest side so the dependency-free Local
 // Studio stays fast and its artefacts stay a sensible size. `full` keeps the
 // brief's requested resolution.
@@ -143,7 +166,7 @@ async function produceAssets({ brief, storyboard, bibles, providers, options, bu
  */
 export async function runDirector(goal, options = {}) {
   const started = Date.now();
-  const budget = { ...DEFAULT_BUDGET, ...(options.budget || {}) };
+  const budget = normalizeBudget(options);
   const providers = options.providers || createLocalOnlyProviders();
   const emit = (type, payload = {}) => {
     try { options.onEvent?.(type, payload); } catch { /* never let a listener break the run */ }
@@ -235,6 +258,11 @@ export async function runDirector(goal, options = {}) {
     currentBrief = revised.brief;
     currentStoryboard = normalizeStoryboard(revised.storyboard, revised.brief);
   }
+
+  // Defensive: normalizeBudget() guarantees at least one iteration, so `best`
+  // is always set by the loop above. This fail-loud guard protects against a
+  // future refactor re-introducing the `maxIterations = 0` crash.
+  if (!best) throw new Error('CREATION_NO_ITERATIONS');
 
   // 9. Encode final artefacts from the best iteration
   guard();

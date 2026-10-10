@@ -4,7 +4,7 @@
 // bundle; the individual stages are exported too so they can be composed,
 // tested and reused independently.
 
-export { runDirector, planCreation } from './director.mjs';
+export { runDirector, planCreation, normalizeBudget } from './director.mjs';
 export { buildBrief, buildBriefDeterministic, applyBriefOverrides, validateBrief, PALETTES, FORMATS } from './brief.mjs';
 export { buildStoryboard, buildStoryboardDeterministic, normalizeStoryboard, validateStoryboard } from './storyboard.mjs';
 export { buildStyleBible, buildCharacterBible, buildCharacterBibleDeterministic, buildBibles, buildBiblesAsync } from './bibles.mjs';

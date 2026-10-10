@@ -117,7 +117,14 @@ export class CreationStudio {
 
   async #run(job) {
     try {
+      // The studio owns the run's control plane. A caller must never be able to
+      // replace the internal AbortSignal (cancellation) or the internal onEvent
+      // sink (progress + event tracking) by smuggling `signal`/`onEvent` into
+      // `options`. They are stripped here and re-applied LAST so the internal
+      // ones are always authoritative, regardless of spread order.
+      const { signal: _userSignal, onEvent: _userOnEvent, ...userOptions } = job.options || {};
       const result = await runDirector(job.goal, {
+        ...userOptions,
         llm: this.llm,
         providers: this.providers,
         signal: job.controller.signal,
@@ -129,7 +136,6 @@ export class CreationStudio {
           }
           this.#push(job, type, payload);
         },
-        ...job.options,
       });
       job.status = 'completed';
       job.result = {
@@ -161,11 +167,25 @@ export class CreationStudio {
     }
   }
 
-  get(id, tenantId = null) {
-    const job = this.jobs.get(id);
+  /**
+   * Resolve a job for a caller, enforcing tenant isolation fail-closed.
+   *
+   * A job is returned ONLY when the caller's tenant matches the job's tenant
+   * EXACTLY. This means:
+   *   - a tenant-scoped caller can never read another tenant's job;
+   *   - a tenant-scoped caller can never read an unowned/system job (one created
+   *     with no tenant), and
+   *   - a caller with no tenant can never read a tenant-owned job.
+   * Anything else resolves to `null`, which the routes turn into an honest 404,
+   * so an id belonging to another tenant is indistinguishable from a missing id.
+   */
+  #owned(job, tenantId) {
     if (!job) return null;
-    if (tenantId && job.tenantId && job.tenantId !== tenantId) return null;
-    return job;
+    return (job.tenantId ?? null) === (tenantId ?? null) ? job : null;
+  }
+
+  get(id, tenantId = null) {
+    return this.#owned(this.jobs.get(id), tenantId);
   }
 
   view(job) {
@@ -193,8 +213,11 @@ export class CreationStudio {
   }
 
   list(tenantId = null, limit = 50) {
+    // Same fail-closed rule as get(): a caller only ever sees jobs that belong
+    // to its OWN tenant. Unowned/system jobs and other tenants' jobs are never
+    // leaked into a tenant's listing.
     return [...this.jobs.values()]
-      .filter((job) => !tenantId || !job.tenantId || job.tenantId === tenantId)
+      .filter((job) => (job.tenantId ?? null) === (tenantId ?? null))
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
       .slice(0, limit)
       .map((job) => this.view(job));
@@ -232,7 +255,11 @@ export class CreationStudio {
 
   /** Fast, synchronous plan (brief + storyboard + bibles + prompts). */
   async plan(goal, options = {}) {
-    const result = await planCreation(goal, { llm: this.llm, providers: this.providers, ...options });
+    // The studio's own llm/providers are authoritative and cannot be swapped in
+    // via caller options (the HTTP whitelist already drops them; this is defense
+    // in depth for direct API callers). A caller-supplied `signal` is still
+    // honoured — it only aborts the caller's own plan request.
+    const result = await planCreation(goal, { ...options, llm: this.llm, providers: this.providers });
     return result;
   }
 }
