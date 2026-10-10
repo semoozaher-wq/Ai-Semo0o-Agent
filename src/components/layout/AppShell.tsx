@@ -20,10 +20,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const activeKey = activeKeyForPath(pathname);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
-  // Close the drawer whenever the route changes.
-  React.useEffect(() => {
+  // Close the drawer whenever the route changes. Adjusting state during render
+  // (rather than synchronously inside an effect) avoids a cascading re-render
+  // and satisfies the react-hooks/set-state-in-effect rule.
+  const [lastPath, setLastPath] = React.useState(pathname);
+  if (pathname !== lastPath) {
+    setLastPath(pathname);
     setDrawerOpen(false);
-  }, [pathname]);
+  }
 
   if (isDesktop || isTablet) {
     return (

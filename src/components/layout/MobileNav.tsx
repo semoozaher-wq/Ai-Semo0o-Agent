@@ -6,7 +6,7 @@ import { useTheme, useThemeController } from '../../theme';
 import { Icon } from '../ui/Icon';
 import { Text } from '../ui/Text';
 import { Gradient } from '../ui/Gradient';
-import { Semo0oLogo, Semo0oMark } from '../brand/Semo0oLogo';
+import { Semo0oLogo } from '../brand/Semo0oLogo';
 import { MAIN_NAV, MOBILE_TABS, SECONDARY_NAV, NavItem } from '../../navigation/navItems';
 
 function useGo() {
