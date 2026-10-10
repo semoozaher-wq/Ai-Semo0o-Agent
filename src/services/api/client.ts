@@ -30,6 +30,7 @@ export interface ApiChatStreamFrame {
   [key: string]: unknown;
 }
 export interface ApiChatConversation { id: string; title: string; mode: string; status: string; project_id?: string | null; last_message_at?: string | null; created_at: string; updated_at: string }
+export interface ApiAttachment { id: string; name: string; mimeType: string; kind: string; sizeBytes: number; sha256: string; createdAt: string; conversationId?: string | null }
 export interface ApiRecoverableConversation { conversationId: string; title: string; interrupted: number }
 export interface ApiEvent { type: string; at?: string; stepId?: string; toolId?: string; approvalId?: string; title?: string; reason?: string; final?: string; steps?: number; details?: Record<string, unknown>; [key: string]: unknown }
 export interface ApiUsagePoint { date: string; tokens: number; costUsd: number; runs: number; messages: number }
@@ -408,13 +409,41 @@ class BackendApiClient {
   async listInvitations(): Promise<{ invitations: ApiInvitation[] }> { return this.request<{ invitations: ApiInvitation[] }>('/org/invitations'); }
   async revokeInvitation(invitationId: string): Promise<Record<string, unknown>> { return this.request(`/org/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE' }); }
   async createProject(input: { name: string; rootPath?: string }): Promise<ApiProject> { return this.request<ApiProject>('/projects', { method: 'POST', body: JSON.stringify(input) }); }
-  async chat(input: { message: string; model?: string }): Promise<ApiChatResponse> { return this.request<ApiChatResponse>('/chat', { method: 'POST', body: JSON.stringify(input) }); }
+  // Upload the real bytes of a device file so the model can receive its actual
+  // content (text inlined, images as vision parts). Returns the stored metadata;
+  // the `id` is then sent with the chat/run request as an `attachmentIds` entry.
+  async uploadAttachment(input: { name: string; mimeType: string; dataBase64: string; conversationId?: string }): Promise<ApiAttachment> { return this.request<ApiAttachment>('/attachments', { method: 'POST', body: JSON.stringify(input) }); }
+  /**
+   * Fetch a stored attachment's bytes (Bearer-authenticated) and return them as
+   * a `data:` URL, so an image attachment can be previewed in the UI. Returns
+   * null when the backend is disabled or the fetch fails — the caller falls back
+   * to the name/icon pill, never a broken image.
+   */
+  async fetchAttachmentDataUrl(id: string): Promise<string | null> {
+    if (!this.enabled) return null;
+    try {
+      const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/attachments/${encodeURIComponent(id)}/content`, {
+        headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      });
+      if (!response.ok) return null;
+      const mimeType = response.headers.get('content-type') || 'application/octet-stream';
+      const buffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      const base64 = typeof btoa === 'function' ? btoa(binary) : Buffer.from(bytes).toString('base64');
+      return `data:${mimeType};base64,${base64}`;
+    } catch {
+      return null;
+    }
+  }
+  async chat(input: { message: string; model?: string; attachmentIds?: string[] }): Promise<ApiChatResponse> { return this.request<ApiChatResponse>('/chat', { method: 'POST', body: JSON.stringify(input) }); }
   // Streams a chat reply over Server-Sent Events. Each `event:`/`data:` pair is
   // normalised into an `ApiChatStreamFrame` (`start` | `token` | `done` | `error`).
   // The caller accumulates `token` frames; `start` carries the durable
   // conversation/assistant ids so the client can reconcile after a reload.
   async chatStream(
-    input: { message: string; model?: string; conversationId?: string },
+    input: { message: string; model?: string; conversationId?: string; attachmentIds?: string[] },
     onFrame: (frame: ApiChatStreamFrame) => void,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -495,9 +524,35 @@ class BackendApiClient {
   }
   async cancelCreationJob(id: string): Promise<ApiCreationJob> { return this.request<ApiCreationJob>(`/creation/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
   async planCreation(input: ApiCreationJobInput): Promise<ApiCreationPlan> { return this.request<ApiCreationPlan>('/creation/plan', { method: 'POST', body: JSON.stringify(input) }); }
-  /** Public (token-free) URL for a job artefact, so it can be opened/downloaded directly. */
+  /**
+   * Absolute URL of a job artefact. NOTE: the artefact route is tenant-scoped
+   * and Bearer-authenticated, so this URL is NOT directly openable — a bare
+   * `Linking.openURL` on it 401s. Use `fetchCreationArtifact` to download the
+   * bytes with the session token.
+   */
   creationArtifactUrl(id: string, name: 'gif' | 'avi' | 'bundle' | 'mp4'): string {
     return `${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}`;
+  }
+  /**
+   * Download a job artefact's bytes WITH the session token. The route requires
+   * auth (Bearer, no cookies), so the UI must fetch it here rather than hand the
+   * bare URL to the OS/browser. Returns the raw bytes plus the server-declared
+   * MIME type and download filename.
+   */
+  async fetchCreationArtifact(id: string, name: 'gif' | 'avi' | 'bundle' | 'mp4'): Promise<{ bytes: Uint8Array; mimeType: string; filename: string }> {
+    if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
+    const response = await fetch(this.creationArtifactUrl(id, name), {
+      headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(String(payload.error ?? `BACKEND_${response.status}`));
+    }
+    const buffer = await response.arrayBuffer();
+    const mimeType = response.headers.get('content-type') || 'application/octet-stream';
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = /filename="?([^";]+)"?/.exec(disposition);
+    return { bytes: new Uint8Array(buffer), mimeType, filename: match?.[1] ?? name };
   }
   // Dedicated real-video surface: status disclosure + direct generation.
   async getVideoStatus(): Promise<ApiVideoStatus> { return this.request<ApiVideoStatus>('/creation/video'); }
