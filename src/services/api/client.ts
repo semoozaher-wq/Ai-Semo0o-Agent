@@ -36,8 +36,8 @@ export interface ApiUsagePoint { date: string; tokens: number; costUsd: number; 
 export interface ApiUsageSummary {
   period: string;
   days: number;
-  quota: { monthly_tokens: number; monthly_runs: number };
-  counter: { tokens: number; runs: number };
+  quota: { monthly_tokens: number; monthly_runs: number; monthly_cost_usd: number };
+  counter: { tokens: number; runs: number; cost_usd: number };
   daily: ApiUsagePoint[];
   totals: { tokens: number; costUsd: number; runs: number; messages: number };
   generatedAt: string;
@@ -203,10 +203,21 @@ export interface ApiOutboxResponse { providerConfigured: boolean; emails: ApiOut
 export interface ApiCreationCapabilities {
   kernel: boolean;
   localStudio: boolean;
-  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; music: boolean; mediaAnalysis: boolean };
+  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; videoEdit: boolean; music: boolean; mediaAnalysis: boolean };
+  // Real generative-video capability. `video` is non-null only when a real
+  // video-generation provider is configured; `videoEdit` only when a genuine
+  // video-to-video editor is configured. Both are null for the Local Studio.
+  video?: ApiCreationVideoCapability | null;
+  videoEdit?: ApiCreationVideoEditCapability | null;
   formats: string[];
   resolutions: string[];
 }
+export interface ApiCreationVideoCapability {
+  id: string; model?: string;
+  capabilities?: { textToVideo?: boolean; imageToVideo?: boolean; videoExtension?: boolean; videoEditing?: boolean };
+  formats?: string[];
+}
+export interface ApiCreationVideoEditCapability { id: string; model?: string; formats?: string[] }
 export interface ApiCreationBrief {
   goal: string; title: string; logline: string; type: string; tone: string; mood: string;
   audience: string; language: string; format: string; width: number; height: number; fps: number;
@@ -220,7 +231,14 @@ export interface ApiCreationCritique { score: number; subscores: Record<string, 
 export interface ApiCreationManifest {
   title: string; goal: string; width: number; height: number; fps: number; duration: number; frameCount: number;
   hasAudio: boolean; formats: string[]; score: number; iterations: number;
-  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; music: boolean; mediaAnalysis: boolean };
+  providers: { image: boolean; vision: boolean; tts: boolean; video: boolean; videoEdit: boolean; music: boolean; mediaAnalysis: boolean };
+  // Honest real-video disclosure: `realVideo` is true only when a genuine
+  // generative MP4 was produced; `videoError` carries the failure reason when a
+  // requested real video could not be generated (never faked).
+  realVideo?: boolean;
+  videoProvider?: string | null;
+  videoModel?: string | null;
+  videoError?: string | null;
   generatedAt: string; elapsedMs: number;
 }
 export interface ApiCreationArtifact { bytes: number; mimeType: string }
@@ -233,7 +251,7 @@ export interface ApiCreationJob {
     critique: ApiCreationCritique; iterations: { iteration: number; score: number; subscores: Record<string, number> }[];
     manifest: ApiCreationManifest; assets: string[];
   };
-  artifacts: { gif: ApiCreationArtifact | null; avi: ApiCreationArtifact | null; bundle: ApiCreationArtifact | null };
+  artifacts: { gif: ApiCreationArtifact | null; avi: ApiCreationArtifact | null; bundle: ApiCreationArtifact | null; mp4: ApiCreationArtifact | null };
 }
 export interface ApiCreationEvent { seq: number; type: string; payload: Record<string, unknown>; at: string }
 export interface ApiCreationPlan { brief: ApiCreationBrief; storyboard: ApiCreationStoryboard; bibles: unknown; prompts: unknown[]; elapsedMs: number }
@@ -246,6 +264,32 @@ export interface ApiCreationJobInput {
   fps?: number;
   bundle?: boolean;
   model?: string;
+  // Opt-in REAL generative video: when true (and a real video provider is
+  // configured) the job also produces a brand-new MP4 with the video model,
+  // exposed as the `mp4` artifact. Off by default so the deterministic Local
+  // Studio output is unchanged.
+  realVideo?: boolean;
+  videoDurationSeconds?: number;
+}
+// Direct real-video generation (the dedicated /creation/video/generate route).
+export interface ApiRealVideoInput {
+  prompt: string;
+  negativePrompt?: string;
+  aspectRatio?: string;
+  resolution?: string;
+  durationSeconds?: number;
+  image?: { base64: string; mimeType?: string };
+}
+export interface ApiRealVideoResult {
+  provider: string; model?: string; mimeType: string; bytes: number; base64: string;
+}
+export interface ApiVideoStatus {
+  available: boolean;
+  provider: { id: string; model?: string; capabilities?: ApiCreationVideoCapability['capabilities'] } | null;
+  editor: { id: string; model?: string } | null;
+  capabilities: { textToVideo: boolean; imageToVideo: boolean; videoExtension: boolean; videoEditing: boolean };
+  formats: string[];
+  reason: string | null;
 }
 
 const SESSION_STORAGE_KEY = 'semo0o.backend.session';
@@ -452,8 +496,13 @@ class BackendApiClient {
   async cancelCreationJob(id: string): Promise<ApiCreationJob> { return this.request<ApiCreationJob>(`/creation/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
   async planCreation(input: ApiCreationJobInput): Promise<ApiCreationPlan> { return this.request<ApiCreationPlan>('/creation/plan', { method: 'POST', body: JSON.stringify(input) }); }
   /** Public (token-free) URL for a job artefact, so it can be opened/downloaded directly. */
-  creationArtifactUrl(id: string, name: 'gif' | 'avi' | 'bundle'): string {
+  creationArtifactUrl(id: string, name: 'gif' | 'avi' | 'bundle' | 'mp4'): string {
     return `${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}`;
+  }
+  // Dedicated real-video surface: status disclosure + direct generation.
+  async getVideoStatus(): Promise<ApiVideoStatus> { return this.request<ApiVideoStatus>('/creation/video'); }
+  async generateRealVideo(input: ApiRealVideoInput): Promise<ApiRealVideoResult> {
+    return this.request<ApiRealVideoResult>('/creation/video/generate', { method: 'POST', body: JSON.stringify(input) });
   }
   async streamCreationEvents(id: string, onEvent: (event: ApiCreationEvent) => void, signal?: AbortSignal): Promise<void> {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/events`, { headers: { accept: 'text/event-stream', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
