@@ -1,0 +1,26 @@
+# CODEOWNERS — default reviewers for every path in this repository.
+#
+# GitHub uses this file to auto-request reviews and (when combined with branch
+# protection) to require an owner's approval before a pull request can merge to
+# `master`. See docs/BRANCH_PROTECTION.md for the matching repository settings.
+#
+# The last matching pattern wins, so the more specific rules are listed last.
+
+# Everything is owned by the repository maintainer by default.
+*                       @semoozaher-wq
+
+# CI/CD, release gates and the security scanner are security-sensitive: any
+# change to how the build is validated must be reviewed by an owner.
+/.github/               @semoozaher-wq
+/scripts/               @semoozaher-wq
+
+# Dependency manifests and the lockfile define the supply chain.
+/package.json           @semoozaher-wq
+/package-lock.json      @semoozaher-wq
+/.npmrc                 @semoozaher-wq
+
+# Security-critical backend modules.
+/backend/db/            @semoozaher-wq
+/backend/security/      @semoozaher-wq
+/backend/creation/      @semoozaher-wq
+/execution-core/        @semoozaher-wq
