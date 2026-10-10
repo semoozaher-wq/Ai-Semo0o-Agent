@@ -50,7 +50,7 @@ export class CDP {
       }, timeout);
     });
   }
-  async eval(expr, awaitPromise = false) {
+  async evaluate(expr, awaitPromise = false) {
     const r = await this.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise });
     if (r && r.exceptionDetails) throw new Error(r.exceptionDetails.text || 'eval error');
     return r?.result?.value;

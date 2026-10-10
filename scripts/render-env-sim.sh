@@ -6,7 +6,7 @@
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
-export PATH=/tmp/node-v22.11.0-linux-x64/bin:$PATH
+export PATH=/tmp/node-v22.23.2-linux-x64/bin:$PATH
 
 PORT="${PORT:-10000}"
 SIM_DIR="$(mktemp -d)"

@@ -26,8 +26,8 @@ BRANCH="${2:-master}"
 echo "==> Protecting '${BRANCH}' on ${REPO}"
 
 # The required checks mirror the job names produced by .github/workflows:
-#   * ci.yml      -> job `validate`, matrix over Node ['22.5', '22.11.0']
-#                    => "validate (22.5)" and "validate (22.11.0)"
+#   * ci.yml      -> job `validate`, matrix over Node ['22.13.0', '22.23.2']
+#                    => "validate (22.13.0)" and "validate (22.23.2)"
 #   * quality.yml -> job `verify` => "verify"
 # Keep this list in sync with the workflows if a job is renamed.
 gh api -X PUT "repos/${REPO}/branches/${BRANCH}/protection" \
@@ -37,8 +37,8 @@ gh api -X PUT "repos/${REPO}/branches/${BRANCH}/protection" \
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "validate (22.5)",
-      "validate (22.11.0)",
+      "validate (22.13.0)",
+      "validate (22.23.2)",
       "verify"
     ]
   },

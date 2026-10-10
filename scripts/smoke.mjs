@@ -31,12 +31,12 @@ async function main() {
   await sleep(2500);
 
   // 1) RTL
-  const dir = await cdp.eval(`getComputedStyle(document.body).direction`);
-  const htmlDir = await cdp.eval(`document.documentElement.getAttribute('dir') || (document.body.getAttribute('dir')) || ''`);
+  const dir = await cdp.evaluate(`getComputedStyle(document.body).direction`);
+  const htmlDir = await cdp.evaluate(`document.documentElement.getAttribute('dir') || (document.body.getAttribute('dir')) || ''`);
   rec('RTL direction on body', dir === 'rtl', `direction=${dir}, dir attr="${htmlDir}"`);
 
   // 2) Sidebar on the LEFT in RTL (find element containing the nav label الرئيسية)
-  const side = await cdp.eval(`
+  const side = await cdp.evaluate(`
     (() => {
       const el = [...document.querySelectorAll('div[role="link"]')].find(e => (e.textContent||'').includes('الرئيسية'));
       if (!el) return null;
@@ -52,18 +52,18 @@ async function main() {
   else rec('Sidebar anchored LEFT (RTL)', false, 'nav link not found');
 
   // 3) SPA navigation (no full reload)
-  await cdp.eval(`window.__navMarker = 'alive'`);
-  const click1 = await cdp.eval(CLICK_BY_TEXT('المحادثات'));
+  await cdp.evaluate(`window.__navMarker = 'alive'`);
+  const click1 = await cdp.evaluate(CLICK_BY_TEXT('المحادثات'));
   await sleep(1800);
-  const url1 = await cdp.eval('location.pathname');
-  const marker1 = await cdp.eval(`window.__navMarker`);
+  const url1 = await cdp.evaluate('location.pathname');
+  const marker1 = await cdp.evaluate(`window.__navMarker`);
   rec('SPA nav -> /chat', click1 === 'CLICKED' && url1 === '/chat' && marker1 === 'alive',
       `click=${click1} path=${url1} noReload=${marker1 === 'alive'}`);
 
-  const click2 = await cdp.eval(CLICK_BY_TEXT('الإعدادات'));
+  const click2 = await cdp.evaluate(CLICK_BY_TEXT('الإعدادات'));
   await sleep(1800);
-  const url2 = await cdp.eval('location.pathname');
-  const marker2 = await cdp.eval(`window.__navMarker`);
+  const url2 = await cdp.evaluate('location.pathname');
+  const marker2 = await cdp.evaluate(`window.__navMarker`);
   rec('SPA nav -> /settings', click2 === 'CLICKED' && url2 === '/settings' && marker2 === 'alive',
       `click=${click2} path=${url2} noReload=${marker2 === 'alive'}`);
 
@@ -71,15 +71,15 @@ async function main() {
   await cdp.navigate(BASE + '/');
   await sleep(3000);
   const CONV = `localStorage.getItem('semo0o:chat.conversations')`;
-  const before = await cdp.eval(`${CONV} ? JSON.parse(${CONV}).length : 0`);
-  const focused = await cdp.eval(`
+  const before = await cdp.evaluate(`${CONV} ? JSON.parse(${CONV}).length : 0`);
+  const focused = await cdp.evaluate(`
     (() => { const ta = document.querySelector('textarea'); if (!ta) return 'NO_INPUT'; ta.focus(); return 'FOCUSED'; })()`);
   // Real keystrokes at the browser level so React's controlled input updates.
   await cdp.send('Input.insertText', { text: 'اختبار الواجهة: مرحباً Semo0o' });
   await sleep(600);
-  const typedValue = await cdp.eval(`(()=>{const t=document.querySelector('textarea'); return t? t.value : '';})()`);
+  const typedValue = await cdp.evaluate(`(()=>{const t=document.querySelector('textarea'); return t? t.value : '';})()`);
   const typed = focused === 'FOCUSED' && typedValue.trim().length > 0 ? 'TYPED' : focused;
-  const box = await cdp.eval(`(()=>{const b=document.querySelector('[aria-label="إرسال"]'); if(!b)return null; const r=b.getBoundingClientRect(); return JSON.stringify({x:r.x+r.width/2,y:r.y+r.height/2});})()`);
+  const box = await cdp.evaluate(`(()=>{const b=document.querySelector('[aria-label="إرسال"]'); if(!b)return null; const r=b.getBoundingClientRect(); return JSON.stringify({x:r.x+r.width/2,y:r.y+r.height/2});})()`);
   let sent = 'NO_SEND';
   if (box) {
     const { x, y } = JSON.parse(box);
@@ -88,8 +88,8 @@ async function main() {
     sent = 'SENT';
   }
   await sleep(2500);
-  const after = await cdp.eval(`${CONV} ? JSON.parse(${CONV}).length : 0`);
-  const pathNow = await cdp.eval('location.pathname');
+  const after = await cdp.evaluate(`${CONV} ? JSON.parse(${CONV}).length : 0`);
+  const pathNow = await cdp.evaluate('location.pathname');
   rec('Composer send creates conversation', typed === 'TYPED' && after > before,
       `typed=${typed} sent=${sent} convBefore=${before} convAfter=${after} path=${pathNow}`);
 

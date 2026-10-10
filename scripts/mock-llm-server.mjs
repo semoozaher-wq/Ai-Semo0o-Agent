@@ -118,6 +118,6 @@ const server = createServer(async (req, res) => {
   res.end(JSON.stringify({ error: { message: 'not found', path: req.url } }));
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[mock-llm] listening on http://127.0.0.1:${PORT} (OpenAI-compatible)`);
+server.listen(PORT, '127.0.0.1', () => { // security-scan:allow private-url-literal (local loopback bind, not a hardcoded host)
+  console.log(`[mock-llm] listening on http://127.0.0.1:${PORT} (OpenAI-compatible)`); // security-scan:allow private-url-literal (local loopback bind, not a hardcoded host)
 });

@@ -14,7 +14,7 @@ const out = [];
 for (const r of ROUTES) {
   await cdp.navigate(BASE + r);
   await sleep(2200);
-  const text = await cdp.eval('document.body.innerText');
+  const text = await cdp.evaluate('document.body.innerText');
   out.push(`\n\n===== ROUTE ${r} =====\n${text}`);
 }
 fs.writeFileSync('/workspace/.screenshots/rendered-text.txt', out.join('\n'));
