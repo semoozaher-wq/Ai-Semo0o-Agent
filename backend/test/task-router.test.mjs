@@ -60,7 +60,7 @@ test('a large context requirement filters the chain to long-context models', () 
   const decision = router.route({ taskType: 'general', contextTokens: 500_000 });
   assert.ok(decision.chain.length >= 1);
   for (const id of decision.chain) assert.ok(SUPPORTED_MODELS[id].context >= 500_000, `${id} must fit the context`);
-  assert.equal(decision.model, 'gemini-2.5-flash-lite');
+  assert.equal(decision.model, 'gemini-3.5-flash-lite');
 });
 
 test('a maxCost budget filters the chain by blended price', () => {

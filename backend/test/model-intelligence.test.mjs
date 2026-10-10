@@ -39,7 +39,7 @@ test('the default route (no requires/optimize) is unchanged: priority policy win
 test('optimize=cost picks the cheapest eligible model and orders the chain by price', () => {
   const router = new MaestroModelRouter();
   const decision = router.route({ taskType: 'general', optimize: 'cost' });
-  assert.equal(decision.model, 'gemini-2.5-flash-lite');
+  assert.equal(decision.model, 'gemini-3.5-flash-lite');
   const costs = decision.chain.map((id) => router.capabilities(id).costPer1k);
   for (let index = 1; index < costs.length; index += 1) assert.ok(costs[index] >= costs[index - 1], 'chain must be non-decreasing in cost');
 });
@@ -47,7 +47,7 @@ test('optimize=cost picks the cheapest eligible model and orders the chain by pr
 test('optimize=latency picks the fastest eligible model', () => {
   const router = new MaestroModelRouter();
   const decision = router.route({ taskType: 'general', optimize: 'latency' });
-  assert.equal(decision.model, 'gemini-2.5-flash-lite');
+  assert.equal(decision.model, 'gemini-3.5-flash-lite');
   const latencies = decision.chain.map((id) => router.capabilities(id).latencyMs);
   for (let index = 1; index < latencies.length; index += 1) assert.ok(latencies[index] >= latencies[index - 1], 'chain must be non-decreasing in latency');
 });

@@ -133,7 +133,7 @@ test('stream(): Gemini SSE frames are normalised to token + done frames', async 
 
   try {
     const router = createLLMRouter({ GEMINI_API_KEY: 'g-test' });
-    const frames = await collect(router.stream({ model: 'gemini-2.5-flash-lite', messages: [{ role: 'user', content: 'hi' }] }));
+    const frames = await collect(router.stream({ model: 'gemini-3.5-flash-lite', messages: [{ role: 'user', content: 'hi' }] }));
 
     const tokens = frames.filter((frame) => frame.type === 'token').map((frame) => frame.text).join('');
     assert.equal(tokens, 'مرحبا بالعالم');

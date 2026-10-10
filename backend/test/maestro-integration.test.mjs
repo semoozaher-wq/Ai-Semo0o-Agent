@@ -272,11 +272,22 @@ test('the routed model is recorded in run_usage and cost is accounted per routed
   });
 });
 
-test('a total provider outage fails closed and emits a reroute_failed event', async () => {
+test('a total provider outage fails closed and emits a structured reroute_failed event', async () => {
   const record = { models: [], messages: [] };
   await withApp({ llm: scriptedLLM(record, { plan: SCAN_PLAN, failAll: true }), goal: 'Fix the bug in this function', model: 'auto', maxAttempts: 1 }, async ({ finished }) => {
     assert.equal(finished.status, 'failed');
-    assert.ok(finished.events.some((event) => event.type === 'reroute_failed'), 'the router exhaustion must be auditable');
+    const reroute = finished.events.find((event) => event.type === 'reroute_failed');
+    assert.ok(reroute, 'the router exhaustion must be auditable');
+    // The REAL reason must be logged (per-model attempts), and it must be logged
+    // BEFORE the run is persisted as failed — the event is emitted in the runtime
+    // catch block, before the queue writes the terminal status.
+    const payload = JSON.parse(reroute.payload_json);
+    assert.equal(payload.failureKind, 'MODEL_ROUTING_FAILURE');
+    assert.ok(Array.isArray(payload.attempts) && payload.attempts.length >= 1, 'the per-model failure reasons must be logged');
+    assert.ok(
+      payload.attempts.every((attempt) => attempt.ok === false && typeof attempt.model === 'string' && typeof attempt.provider === 'string'),
+      'each attempt records the model, provider and failure'
+    );
   });
 });
 

@@ -56,8 +56,8 @@ test('OpenAI receives the multimodal content array verbatim', async () => {
 test('Gemini translates the array into text + inlineData parts', async () => {
   const fetchMock = withFetch(() => ok({ candidates: [{ content: { parts: [{ text: 'ok' }] } }], usageMetadata: {} }));
   try {
-    const router = createLLMRouter({ GEMINI_API_KEY: 'g-test', GEMINI_MODEL: 'gemini-2.5-flash-lite' });
-    await router.complete({ model: 'gemini-2.5-flash-lite', messages: MULTIMODAL_MESSAGES });
+    const router = createLLMRouter({ GEMINI_API_KEY: 'g-test', GEMINI_MODEL: 'gemini-3.5-flash-lite' });
+    await router.complete({ model: 'gemini-3.5-flash-lite', messages: MULTIMODAL_MESSAGES });
     const sent = fetchMock.calls.at(-1).body;
     const parts = sent.contents[0].parts;
     assert.deepEqual(parts[0], { text: 'describe this' });
@@ -81,8 +81,8 @@ test('Anthropic translates the array into text + base64 image blocks', async () 
 test('Gemini streaming keeps the image part', async () => {
   const fetchMock = withFetch(() => sseResponse(['data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n\n']));
   try {
-    const router = createLLMRouter({ GEMINI_API_KEY: 'g-test', GEMINI_MODEL: 'gemini-2.5-flash-lite' });
-    for await (const _frame of router.stream({ model: 'gemini-2.5-flash-lite', messages: MULTIMODAL_MESSAGES })) { /* drain */ }
+    const router = createLLMRouter({ GEMINI_API_KEY: 'g-test', GEMINI_MODEL: 'gemini-3.5-flash-lite' });
+    for await (const _frame of router.stream({ model: 'gemini-3.5-flash-lite', messages: MULTIMODAL_MESSAGES })) { /* drain */ }
     const sent = fetchMock.calls.at(-1).body;
     const parts = sent.contents[0].parts;
     assert.deepEqual(parts[1], { inlineData: { mimeType: 'image/png', data: DATA_B64 } });
