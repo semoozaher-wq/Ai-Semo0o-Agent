@@ -19,7 +19,7 @@
 #     -v ai_semo0o_data:/data \
 #     ai-semo0o-backend
 # =============================================================================
-FROM node:22.11.0-bookworm-slim
+FROM node:22.23.2-bookworm-slim
 
 # node:sqlite is experimental in Node 22 -> it must be enabled with a flag.
 ENV NODE_ENV=production \
