@@ -137,19 +137,23 @@ function verifyTotpSecret(secret, code) {
   return [-1, 0, 1].some((offset) => totp(secret, current + offset) === String(code));
 }
 
-export function consumeQuota(db, tenantId, { tokens = 0, runs = 0 } = {}) {
-  if (tokens < 0 || runs < 0) throw new Error('INVALID_QUOTA_DELTA');
+export function consumeQuota(db, tenantId, { tokens = 0, runs = 0, costUsd = 0 } = {}) {
+  if (tokens < 0 || runs < 0 || costUsd < 0) throw new Error('INVALID_QUOTA_DELTA');
   const period = new Date().toISOString().slice(0, 7);
   // The read-check-write must be atomic: two concurrent requests could otherwise
   // both observe the same remaining quota and both pass the limit check, letting a
   // tenant exceed its plan. BEGIN IMMEDIATE (via db.transaction) takes the write
   // lock up front so the check and the increment happen under one serialized lock.
   return db.transaction(() => {
-    const quota = db.get('SELECT monthly_tokens,monthly_runs FROM usage_quotas WHERE tenant_id=?', tenantId) ?? { monthly_tokens: 100000, monthly_runs: 1000 };
-    const current = db.get('SELECT tokens,runs FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period) ?? { tokens: 0, runs: 0 };
+    const quota = db.get('SELECT monthly_tokens,monthly_runs,monthly_cost_usd FROM usage_quotas WHERE tenant_id=?', tenantId) ?? { monthly_tokens: 100000, monthly_runs: 1000, monthly_cost_usd: 10 };
+    const current = db.get('SELECT tokens,runs,cost_usd FROM usage_counters WHERE tenant_id=? AND period=?', tenantId, period) ?? { tokens: 0, runs: 0, cost_usd: 0 };
     if (current.tokens + tokens > quota.monthly_tokens) throw new Error('MONTHLY_TOKEN_QUOTA_EXCEEDED');
     if (current.runs + runs > quota.monthly_runs) throw new Error('MONTHLY_RUN_QUOTA_EXCEEDED');
-    db.run('INSERT INTO usage_counters(tenant_id,period,tokens,runs,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(tenant_id,period) DO UPDATE SET tokens=tokens+excluded.tokens,runs=runs+excluded.runs,updated_at=excluded.updated_at', tenantId, period, tokens, runs, now());
-    return { period, tokens: current.tokens + tokens, runs: current.runs + runs, limits: quota };
+    // Spending limit: a positive cap is enforced; 0 or null means "no cap" so a
+    // tenant can be configured for unlimited spend without a schema change.
+    const cap = Number(quota.monthly_cost_usd) || 0;
+    if (cap > 0 && current.cost_usd + costUsd > cap) throw new Error('MONTHLY_COST_QUOTA_EXCEEDED');
+    db.run('INSERT INTO usage_counters(tenant_id,period,tokens,runs,cost_usd,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(tenant_id,period) DO UPDATE SET tokens=tokens+excluded.tokens,runs=runs+excluded.runs,cost_usd=cost_usd+excluded.cost_usd,updated_at=excluded.updated_at', tenantId, period, tokens, runs, costUsd, now());
+    return { period, tokens: current.tokens + tokens, runs: current.runs + runs, costUsd: Number((current.cost_usd + costUsd).toFixed(6)), limits: quota };
   });
 }
