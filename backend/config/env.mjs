@@ -42,8 +42,15 @@ const PROVIDER_ENV = Object.freeze({
   SLACK_PROVIDER: ['webhook', 'bot'],
   STT_PROVIDER: ['openai', 'gemini', 'http'],
   TTS_PROVIDER: ['openai', 'elevenlabs', 'http'],
-  VIDEO_PROVIDER: ['http'],
-  AUDIO_PROVIDER: ['http'],
+  // Video generation is served by three backends (see tools/connectors.mjs):
+  //   google    — Veo 3.1 via the Gemini API (text-to-video, image-to-video, extension)
+  //   replicate — any pinned video model version
+  //   http      — an operator-hosted gateway
+  // Video EDITING (video-to-video) is a SEPARATE provider selected by
+  // VIDEO_EDIT_PROVIDER and is validated below.
+  VIDEO_PROVIDER: ['google', 'replicate', 'http'],
+  VIDEO_EDIT_PROVIDER: ['http', 'replicate'],
+  AUDIO_PROVIDER: ['http', 'replicate'],
 });
 
 function isStrongSecret(value, minBytes) {
