@@ -1,4 +1,22 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { scopeStorageKey } from './scope';
+
+// Account-scoping primitives live in a pure module (no storage backend, no
+// react-native) so the isolation rules are unit-testable. Re-exported here so
+// existing call sites that read STORAGE_KEYS from this module keep working
+// unchanged.
+export {
+  STORAGE_KEYS,
+  ACCOUNT_SCOPED_KEYS,
+  ANONYMOUS_SCOPE,
+  accountScopeFor,
+  setAccountScope,
+  getAccountScope,
+  clearAccountScope,
+  scopeStorageKey,
+  isAccountScoped,
+  hashAccountId,
+} from './scope';
 
 export interface KVStore {
   get<T>(key: string): Promise<T | null>;
@@ -10,7 +28,7 @@ export interface KVStore {
 
 class WebKVStore implements KVStore {
   constructor(private prefix = 'semo0o:') {}
-  private key(key: string): string { return `${this.prefix}${key}`; }
+  private key(key: string): string { return `${this.prefix}${scopeStorageKey(key)}`; }
   async get<T>(key: string): Promise<T | null> {
     try {
       const raw = globalThis.localStorage?.getItem(this.key(key));
@@ -35,7 +53,7 @@ class WebKVStore implements KVStore {
 
 class NativeKVStore implements KVStore {
   private prefix = 'semo0o:';
-  private key(key: string): string { return `${this.prefix}${key}`; }
+  private key(key: string): string { return `${this.prefix}${scopeStorageKey(key)}`; }
   async get<T>(key: string): Promise<T | null> {
     try {
       const raw = await AsyncStorage.getItem(this.key(key));
@@ -62,14 +80,3 @@ function detectStore(): KVStore {
 }
 
 export const storage: KVStore = detectStore();
-
-export const STORAGE_KEYS = {
-  installedAgents: 'store.installed',
-  conversations: 'chat.conversations',
-  messages: 'chat.messages',
-  tasks: 'agents.tasks',
-  files: 'files.entries',
-  settings: 'app.settings',
-  theme: 'app.theme',
-  usage: 'analytics.usage',
-} as const;
