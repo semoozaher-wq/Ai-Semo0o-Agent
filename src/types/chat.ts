@@ -12,6 +12,12 @@ export interface Attachment {
   sizeBytes: number;
   uri?: string;
   kind: AttachmentKind;
+  /** Base64 (or data-URL) bytes of a device file. Present only for files whose
+   *  real content is uploaded so the model receives it, not just a reference. */
+  dataBase64?: string | undefined;
+  /** Server-assigned id returned by `POST /attachments`; sent with the chat/run
+   *  request so the backend can load the stored bytes back for the model. */
+  backendId?: string | undefined;
 }
 
 export interface Message {
