@@ -471,6 +471,28 @@ CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id
 CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_status ON chat_messages(tenant_id, status, created_at);
 
+-- Uploaded chat attachments. The binary payload lives on disk under a
+-- tenant-scoped directory (never in the row), and this table holds only the
+-- metadata plus the storage path. Every lookup is tenant+user scoped so one
+-- tenant can never read another tenant's uploads. `sha256` lets the server
+-- verify the bytes it later loads match what was uploaded.
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('image','document','audio','code','other')) DEFAULT 'other',
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  storage_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_tenant_user ON attachments(tenant_id, user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+
 -- Hot-path indexes added during the performance pass: tool-call status scans
 -- (metrics/SLO), per-user message history, and session lookup by user.
 CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, created_at);
