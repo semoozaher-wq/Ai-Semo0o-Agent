@@ -116,7 +116,7 @@ const RULES: Rule[] = [
   {
     id: 'inner-html',
     severity: 'error',
-    pattern: /dangerouslySetInnerHTML|\.innerHTML\s*=/,
+    pattern: /dangerouslySetInnerHTML|\.innerHTML\s*=/, // security-scan:allow dangerously-set-innerhtml
     message: 'إدراج HTML مباشر قد يسبب XSS.',
     suggestion: 'نظّف المدخلات أو استخدم محتوى آمن.',
   },
