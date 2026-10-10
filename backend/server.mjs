@@ -14,6 +14,7 @@ import { RunQueue } from './queue/queue.mjs';
 import { TriggerScheduler, normalizeSchedule, computeNextRun, TRIGGER_KINDS, MISSED_RUN_POLICIES, isValidTimeZone } from './queue/scheduler.mjs';
 import { createCodeRunHandler } from './runners/code-runner.mjs';
 import { DistributedRateLimiter, applySecurityHeaders } from './security/http.mjs';
+import { resolveAllowedOrigin } from './security/cors.mjs';
 import { createLiveToolRegistry } from './tools/registry.mjs';
 import { loadPluginsFromEnv } from './tools/plugins.mjs';
 import { TOOL_BY_ID } from './agent/catalog.mjs';
@@ -452,11 +453,18 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
     const requestId = request.headers['x-request-id']?.toString().slice(0, 100) || id('req');
     response.setHeader('x-request-id', requestId);
     try {
-      const origin = process.env.ALLOWED_ORIGIN ?? '';
-      applySecurityHeaders(response, origin && request.headers.origin === origin ? origin : '');
-      if (request.headers.origin && origin && request.headers.origin !== origin) throw new Error('CORS_ORIGIN_DENIED');
-      if (!rateLimiter.allow(request.socket.remoteAddress ?? 'unknown')) throw new Error('RATE_LIMITED');
+      // CORS: echo the request Origin only when it is on the allow-list
+      // (comma-separated, normalised, optional single-label wildcard). A missing
+      // or non-matching Origin yields no ACAO header, so the browser blocks the
+      // response (fail closed) instead of leaking it cross-origin.
+      const allowedOrigin = resolveAllowedOrigin(process.env.ALLOWED_ORIGIN ?? '', request.headers.origin);
+      applySecurityHeaders(response, allowedOrigin);
+      if (request.headers.origin && !allowedOrigin) throw new Error('CORS_ORIGIN_DENIED');
+      // Answer CORS preflight BEFORE the rate limiter: a throttled preflight
+      // (429 without ACAO) is indistinguishable from a CORS failure in the
+      // browser and surfaces as the same generic "Failed to fetch".
       if (request.method === 'OPTIONS') { response.setHeader('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS'); response.setHeader('access-control-allow-headers', 'authorization,content-type,x-request-id'); response.setHeader('access-control-max-age', '600'); return send(response, 204, {}); }
+      if (!rateLimiter.allow(request.socket.remoteAddress ?? 'unknown')) throw new Error('RATE_LIMITED');
       const parts = routeParts(request.url);
       const method = request.method;
       if (method === 'GET' && parts[0] === 'health') return send(response, 200, { ok: true, service: 'ai-semo0o-agent-backend', version: SERVICE_VERSION, uptimeSeconds: Math.round((Date.now() - SERVICE_STARTED_AT) / 1000), time: now() });
