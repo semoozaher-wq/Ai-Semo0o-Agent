@@ -173,6 +173,13 @@ function creationOptions(input = {}) {
   if (input.bundle === false) options.bundle = false;
   if (input.pngSequence === true) options.pngSequence = true;
   if (input.useImages === false) options.useImages = false;
+  // Opt-in REAL generative video: when true (and a video provider is configured)
+  // the Director also produces a brand-new MP4 with the video-generation model,
+  // exposed as the job's `mp4` artifact. Off by default so existing behaviour is
+  // unchanged.
+  if (input.realVideo === true) options.realVideo = true;
+  const videoDurationSeconds = Number(input.videoDurationSeconds);
+  if (Number.isFinite(videoDurationSeconds)) options.videoDurationSeconds = Math.max(2, Math.min(60, Math.round(videoDurationSeconds)));
   return options;
 }
 // Best-effort transactional email enqueue. Account lifecycle flows (register,
