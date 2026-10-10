@@ -1,0 +1,299 @@
+[
+  {
+    "breakpoint": "desktop",
+    "route": "home",
+    "path": "/",
+    "url": "http://localhost:8090/",
+    "file": "/workspace/work/screenshots/app/desktop_home.png",
+    "title": "",
+    "bodyLen": 1145
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "chat",
+    "path": "/chat",
+    "url": "http://localhost:8090/chat",
+    "file": "/workspace/work/screenshots/app/desktop_chat.png",
+    "title": "",
+    "bodyLen": 415
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "projects",
+    "path": "/workspace",
+    "url": "http://localhost:8090/workspace",
+    "file": "/workspace/work/screenshots/app/desktop_projects.png",
+    "title": "",
+    "bodyLen": 676
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "tasks",
+    "path": "/agents",
+    "url": "http://localhost:8090/agents",
+    "file": "/workspace/work/screenshots/app/desktop_tasks.png",
+    "title": "",
+    "bodyLen": 672
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "files",
+    "path": "/files",
+    "url": "http://localhost:8090/files",
+    "file": "/workspace/work/screenshots/app/desktop_files.png",
+    "title": "",
+    "bodyLen": 3002
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "agents",
+    "path": "/library",
+    "url": "http://localhost:8090/library",
+    "file": "/workspace/work/screenshots/app/desktop_agents.png",
+    "title": "",
+    "bodyLen": 2906
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "integrations",
+    "path": "/integrations",
+    "url": "http://localhost:8090/integrations",
+    "file": "/workspace/work/screenshots/app/desktop_integrations.png",
+    "title": "",
+    "bodyLen": 3100
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "settings",
+    "path": "/settings",
+    "url": "http://localhost:8090/settings",
+    "file": "/workspace/work/screenshots/app/desktop_settings.png",
+    "title": "",
+    "bodyLen": 1800
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "studio",
+    "path": "/studio",
+    "url": "http://localhost:8090/studio",
+    "file": "/workspace/work/screenshots/app/desktop_studio.png",
+    "title": "",
+    "bodyLen": 1188
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "operations",
+    "path": "/operations",
+    "url": "http://localhost:8090/operations",
+    "file": "/workspace/work/screenshots/app/desktop_operations.png",
+    "title": "",
+    "bodyLen": 4536
+  },
+  {
+    "breakpoint": "desktop",
+    "route": "analytics",
+    "path": "/analytics",
+    "url": "http://localhost:8090/analytics",
+    "file": "/workspace/work/screenshots/app/desktop_analytics.png",
+    "title": "",
+    "bodyLen": 698
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "home",
+    "path": "/",
+    "url": "http://localhost:8090/",
+    "file": "/workspace/work/screenshots/app/tablet_home.png",
+    "title": "",
+    "bodyLen": 967
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "chat",
+    "path": "/chat",
+    "url": "http://localhost:8090/chat",
+    "file": "/workspace/work/screenshots/app/tablet_chat.png",
+    "title": "",
+    "bodyLen": 152
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "projects",
+    "path": "/workspace",
+    "url": "http://localhost:8090/workspace",
+    "file": "/workspace/work/screenshots/app/tablet_projects.png",
+    "title": "",
+    "bodyLen": 498
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "tasks",
+    "path": "/agents",
+    "url": "http://localhost:8090/agents",
+    "file": "/workspace/work/screenshots/app/tablet_tasks.png",
+    "title": "",
+    "bodyLen": 494
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "files",
+    "path": "/files",
+    "url": "http://localhost:8090/files",
+    "file": "/workspace/work/screenshots/app/tablet_files.png",
+    "title": "",
+    "bodyLen": 2824
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "agents",
+    "path": "/library",
+    "url": "http://localhost:8090/library",
+    "file": "/workspace/work/screenshots/app/tablet_agents.png",
+    "title": "",
+    "bodyLen": 2728
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "integrations",
+    "path": "/integrations",
+    "url": "http://localhost:8090/integrations",
+    "file": "/workspace/work/screenshots/app/tablet_integrations.png",
+    "title": "",
+    "bodyLen": 2922
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "settings",
+    "path": "/settings",
+    "url": "http://localhost:8090/settings",
+    "file": "/workspace/work/screenshots/app/tablet_settings.png",
+    "title": "",
+    "bodyLen": 1622
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "studio",
+    "path": "/studio",
+    "url": "http://localhost:8090/studio",
+    "file": "/workspace/work/screenshots/app/tablet_studio.png",
+    "title": "",
+    "bodyLen": 1010
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "operations",
+    "path": "/operations",
+    "url": "http://localhost:8090/operations",
+    "file": "/workspace/work/screenshots/app/tablet_operations.png",
+    "title": "",
+    "bodyLen": 4358
+  },
+  {
+    "breakpoint": "tablet",
+    "route": "analytics",
+    "path": "/analytics",
+    "url": "http://localhost:8090/analytics",
+    "file": "/workspace/work/screenshots/app/tablet_analytics.png",
+    "title": "",
+    "bodyLen": 520
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "home",
+    "path": "/",
+    "url": "http://localhost:8090/",
+    "file": "/workspace/work/screenshots/app/mobile_home.png",
+    "title": "",
+    "bodyLen": 1008
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "chat",
+    "path": "/chat",
+    "url": "http://localhost:8090/chat",
+    "file": "/workspace/work/screenshots/app/mobile_chat.png",
+    "title": "",
+    "bodyLen": 193
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "projects",
+    "path": "/workspace",
+    "url": "http://localhost:8090/workspace",
+    "file": "/workspace/work/screenshots/app/mobile_projects.png",
+    "title": "",
+    "bodyLen": 539
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "tasks",
+    "path": "/agents",
+    "url": "http://localhost:8090/agents",
+    "file": "/workspace/work/screenshots/app/mobile_tasks.png",
+    "title": "",
+    "bodyLen": 535
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "files",
+    "path": "/files",
+    "url": "http://localhost:8090/files",
+    "file": "/workspace/work/screenshots/app/mobile_files.png",
+    "title": "",
+    "bodyLen": 2865
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "agents",
+    "path": "/library",
+    "url": "http://localhost:8090/library",
+    "file": "/workspace/work/screenshots/app/mobile_agents.png",
+    "title": "",
+    "bodyLen": 2769
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "integrations",
+    "path": "/integrations",
+    "url": "http://localhost:8090/integrations",
+    "file": "/workspace/work/screenshots/app/mobile_integrations.png",
+    "title": "",
+    "bodyLen": 2963
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "settings",
+    "path": "/settings",
+    "url": "http://localhost:8090/settings",
+    "file": "/workspace/work/screenshots/app/mobile_settings.png",
+    "title": "",
+    "bodyLen": 1663
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "studio",
+    "path": "/studio",
+    "url": "http://localhost:8090/studio",
+    "file": "/workspace/work/screenshots/app/mobile_studio.png",
+    "title": "",
+    "bodyLen": 1051
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "operations",
+    "path": "/operations",
+    "url": "http://localhost:8090/operations",
+    "file": "/workspace/work/screenshots/app/mobile_operations.png",
+    "title": "",
+    "bodyLen": 4399
+  },
+  {
+    "breakpoint": "mobile",
+    "route": "analytics",
+    "path": "/analytics",
+    "url": "http://localhost:8090/analytics",
+    "file": "/workspace/work/screenshots/app/mobile_analytics.png",
+    "title": "",
+    "bodyLen": 561
+  }
+]
