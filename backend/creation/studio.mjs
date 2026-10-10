@@ -6,15 +6,24 @@
 // it. It is deliberately transport-agnostic (no HTTP here) so it can be unit
 // tested and reused by the queue, a CLI or a worker.
 //
-// Jobs are kept in a bounded, TTL-evicted in-memory registry. That is honest for
-// a single-node deployment; the artefact bytes are what matter and they are also
-// written into the workspace by the studio.* tools. A durable store can be
-// dropped in behind the same interface without touching the routes.
+// Jobs are kept in a bounded, TTL-evicted in-memory registry for fast access.
+// When a database is supplied the registry is ALSO durable (write-through via
+// CreationJobStore): the job row, its event log and its artifact bytes are
+// persisted, so a completed deliverable is still listable and downloadable after
+// a restart and a job that was mid-flight when the process stopped is honestly
+// reported as interrupted instead of silently vanishing. Absent a database the
+// studio is in-memory only, exactly as before.
 
 import { runDirector, planCreation } from './director.mjs';
 import { createCreationProviders } from './providers.mjs';
+import { CreationJobStore } from './job-store.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+
+// A job that was still 'running' when the process stopped cannot be resumed
+// mid-render (the Director holds no durable checkpoint), so it is honestly
+// reported as interrupted on the next boot rather than silently vanishing.
+const INTERRUPTED = 'CREATION_INTERRUPTED_BY_RESTART';
 
 function nowIso() {
   return new Date().toISOString();
@@ -24,17 +33,68 @@ function nowIso() {
  * @param {object} [options]
  * @param {object} [options.llm]      server LLM router (optional; deterministic fallback is used when absent).
  * @param {object} [options.providers] pre-built CreationProviders (optional).
+ * @param {object} [options.db]       database handle; when given, jobs are persisted durably (write-through).
+ * @param {object} [options.store]    a pre-built CreationJobStore (overrides `db`).
  * @param {number} [options.maxJobs]  bounded registry size (default 40).
  * @param {number} [options.ttlMs]    eviction age for terminal jobs (default 1h).
  */
 export class CreationStudio {
-  constructor({ llm = null, providers = null, maxJobs = 40, ttlMs = 60 * 60 * 1000, env = process.env } = {}) {
+  constructor({ llm = null, providers = null, db = null, store = null, maxJobs = 40, ttlMs = 60 * 60 * 1000, env = process.env } = {}) {
     this.llm = llm;
     this.providers = providers || createCreationProviders(env);
     this.maxJobs = Math.max(1, maxJobs);
     this.ttlMs = Math.max(60_000, ttlMs);
     this.jobs = new Map();
     this.seq = 0;
+    // Durable, write-through persistence. When a store is present the registry
+    // survives restarts: completed jobs and their artifacts are rehydrated on
+    // boot and interrupted jobs are honestly reported. Absent a store the studio
+    // behaves exactly as before (in-memory only), so unit tests are unaffected.
+    this.store = store || (db ? new CreationJobStore(db) : null);
+    this.lastPruneAt = 0;
+    if (this.store) this.#hydrate();
+  }
+
+  /**
+   * Warm the bounded in-memory registry from the durable store and honestly
+   * close out any job that was mid-flight when the process last stopped.
+   */
+  #hydrate() {
+    let loaded = 0;
+    try {
+      const rows = this.store.listAll(this.maxJobs);
+      for (const job of rows) {
+        job.events = this.store.loadEvents(job.id, 0).slice(-2000);
+        job.artifactMeta = this.store.loadArtifactMeta(job.id);
+        this.jobs.set(job.id, job);
+        loaded += 1;
+      }
+      // Seed the global event sequence so new events never collide with a
+      // replayed one (the log's primary key is (job_id, seq)).
+      this.seq = Math.max(this.seq, this.store.globalMaxSeq());
+      for (const interrupted of this.store.interrupted()) {
+        // Mark the SAME instance that is in the registry (it was already loaded
+        // by listAll above) so the correction is visible to callers.
+        const job = this.jobs.get(interrupted.id) || interrupted;
+        job.status = 'failed';
+        job.error = INTERRUPTED;
+        job.updatedAt = nowIso();
+        job.elapsedMs = job.elapsedMs || 0;
+        const event = { seq: ++this.seq, type: 'job.failed', payload: { error: INTERRUPTED, reason: 'process_restart' }, at: job.updatedAt };
+        job.events.push(event);
+        try { this.store.saveJob(job); this.store.appendEvent(job.id, job.tenantId, event); } catch { /* best effort */ }
+        this.jobs.set(job.id, job);
+      }
+    } catch { /* a hydration failure must never stop the studio from booting */ }
+    this.hydratedCount = loaded;
+  }
+
+  /** Summary of what was recovered from durable storage on boot (observability). */
+  recovery() {
+    if (!this.store) return { durable: false, loaded: 0, interrupted: 0 };
+    let interrupted = 0;
+    try { interrupted = this.store.interrupted().length; } catch { interrupted = 0; }
+    return { durable: true, loaded: this.hydratedCount || 0, interrupted };
   }
 
   capabilities() {
@@ -71,6 +131,10 @@ export class CreationStudio {
     const event = { seq: ++this.seq, type, payload: payload || {}, at: nowIso() };
     job.events.push(event);
     if (job.events.length > 2000) job.events.splice(0, job.events.length - 2000);
+    // Write-through to the durable log first so a crash between here and the
+    // listener fan-out can never lose an event. Best-effort: storage must never
+    // break a running job.
+    if (this.store) { try { this.store.appendEvent(job.id, job.tenantId, event); } catch { /* best effort */ } }
     for (const listener of job.listeners) {
       try { listener(event); } catch { /* a listener must never break the job */ }
     }
@@ -87,6 +151,12 @@ export class CreationStudio {
    */
   start({ goal, tenantId = null, userId = null, options = {} } = {}) {
     this.#evict();
+    // Bounded retention: prune old terminal jobs at most once a minute so the
+    // durable registry cannot grow without limit. Best-effort and non-fatal.
+    if (this.store && Date.now() - this.lastPruneAt > 60_000) {
+      this.lastPruneAt = Date.now();
+      try { this.store.prune(); } catch { /* best effort */ }
+    }
     const id = `cre_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const job = {
       id,
@@ -103,11 +173,15 @@ export class CreationStudio {
       result: null,
       error: null,
       artifacts: {},
+      artifactMeta: {},
       controller: new AbortController(),
       startedAt: Date.now(),
       elapsedMs: 0,
     };
     this.jobs.set(id, job);
+    // Persist the job row before the first event so a crash mid-start still
+    // leaves a durable (interrupted) record rather than nothing at all.
+    if (this.store) { try { this.store.saveJob(job); } catch { /* best effort */ } }
     this.#push(job, 'job.started', { goal, options });
     // Fire-and-forget: the run owns its own error handling and never rejects here.
     //
@@ -172,6 +246,14 @@ export class CreationStudio {
     } finally {
       job.updatedAt = nowIso();
       job.controller = null;
+      // Durable write-through of the terminal state: the job row (status, result
+      // manifest, error) and the artifact bytes. Done here so BOTH success and
+      // failure are persisted exactly once, and best-effort so a storage error
+      // never masks the real job outcome.
+      if (this.store) {
+        try { this.store.saveJob(job); } catch { /* best effort */ }
+        try { this.store.saveArtifacts(job.id, job.tenantId, job.artifacts); } catch { /* best effort */ }
+      }
     }
   }
 
@@ -209,12 +291,22 @@ export class CreationStudio {
       error: job.error,
       result: job.result,
       artifacts: {
-        gif: job.artifacts.gif ? { bytes: job.artifacts.gif.length, mimeType: 'image/gif' } : null,
-        avi: job.artifacts.avi ? { bytes: job.artifacts.avi.length, mimeType: 'video/x-msvideo' } : null,
-        bundle: job.artifacts.bundle ? { bytes: job.artifacts.bundle.length, mimeType: 'application/zip' } : null,
-        mp4: job.artifacts.mp4 ? { bytes: job.artifacts.mp4.length, mimeType: 'video/mp4' } : null,
+        gif: this.#artifactView(job, 'gif', 'image/gif'),
+        avi: this.#artifactView(job, 'avi', 'video/x-msvideo'),
+        bundle: this.#artifactView(job, 'bundle', 'application/zip'),
+        mp4: this.#artifactView(job, 'mp4', 'video/mp4'),
       },
     };
+  }
+
+  // A fresh (in-process) job reports the live buffer length; a job rehydrated
+  // from durable storage reports the persisted byte count. Both are honest.
+  #artifactView(job, name, mimeType) {
+    const buffer = job.artifacts?.[name];
+    if (buffer) return { bytes: buffer.length, mimeType };
+    const meta = job.artifactMeta?.[name];
+    if (meta && Number(meta.bytes) > 0) return { bytes: meta.bytes, mimeType: meta.mimeType || mimeType };
+    return null;
   }
 
   status(id, tenantId = null) {
@@ -235,9 +327,17 @@ export class CreationStudio {
   artifact(id, name, tenantId = null) {
     const job = this.get(id, tenantId);
     if (!job) return null;
-    const buffer = job.artifacts[name];
+    let buffer = job.artifacts[name];
+    let mimeType = name === 'gif' ? 'image/gif' : name === 'avi' ? 'video/x-msvideo' : name === 'bundle' ? 'application/zip' : name === 'mp4' ? 'video/mp4' : 'application/octet-stream';
+    // A rehydrated job has no live buffer; read the persisted bytes back. This is
+    // what makes a completed deliverable downloadable after a restart.
+    if (!buffer && this.store) {
+      try {
+        const stored = this.store.loadArtifact(job.id, name);
+        if (stored) { buffer = stored.buffer; mimeType = stored.mimeType || mimeType; }
+      } catch { /* best effort */ }
+    }
     if (!buffer) return null;
-    const mimeType = name === 'gif' ? 'image/gif' : name === 'avi' ? 'video/x-msvideo' : name === 'bundle' ? 'application/zip' : name === 'mp4' ? 'video/mp4' : 'application/octet-stream';
     return { buffer, mimeType, filename: `semo0o-${job.id}.${name === 'bundle' ? 'zip' : name}` };
   }
 
