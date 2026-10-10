@@ -6,9 +6,21 @@ import { titleFromPrompt } from '../utils/text';
 import { DEFAULT_MODEL_ID } from '../data/models';
 import { backendApi, ApiEvent } from '../services/api/client';
 import { sweepInterruptedChats, markInterruptedMessages, planInterruptedRetry } from '../services/chat/recovery';
+import { planAttachmentUploads, stripAttachmentBytes } from '../services/chat/attachments';
+import { ProjectCache } from '../services/chat/project-cache';
 
 let streamToken = 0;
 let activeController: AbortController | null = null;
+
+// Agent project/workspace resolver. Keyed by the signed-in identity so a
+// session change can never reuse another tenant's project, and a failed
+// creation is never cached (see `ProjectCache`).
+const projectCache = new ProjectCache(backendApi);
+
+/** Drop the cached agent project. Called on sign-out / session change. */
+export function resetChatProjectCache(): void {
+  projectCache.reset();
+}
 
 interface ChatState {
   conversations: Conversation[];
@@ -31,9 +43,11 @@ interface ChatState {
 function nowIso(): string { return new Date().toISOString(); }
 
 /**
- * Fold the user's queued attachments into the outgoing prompt so the agent
- * actually receives the file/URL references (the chat API has no attachment
- * field). The originals are still stored on the message for the UI.
+ * Fold the attachments that could NOT be uploaded (workspace files, URLs,
+ * oversized files, or failed uploads) into the outgoing prompt as name/type
+ * references, so the model still gets honest context. Device files whose real
+ * bytes were uploaded are sent via `attachmentIds` instead — their content
+ * reaches the model directly and must not be duplicated here.
  */
 function withAttachmentReferences(content: string, attachments: Attachment[]): string {
   if (attachments.length === 0) return content;
@@ -51,13 +65,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     void storage.set(STORAGE_KEYS.messages, messages);
   };
   const patchMessage = (conversationId: string, messageId: string, patch: Partial<Message>) => set((state) => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map((message) => message.id === messageId ? { ...message, ...patch } : message) } }));
-  const projectPromise = { value: null as { projectId: string; workspaceId: string } | null, pending: null as Promise<{ projectId: string; workspaceId: string }> | null };
-  const ensureProject = async () => {
-    await backendApi.requireSession();
-    if (projectPromise.value) return projectPromise.value;
-    projectPromise.pending ??= backendApi.createProject({ name: 'Semo0o Agent Workspace' }).then((project) => { projectPromise.value = project; return project; });
-    return projectPromise.pending;
-  };
+  // Resolve the agent project for the current session (cached per identity).
+  const ensureProject = () => projectCache.resolve();
   const handleEvent = (conversationId: string, assistantId: string, event: ApiEvent) => {
     if (event.type === 'planning_started') patchMessage(conversationId, assistantId, { content: 'بدأ التخطيط الآمن للمهمة…', status: 'streaming' });
     else if (event.type === 'planning_completed') patchMessage(conversationId, assistantId, { content: `تم إنشاء خطة من ${String(event.steps ?? 0)} خطوات…`, status: 'streaming' });
@@ -70,12 +79,12 @@ export const useChatStore = create<ChatState>((set, get) => {
   // terminal frame (`done`/`error`); false when streaming is unavailable so the
   // caller can degrade to a single-shot completion. The `start` frame's
   // conversationId is persisted on the local thread so it can be resumed.
-  const streamChat = async (conversationId: string, assistantId: string, content: string, model: string, backendId: string | undefined, token: number): Promise<boolean> => {
+  const streamChat = async (conversationId: string, assistantId: string, content: string, model: string, backendId: string | undefined, token: number, attachmentIds: string[] = []): Promise<boolean> => {
     let streamed = '';
     let terminal = false;
     try {
       await backendApi.chatStream(
-        { message: content, model, ...(backendId ? { conversationId: backendId } : {}) },
+        { message: content, model, ...(backendId ? { conversationId: backendId } : {}), ...(attachmentIds.length ? { attachmentIds } : {}) },
         (frame) => {
           if (token !== streamToken) return;
           if (frame.type === 'start' && typeof frame.conversationId === 'string') {
@@ -102,21 +111,21 @@ export const useChatStore = create<ChatState>((set, get) => {
   // Produce the assistant reply for an already-appended user turn. Shared by
   // `send` and `retryInterrupted` so a retry reuses the exact same streaming,
   // agent-run, fallback and error handling as a first attempt.
-  const generateReply = async (conversationId: string, assistantId: string, content: string, model: string, mode: 'chat' | 'agent', token: number) => {
+  const generateReply = async (conversationId: string, assistantId: string, content: string, model: string, mode: 'chat' | 'agent', token: number, attachmentIds: string[] = []) => {
     const conversation = get().conversations.find((item) => item.id === conversationId);
     try {
       if (mode === 'chat') {
-        const streamed = await streamChat(conversationId, assistantId, content, model, conversation?.backendId, token);
+        const streamed = await streamChat(conversationId, assistantId, content, model, conversation?.backendId, token, attachmentIds);
         // Streaming unavailable (older backend, proxy that buffers SSE, or an
         // empty stream): fall back to a single-shot completion so the user
         // still gets an answer.
         if (!streamed && token === streamToken) {
-          const result = await backendApi.chat({ message: content, model });
+          const result = await backendApi.chat({ message: content, model, ...(attachmentIds.length ? { attachmentIds } : {}) });
           if (token === streamToken) patchMessage(conversationId, assistantId, { content: result.text, status: 'complete', model });
         }
       } else {
         const project = await ensureProject();
-        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model });
+        const run = await backendApi.createRun({ kind: 'agent.run', projectId: project.projectId, workspaceId: project.workspaceId, goal: content, model, ...(attachmentIds.length ? { attachmentIds } : {}) });
         await backendApi.streamEvents(run.runId, (event) => { if (token === streamToken) handleEvent(conversationId, assistantId, event); }, activeController?.signal);
         const snapshot = await backendApi.getRun(run.runId);
         const finalText = snapshot.result?.final ?? (snapshot.status === 'completed' ? 'اكتملت المهمة دون نص نهائي.' : `انتهت المهمة بالحالة: ${snapshot.status}`);
@@ -151,14 +160,27 @@ export const useChatStore = create<ChatState>((set, get) => {
       let conversationId = get().activeId; if (!conversationId) conversationId = get().newConversation(opts?.model);
       const conversation = get().conversations.find((item) => item.id === conversationId);
       const model = opts?.model ?? conversation?.model ?? DEFAULT_MODEL_ID;
-      const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete', ...(attachments.length ? { attachments } : {}) };
+      // Persist only attachment metadata — never the base64 bytes (they can be
+      // multi-megabyte and would bloat local storage).
+      const storedAttachments = stripAttachmentBytes(attachments);
+      const userMessage: Message = { id: uid('msg'), conversationId, role: 'user', content, createdAt: nowIso(), status: 'complete', ...(storedAttachments.length ? { attachments: storedAttachments } : {}) };
       const assistantId = uid('msg');
       const mode = opts?.mode ?? 'chat';
       const assistantMessage: Message = { id: assistantId, conversationId, role: 'assistant', content: mode === 'agent' ? 'جارٍ الاتصال بالـBackend وتشغيل الوكيل…' : 'جارٍ إعداد الرد…', createdAt: nowIso(), status: 'streaming', model };
       const preview = content || attachments[0]?.name || '';
       set((state) => { const existing = state.messages[conversationId] ?? []; return { messages: { ...state.messages, [conversationId]: [...existing, userMessage, assistantMessage] }, conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, title: existing.length === 0 ? titleFromPrompt(preview) : item.title, updatedAt: nowIso(), messageCount: item.messageCount + 2, lastMessagePreview: preview.slice(0, 80) } : item), streaming: true }; });
       const token = ++streamToken; activeController?.abort(); activeController = new AbortController();
-      await generateReply(conversationId, assistantId, withAttachmentReferences(content, attachments), model, mode, token);
+      // Upload the real file bytes first so the model receives their content;
+      // only name-only references (workspace/URL/oversized/failed) are folded
+      // into the prompt text.
+      const { attachmentIds, referenceOnly } = await planAttachmentUploads(backendApi, attachments, conversation?.backendId);
+      // The uploader stamps server ids onto the queued attachments; mirror them
+      // onto the optimistic user turn so a retry reuses the upload and the UI can
+      // fetch the stored bytes (e.g. an image thumbnail) without re-uploading.
+      if (attachments.some((item) => item.backendId)) {
+        patchMessage(conversationId, userMessage.id, { attachments: stripAttachmentBytes(attachments) });
+      }
+      await generateReply(conversationId, assistantId, withAttachmentReferences(content, referenceOnly), model, mode, token, attachmentIds);
     },
     async recoverInterrupted() {
       // Ask the backend which threads hold a reply that was left mid-stream by a

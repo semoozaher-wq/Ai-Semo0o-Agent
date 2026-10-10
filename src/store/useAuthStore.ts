@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { backendApi } from '../services/api/client';
 import type { ApiUser } from '../services/api/client';
 import { AUTH_MESSAGES, humanizeAuthError } from '../services/api/auth-errors';
+import { resetChatProjectCache } from './useChatStore';
 
 /**
  * Authentication gate state.
@@ -130,6 +131,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   async logout() {
     try { await backendApi.logout(); } catch { /* revoke is best-effort */ }
     backendApi.clearSession();
+    // Drop the agent project/workspace cached for the previous session so the
+    // next user can never inherit another tenant's project.
+    resetChatProjectCache();
     set({ status: 'anonymous', user: null, error: null, mfaRequired: false });
   },
 
