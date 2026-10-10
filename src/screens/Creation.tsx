@@ -21,6 +21,7 @@ import { Icon } from '../components/ui/Icon';
 import type { IconName, IconTone } from '../components/ui/Icon';
 import { Input } from '../components/ui/Input';
 import { Progress } from '../components/ui/Progress';
+import { SegmentedControl } from '../components/ui/SegmentedControl';
 import { Skeleton } from '../components/ui/Skeleton';
 import { useCreationStore } from '../store/useCreationStore';
 import type {
@@ -78,6 +79,9 @@ const RESOLUTION_OPTIONS: { value: NonNullable<ApiCreationJobInput['resolution']
 ];
 
 const DURATION_OPTIONS = [8, 15, 25, 45];
+// Real generative video is billed per second by the upstream model, so it is
+// offered in short, explicit increments (2–60s, matching the backend clamp).
+const REAL_VIDEO_DURATIONS = [4, 6, 8, 10, 15, 30];
 
 const PALETTE_OPTIONS = ['midnight', 'sunrise', 'forest', 'ocean', 'candy', 'neon', 'corporate', 'sand', 'rose', 'mono'];
 
@@ -159,6 +163,11 @@ export function Creation() {
   const [resolution, setResolution] = React.useState<NonNullable<ApiCreationJobInput['resolution']>>('standard');
   const [duration, setDuration] = React.useState<number>(15);
   const [palette, setPalette] = React.useState<string | undefined>(undefined);
+  // Generation mode: 'local' = the deterministic Local Studio (always works,
+  // gif/avi/bundle); 'real' = ALSO call a real generative video model for an
+  // MP4 (opt-in, requires a configured video provider).
+  const [mode, setMode] = React.useState<'local' | 'real'>('local');
+  const [videoDuration, setVideoDuration] = React.useState<number>(8);
   const [refreshing, setRefreshing] = React.useState(false);
 
   React.useEffect(() => {
@@ -183,12 +192,18 @@ export function Creation() {
       bundle: true,
     };
     if (palette) input.palette = palette;
+    // Real generative video is strictly opt-in and additive: the deterministic
+    // Local Studio deliverable is always produced alongside it.
+    if (mode === 'real') {
+      input.realVideo = true;
+      input.videoDurationSeconds = videoDuration;
+    }
     const job = await start(input);
     if (job) setGoal('');
-  }, [goal, format, resolution, duration, palette, start]);
+  }, [goal, format, resolution, duration, palette, mode, videoDuration, start]);
 
   const openArtifact = React.useCallback(
-    async (jobId: string, name: 'gif' | 'avi' | 'bundle') => {
+    async (jobId: string, name: 'gif' | 'avi' | 'bundle' | 'mp4') => {
       try {
         await Linking.openURL(artifactUrl(jobId, name));
       } catch {
@@ -199,12 +214,14 @@ export function Creation() {
   );
 
   const providers = capabilities?.providers;
+  const realVideoReady = Boolean(capabilities?.video);
   const providerChips: { label: string; live: boolean }[] = providers
     ? [
         { label: 'صور', live: providers.image },
         { label: 'رؤية', live: providers.vision },
         { label: 'صوت بشري', live: providers.tts },
         { label: 'فيديو', live: providers.video },
+        { label: 'تحرير فيديو', live: providers.videoEdit },
         { label: 'موسيقى', live: providers.music },
         { label: 'تحليل وسائط', live: providers.mediaAnalysis },
       ]
@@ -313,6 +330,41 @@ export function Creation() {
             />
           ))}
         </View>
+
+        <Text variant="label" tone="muted" style={{ marginTop: theme.spacing.md, marginBottom: 6 }}>
+          نوع التوليد
+        </Text>
+        <SegmentedControl
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'local', label: 'الاستوديو المحلي (حتمي)', icon: 'layers-outline' },
+            { value: 'real', label: 'فيديو حقيقي (AI)', icon: 'sparkles-outline' },
+          ]}
+        />
+        {mode === 'real' ? (
+          <>
+            <Text variant="caption" tone="subtle" style={{ marginTop: 6 }}>
+              {realVideoReady
+                ? `سيُنتَج MP4 إضافي بمزوّد ${capabilities?.video?.id ?? ''}${capabilities?.video?.model ? ` (${capabilities.video.model})` : ''} — مع الحفاظ على مخرجات الاستوديو المحلي (GIF/AVI/ZIP).`
+                : 'لا يوجد مزوّد فيديو حقيقي مُهيّأ على الخادم الآن؛ سيبقى التوليد المحلي متاحًا وسيُبلَّغ عن سبب تعذّر الفيديو الحقيقي بصدق.'}
+            </Text>
+            <Text variant="label" tone="muted" style={{ marginTop: theme.spacing.md, marginBottom: 6 }}>
+              مدة الفيديو الحقيقي (ثانية)
+            </Text>
+            <View style={styles.wrap}>
+              {REAL_VIDEO_DURATIONS.map((value) => (
+                <Chip
+                  key={value}
+                  label={`${value}s`}
+                  selected={videoDuration === value}
+                  onPress={() => setVideoDuration(value)}
+                  tone="accent"
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
 
         <Text variant="label" tone="muted" style={{ marginTop: theme.spacing.md, marginBottom: 6 }}>
           لوحة الألوان (اختياري — نستنتجها تلقائيًا إن تُركت فارغة)
@@ -433,7 +485,7 @@ function ActiveJobCard({
   job: ApiCreationJob;
   busy: boolean;
   onCancel: () => void;
-  onOpen: (jobId: string, name: 'gif' | 'avi' | 'bundle') => void;
+  onOpen: (jobId: string, name: 'gif' | 'avi' | 'bundle' | 'mp4') => void;
 }) {
   const theme = useTheme();
   const meta = statusMeta(job.status);
@@ -607,6 +659,13 @@ function ActiveJobCard({
           </Text>
           <View style={{ gap: 8 }}>
             <ArtifactRow
+              label="فيديو حقيقي (MP4 · AI)"
+              icon="sparkles-outline"
+              artifact={job.artifacts.mp4}
+              onPress={() => onOpen(job.id, 'mp4')}
+              highlight
+            />
+            <ArtifactRow
               label="معاينة متحركة (GIF)"
               icon="images-outline"
               artifact={job.artifacts.gif}
@@ -625,6 +684,11 @@ function ActiveJobCard({
               onPress={() => onOpen(job.id, 'bundle')}
             />
           </View>
+          {manifest?.videoError ? (
+            <Text variant="caption" tone="danger" style={{ marginTop: 8 }}>
+              تعذّر توليد الفيديو الحقيقي: {manifest.videoError}
+            </Text>
+          ) : null}
         </>
       ) : null}
     </Card>
@@ -636,11 +700,13 @@ function ArtifactRow({
   icon,
   artifact,
   onPress,
+  highlight = false,
 }: {
   label: string;
   icon: IconName;
   artifact: { bytes: number; mimeType: string } | null;
   onPress: () => void;
+  highlight?: boolean;
 }) {
   if (!artifact) {
     return (
@@ -658,9 +724,12 @@ function ArtifactRow({
   return (
     <View style={styles.between}>
       <View style={styles.row}>
-        <Icon name={icon} size={18} tone="primary" />
+        <Icon name={icon} size={18} tone={highlight ? 'success' : 'primary'} />
         <View style={{ marginStart: 8 }}>
-          <Text variant="label">{label}</Text>
+          <View style={styles.row}>
+            <Text variant="label">{label}</Text>
+            {highlight ? <Badge label="AI" tone="success" style={{ marginStart: 6 }} /> : null}
+          </View>
           <Text variant="caption" tone="subtle">
             {formatBytes(artifact.bytes)} · {artifact.mimeType}
           </Text>
@@ -702,6 +771,7 @@ function JobRow({
         {job.artifacts.gif ? <Badge label="GIF" tone="info" /> : null}
         {job.artifacts.avi ? <Badge label="AVI" tone="info" /> : null}
         {job.artifacts.bundle ? <Badge label="ZIP" tone="info" /> : null}
+        {job.artifacts.mp4 ? <Badge label="MP4" tone="success" /> : null}
       </View>
     </Card>
   );
