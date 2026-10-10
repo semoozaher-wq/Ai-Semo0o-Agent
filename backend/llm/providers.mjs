@@ -295,6 +295,72 @@ function geminiText(value) {
   return String(value ?? '');
 }
 
+// --- Multimodal content normalisation ---------------------------------------
+// The chat pipeline may pass `content` as an OpenAI-style array of parts
+// ([{ type:'text', text }, { type:'image_url', image_url:{ url:'data:<mime>;base64,...' } }]).
+// OpenAI accepts that shape verbatim; Gemini and Anthropic need it translated
+// into their native inline-data / image blocks. These helpers do that and fall
+// back to a plain string for the common text-only case.
+function dataUrlToBase64(url) {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(String(url ?? ''));
+  if (!match) {
+    return null;
+  }
+  return { mimeType: match[1], data: match[2] };
+}
+
+function geminiPartsFromContent(content) {
+  if (typeof content === 'string') {
+    return content ? [{ text: content }] : [];
+  }
+  if (!Array.isArray(content)) {
+    return [{ text: geminiText(content) }];
+  }
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part) parts.push({ text: part });
+      continue;
+    }
+    if (part?.type === 'text') {
+      if (part.text) parts.push({ text: String(part.text) });
+      continue;
+    }
+    if (part?.type === 'image_url') {
+      const decoded = dataUrlToBase64(part.image_url?.url);
+      if (decoded) parts.push({ inlineData: { mimeType: decoded.mimeType, data: decoded.data } });
+      continue;
+    }
+  }
+  return parts;
+}
+
+function anthropicContentFromContent(content) {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return String(content ?? '');
+  }
+  const blocks = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part) blocks.push({ type: 'text', text: part });
+      continue;
+    }
+    if (part?.type === 'text') {
+      if (part.text) blocks.push({ type: 'text', text: String(part.text) });
+      continue;
+    }
+    if (part?.type === 'image_url') {
+      const decoded = dataUrlToBase64(part.image_url?.url);
+      if (decoded) blocks.push({ type: 'image', source: { type: 'base64', media_type: decoded.mimeType, data: decoded.data } });
+      continue;
+    }
+  }
+  return blocks.length ? blocks : '';
+}
+
 function sanitizeGeminiSchema(schema) {
   if (
     !schema ||
@@ -430,23 +496,14 @@ async function geminiComplete({
 
         return {
           role,
-          parts: [
-            {
-              text: geminiText(
-                message?.content
-              ),
-            },
-          ],
+          parts: geminiPartsFromContent(
+            message?.content
+          ),
         };
       })
       .filter(
         (message) =>
-          message.parts.some(
-            (part) =>
-              typeof part.text ===
-                'string' &&
-              part.text.length > 0
-          )
+          message.parts.length > 0
       );
 
   /*
@@ -585,11 +642,9 @@ async function anthropicComplete({
           ? 'assistant'
           : 'user',
       content:
-        typeof message.content === 'string'
-          ? message.content
-          : JSON.stringify(
-              message.content ?? ''
-            ),
+        anthropicContentFromContent(
+          message.content
+        ),
     }));
 
   const body = {
@@ -823,7 +878,7 @@ async function* anthropicStream({ apiKey, model, messages, tools, signal }) {
     .filter((message) => message.role !== 'system')
     .map((message) => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? ''),
+      content: anthropicContentFromContent(message.content),
     }));
 
   const body = {
@@ -906,9 +961,9 @@ async function* geminiStream({ apiKey, model, messages, tools, signal }) {
     .filter((message) => message?.role !== 'system')
     .map((message) => ({
       role: message?.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: geminiText(message?.content) }],
+      parts: geminiPartsFromContent(message?.content),
     }))
-    .filter((message) => message.parts.some((part) => typeof part.text === 'string' && part.text.length > 0));
+    .filter((message) => message.parts.length > 0);
 
   if (!contents.length) {
     contents.push({ role: 'user', parts: [{ text: 'Continue.' }] });
