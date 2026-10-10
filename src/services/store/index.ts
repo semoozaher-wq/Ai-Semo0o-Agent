@@ -334,6 +334,16 @@ export class StoreService {
     this.loaded = false;
     await storage.remove(STORAGE_KEYS.installedAgents);
   }
+
+  /**
+   * Drop the in-memory install cache WITHOUT touching storage. Called on
+   * sign-out so the next account re-reads its own (account-scoped) install
+   * state instead of inheriting the previous user's cached list.
+   */
+  forget(): void {
+    this.installed.clear();
+    this.loaded = false;
+  }
 }
 
 export const storeService = new StoreService();
