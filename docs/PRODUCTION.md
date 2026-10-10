@@ -127,7 +127,7 @@ are the credential-gated sub-parts above plus the operational notes in §6. See
 2. **SQLite concurrency** — `node:sqlite` is embedded; for high write concurrency plan a migration to
    a client/server DB. All DB access is isolated in `backend/db/client.mjs`.
 3. **Browser scale** — bounded by `BROWSER_POOL_CONCURRENCY`; use a remote CDP sidecar for scale.
-4. **Node version** — requires Node ≥ 22.5.0 (`node:sqlite` is experimental and prints a warning).
+4. **Node version** — requires Node ≥ 22.13.0 (`node:sqlite` is experimental and prints a warning).
 5. **Optional `typescript` dependency** — the project-intelligence parser degrades to
    `lexical-fallback` when the optional TS parser is unavailable; install dev deps for full fidelity.
 

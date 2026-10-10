@@ -13,8 +13,8 @@ These are the exact check names GitHub reports for the workflows in
 
 | Check | Workflow | What it proves |
 | --- | --- | --- |
-| `validate (22.5)` | `ci.yml` | The whole suite passes on the declared Node floor (`>=22.5.0`, first release with `node:sqlite`). |
-| `validate (22.11.0)` | `ci.yml` | The whole suite passes on the exact deployed runtime (`render.yaml` / `backend/Dockerfile`). |
+| `validate (22.13.0)` | `ci.yml` | The whole suite passes on the declared Node floor (`>=22.13.0`; `node:sqlite` needs `>=22.5.0`, and the RN/Metro toolchain requires `^22.13.0` on the 22.x line). |
+| `validate (22.23.2)` | `ci.yml` | The whole suite passes on the exact deployed runtime (`render.yaml` / `backend/Dockerfile`). |
 | `verify` | `quality.yml` | Secret/SAST scan, dependency-audit gate, backend import resolution, typecheck, lint, full test suite, Expo doctor, web export, browser smoke, browser E2E, agent E2E benchmark, backend boot smoke, and the self-improvement production trial. |
 
 Both workflows also run on every `push` to `master`, so a direct push (which the

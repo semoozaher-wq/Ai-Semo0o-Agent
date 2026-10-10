@@ -73,7 +73,7 @@ the full `npm test` chain is green.
   (`npm ci --dry-run` succeeds); `.npmrc` sets `save-exact=true`.
 - `.github/CODEOWNERS`, `scripts/protect-master-branch.sh`, and
   `docs/BRANCH_PROTECTION.md` define/apply `master` protection with required
-  checks `validate (22.5)`, `validate (22.11.0)`, `verify`.
+  checks `validate (22.13.0)`, `validate (22.23.2)`, `verify`.
 
 ## 7. Documentation + cleanup
 

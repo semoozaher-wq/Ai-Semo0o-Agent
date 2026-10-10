@@ -12,7 +12,7 @@ staging, and production, plus the operational topology and quality gates.
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
-| Node.js | **≥ 22.5.0** | required for built-in `node:sqlite` (`DatabaseSync`) |
+| Node.js | **≥ 22.13.0** | required for built-in `node:sqlite` (`DatabaseSync`) |
 | npm | ≥ 10.9.0 | |
 | Backend deps | **none** | pure `node:` builtins + relative imports |
 | Chromium | optional | only needed for `browser.run` / `browser.extract` |
@@ -119,7 +119,7 @@ Serve `dist/` as a static site (any CDN/static host). The client talks to the ba
 ### Container sketch (Dockerfile)
 
 ```dockerfile
-FROM node:22-slim
+FROM node:22.23.2-bookworm-slim
 WORKDIR /app
 COPY . .
 RUN npm ci --omit=dev
@@ -213,8 +213,9 @@ A successful Vercel deployment is **not** the release gate. Two independent,
 test-driven gates must pass:
 
 1. **CI (`.github/workflows/ci.yml` + `.github/workflows/quality.yml`)** runs the
-   full suite on **both** the declared minimum Node (`22.5`, the first release
-   with `node:sqlite`) **and** the exact production runtime (`22.11.0`, pinned in
+   full suite on **both** the declared minimum Node (`22.13.0`; `node:sqlite`
+   needs `>=22.5.0`, and the RN/Metro toolchain requires `^22.13.0` on the 22.x
+   line) **and** the exact production runtime (`22.23.2`, pinned in
    `backend/Dockerfile` and `render.yaml`). A regression on either version fails
    the build instead of shipping.
 2. **The Vercel build itself** runs `npm run release:gate` before it exports the

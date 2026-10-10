@@ -181,7 +181,7 @@ contract-tested, live credential absent; **BLOCKED** = needs external input; **F
 2. **SQLite concurrency.** `node:sqlite` is embedded; high write concurrency needs a client/server
    DB. All access is isolated in `backend/db/client.mjs`.
 3. **Browser scale.** Bounded by `BROWSER_POOL_CONCURRENCY`; use a remote CDP sidecar to scale.
-4. **Node version.** Requires Node ≥ 22.5.0 (`node:sqlite` is experimental and prints a warning).
+4. **Node version.** Requires Node ≥ 22.13.0 (`node:sqlite` is experimental and prints a warning).
 5. **Optional `typescript` dependency.** The project-intelligence parser degrades to
    `lexical-fallback` when the optional TS parser is unavailable.
 
