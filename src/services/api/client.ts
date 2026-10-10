@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { resolveBackendUrl } from './backend-url';
 import { consumeSse } from './sse';
+import { restoreSessionWith } from './session-restore';
 import { createAccountApi } from '../account/api';
 import type {
   ApiAccount,
@@ -352,22 +353,30 @@ class BackendApiClient {
   /**
    * Cold-start session restore. Loads the persisted token and validates it
    * against the server (`GET /auth/session`). Returns the user for a live
-   * session, or null when there is none/expired. NEVER creates an account —
-   * the previous device auto-registration backdoor is gone.
+   * session, or null when there is none.
+   *
+   * IMPORTANT: the token is cleared ONLY when the server definitively rejects it
+   * (HTTP 401 / an explicit session-invalid code). A network outage or a server
+   * failure (5xx, timeout, CORS) leaves the token intact so the user stays signed
+   * in and the session is re-validated once the server recovers — the client must
+   * never silently sign a user out on a flaky connection. NEVER creates an
+   * account — the previous device auto-registration backdoor is gone.
    */
   async restoreSession(): Promise<ApiUser | null> {
     if (this.token && this.user) return this.user;
-    const stored = await readStoredToken();
-    if (!stored) return null;
-    this.token = stored;
-    try {
-      const { user } = await this.request<{ user: ApiUser }>('/auth/session');
-      this.user = user;
-      return user;
-    } catch {
-      this.clearSession();
-      return null;
-    }
+    const result = await restoreSessionWith<ApiUser>({
+      readToken: () => readStoredToken(),
+      validate: async (token) => {
+        // Present the persisted token for this validation call only; a
+        // non-definitive failure keeps it in memory (see `keepSession`).
+        this.token = token;
+        const { user } = await this.request<{ user: ApiUser }>('/auth/session');
+        return user;
+      },
+      clearSession: () => this.clearSession(),
+      keepSession: (token) => { this.token = token; this.user = null; },
+    });
+    return result.kind === 'restored' ? result.user : null;
   }
   /** Returns the authenticated user or throws AUTH_REQUIRED (gate enforcement). */
   async requireSession(): Promise<ApiUser> {
