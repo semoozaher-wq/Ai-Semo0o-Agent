@@ -24,6 +24,8 @@ import { Progress } from '../components/ui/Progress';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
 import { Skeleton } from '../components/ui/Skeleton';
 import { useCreationStore } from '../store/useCreationStore';
+import { backendApi } from '../services/api/client';
+import { downloadBytes } from '../services/workspace/zip';
 import type {
   ApiCreationJob,
   ApiCreationJobInput,
@@ -156,7 +158,6 @@ export function Creation() {
   const select = useCreationStore((s) => s.select);
   const cancel = useCreationStore((s) => s.cancel);
   const clearNotice = useCreationStore((s) => s.clearNotice);
-  const artifactUrl = useCreationStore((s) => s.artifactUrl);
 
   const [goal, setGoal] = React.useState('');
   const [format, setFormat] = React.useState<NonNullable<ApiCreationJobInput['format']>>('landscape');
@@ -205,12 +206,18 @@ export function Creation() {
   const openArtifact = React.useCallback(
     async (jobId: string, name: 'gif' | 'avi' | 'bundle' | 'mp4') => {
       try {
-        await Linking.openURL(artifactUrl(jobId, name));
+        // The artefact route is Bearer-authenticated (no cookies), so the bare
+        // URL cannot be opened directly — fetch the bytes with the session
+        // token, then trigger a real download (web) or open the data URL so the
+        // platform's viewer/save sheet takes over (native).
+        const { bytes, mimeType, filename } = await backendApi.fetchCreationArtifact(jobId, name);
+        const result = downloadBytes(bytes, filename, mimeType);
+        if (!result.url) await Linking.openURL(result.dataUrl);
       } catch {
         /* the browser blocks popups occasionally; the link is still copyable */
       }
     },
-    [artifactUrl],
+    [],
   );
 
   const providers = capabilities?.providers;

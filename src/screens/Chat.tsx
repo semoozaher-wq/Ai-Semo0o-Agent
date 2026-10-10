@@ -209,9 +209,9 @@ export function Chat() {
   const isEmpty = list.length === 0;
 
   const handleSubmit = React.useCallback(
-    (text: string, attachments: Attachment[]) => {
+    (text: string, attachments: Attachment[], mode: 'chat' | 'agent') => {
       if (streaming) return;
-      void send(text, { attachments });
+      void send(text, { attachments, mode });
     },
     [send, streaming],
   );

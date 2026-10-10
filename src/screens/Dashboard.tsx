@@ -71,9 +71,9 @@ export function Dashboard() {
     router.push('/chat');
   };
 
-  const startChatWithAttachments = (text: string, attachments: Attachment[]) => {
+  const startChatWithAttachments = (text: string, attachments: Attachment[], mode: 'chat' | 'agent' = 'chat') => {
     if (!newConversation()) return;
-    if (text || attachments.length > 0) void send(text, { attachments });
+    if (text || attachments.length > 0) void send(text, { attachments, mode });
     router.push('/chat');
   };
 
