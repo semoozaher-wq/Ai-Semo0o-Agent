@@ -38,7 +38,7 @@ export interface CreationState {
   select(jobId: string): Promise<void>;
   cancel(jobId: string): Promise<void>;
   clearNotice(): void;
-  artifactUrl(jobId: string, name: 'gif' | 'avi' | 'bundle'): string;
+  artifactUrl(jobId: string, name: 'gif' | 'avi' | 'bundle' | 'mp4'): string;
 }
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
