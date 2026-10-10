@@ -143,6 +143,11 @@ export class Database {
       // so Experience + Evaluation + Reflection share one outcome scale.
       'ALTER TABLE agent_reflections ADD COLUMN quality_score REAL',
       'ALTER TABLE agent_reflections ADD COLUMN reward REAL',
+      // Spending limits (commercial readiness): a hard monthly USD cap per tenant
+      // plus the accumulated spend for the period. Additive + idempotent so an
+      // existing database picks up the new columns without a rebuild.
+      'ALTER TABLE usage_quotas ADD COLUMN monthly_cost_usd REAL NOT NULL DEFAULT 10',
+      'ALTER TABLE usage_counters ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0',
     ]) {
       try { this.db.exec(statement); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
     }
@@ -151,8 +156,8 @@ export class Database {
     this.db.exec('CREATE TABLE IF NOT EXISTS tenant_members (tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT \'active\', created_at TEXT NOT NULL, PRIMARY KEY (tenant_id, user_id))');
     this.db.exec('CREATE TABLE IF NOT EXISTS invitations (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, invited_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, email TEXT NOT NULL, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, accepted_at TEXT, created_at TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS account_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL)');
-    this.db.exec('CREATE TABLE IF NOT EXISTS usage_quotas (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE, monthly_tokens INTEGER NOT NULL DEFAULT 100000, monthly_runs INTEGER NOT NULL DEFAULT 1000, updated_at TEXT NOT NULL)');
-    this.db.exec('CREATE TABLE IF NOT EXISTS usage_counters (tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, period TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0, runs INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY (tenant_id, period))');
+    this.db.exec('CREATE TABLE IF NOT EXISTS usage_quotas (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE, monthly_tokens INTEGER NOT NULL DEFAULT 100000, monthly_runs INTEGER NOT NULL DEFAULT 1000, monthly_cost_usd REAL NOT NULL DEFAULT 10, updated_at TEXT NOT NULL)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS usage_counters (tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, period TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0, runs INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY (tenant_id, period))');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_members_user ON tenant_members(user_id, status); CREATE INDEX IF NOT EXISTS idx_invitations_tenant_email ON invitations(tenant_id, email, accepted_at); CREATE INDEX IF NOT EXISTS idx_account_tokens_lookup ON account_tokens(token_hash, kind, used_at)');
     // Functional indexes for case-insensitive lookups (auth + outbox export) that
     // would otherwise full-scan; idempotent so existing databases pick them up.

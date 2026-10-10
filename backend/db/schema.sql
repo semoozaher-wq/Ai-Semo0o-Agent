@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS usage_quotas (
   tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
   monthly_tokens INTEGER NOT NULL DEFAULT 100000,
   monthly_runs INTEGER NOT NULL DEFAULT 1000,
+  -- Hard spending cap (USD) per billing period. A run/chat that would push the
+  -- tenant past this limit is refused (MONTHLY_COST_QUOTA_EXCEEDED) so a runaway
+  -- job can never burn unbounded provider budget.
+  monthly_cost_usd REAL NOT NULL DEFAULT 10,
   updated_at TEXT NOT NULL
 );
 
@@ -75,6 +79,8 @@ CREATE TABLE IF NOT EXISTS usage_counters (
   period TEXT NOT NULL,
   tokens INTEGER NOT NULL DEFAULT 0,
   runs INTEGER NOT NULL DEFAULT 0,
+  -- Accumulated provider spend (USD) for the period, summed from run_usage.
+  cost_usd REAL NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (tenant_id, period)
 );
@@ -542,3 +548,63 @@ CREATE TABLE IF NOT EXISTS agent_reflections (
 
 CREATE INDEX IF NOT EXISTS idx_agent_reflections_project ON agent_reflections(tenant_id, project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_reflections_run ON agent_reflections(run_id);
+
+-- =============================================================================
+-- Creation Studio durable job registry (backend/creation/job-store.mjs)
+-- -----------------------------------------------------------------------------
+-- The Director is a long, stateful process (brief -> storyboard -> render ->
+-- critique -> improve -> deliver). Its jobs used to live ONLY in a bounded,
+-- in-memory Map, so every job and every generated artifact (GIF/AVI/MP4/bundle)
+-- vanished the moment the process restarted. These three tables turn that
+-- transient registry into a durable, restart-surviving record:
+--   * creation_jobs           - one row per job (state + result manifest);
+--   * creation_job_events     - the append-only, replayable event log;
+--   * creation_job_artifacts  - the artifact bytes themselves (BLOB) + a SHA-256
+--                               so a restore can prove the file is intact.
+-- Storing the bytes IN the database keeps a job and its deliverables atomic with
+-- the rest of the platform: the existing encrypted backup (VACUUM INTO) captures
+-- everything in one consistent snapshot and a restore brings the whole job back.
+-- All statements are idempotent so an existing database picks them up on boot.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS creation_jobs (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT,
+  user_id TEXT,
+  goal TEXT NOT NULL,
+  options_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  elapsed_ms INTEGER NOT NULL DEFAULT 0,
+  progress_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_creation_jobs_tenant ON creation_jobs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_creation_jobs_status ON creation_jobs(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS creation_job_events (
+  job_id TEXT NOT NULL,
+  tenant_id TEXT,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  at TEXT NOT NULL,
+  PRIMARY KEY (job_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_creation_job_events_job ON creation_job_events(job_id, seq);
+
+CREATE TABLE IF NOT EXISTS creation_job_artifacts (
+  job_id TEXT NOT NULL,
+  tenant_id TEXT,
+  name TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  mime_type TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  content BLOB,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (job_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_creation_job_artifacts_job ON creation_job_artifacts(job_id);
