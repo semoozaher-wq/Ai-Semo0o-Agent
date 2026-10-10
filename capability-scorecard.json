@@ -1,7 +1,8 @@
 {
   "scorecard": {
-    "generatedAt": "2026-10-07T20:24:28.970Z",
-    "score": 97,
+    "generatedAt": "2026-10-10T07:41:36.994Z",
+    "score": 94,
+    "provenScore": 85,
     "level": "production",
     "models": {
       "configured": 0,
@@ -17,110 +18,143 @@
         "id": "codebase-understanding",
         "name": "Smart Codebase Understanding",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "tool:code.analyze=live"
+          "tool:code.analyze=live",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
         "id": "dependency-graph",
         "name": "Dependency Graph",
         "weight": 2,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:dependencyGraph=true"
+          "runtime:dependencyGraph=true",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
         "id": "impact-analysis",
         "name": "Impact Analysis",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "tool:code.impact=live"
+          "tool:code.impact=live",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
         "id": "change-intelligence",
         "name": "Change Intelligence / ChangeSet",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "tool:code.changeset=live"
+          "tool:code.changeset=live",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
         "id": "long-running",
         "name": "Long-Running Autonomous Execution",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:longRunning=true"
+          "runtime:longRunning=true",
+          "proof:agent-benchmark:long-running=true"
         ]
       },
       {
         "id": "self-healing",
         "name": "Self-Healing + Recovery",
         "weight": 3,
-        "status": "live",
-        "score": 100,
+        "status": "wired",
+        "wired": true,
+        "proven": false,
+        "score": 70,
         "evidence": [
-          "runtime:selfHealing=true"
+          "runtime:selfHealing=true",
+          "proof:agent-benchmark:self-healing=false"
         ]
       },
       {
         "id": "deep-reasoning",
         "name": "Deep Codebase Reasoning",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "tool:code.reason=live"
+          "tool:code.reason=live",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
         "id": "multi-step-verification",
         "name": "Multi-Step Verification",
         "weight": 3,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:multiStepVerification=true"
+          "runtime:multiStepVerification=true",
+          "proof:agent-benchmark:agent-loop=true"
         ]
       },
       {
         "id": "computer-use",
         "name": "Agentic Computer Use / Browser Control",
         "weight": 2,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "tool:browser.run=live"
+          "tool:browser.run=unwired",
+          "proof:browser-e2e=true"
         ]
       },
       {
         "id": "multi-agent",
         "name": "Multi-Agent Orchestration",
         "weight": 2,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:multiAgent=true"
+          "runtime:multiAgent=true",
+          "proof:agent-benchmark:multi-agent=true"
         ]
       },
       {
         "id": "agent-evaluation",
         "name": "Agent Evaluation & Benchmark Engine",
         "weight": 2,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:agentEvaluation=true"
+          "runtime:agentEvaluation=true",
+          "proof:agent-benchmark:code-intelligence=true"
         ]
       },
       {
@@ -128,25 +162,32 @@
         "name": "Production-grade Integrations",
         "weight": 2,
         "status": "partial",
+        "wired": false,
+        "proven": false,
         "score": 50,
         "evidence": [
-          "connectors:0/8 configured"
+          "connectors:0/8 configured",
+          "proof:agent-benchmark:integrations=false"
         ]
       },
       {
         "id": "capability-benchmarking",
         "name": "Capability Benchmarking",
         "weight": 2,
-        "status": "live",
+        "status": "proven",
+        "wired": true,
+        "proven": true,
         "score": 100,
         "evidence": [
-          "runtime:capabilityBenchmarking=true"
+          "runtime:capabilityBenchmarking=true",
+          "proof:capability-benchmark=true"
         ]
       }
     ],
     "summary": {
       "total": 13,
-      "live": 12,
+      "proven": 11,
+      "wired": 1,
       "partial": 1,
       "unwired": 0,
       "failed": 0
@@ -154,8 +195,8 @@
   },
   "benchmark": {
     "name": "capability-scorecard",
-    "startedAt": "2026-10-07T20:24:28.971Z",
-    "finishedAt": "2026-10-07T20:24:28.971Z",
+    "startedAt": "2026-10-10T07:41:36.995Z",
+    "finishedAt": "2026-10-10T07:41:36.995Z",
     "durationMs": 0,
     "tasks": [
       {
@@ -165,7 +206,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -175,7 +216,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -193,7 +234,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -203,7 +244,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -221,7 +262,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -231,7 +272,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -249,7 +290,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -259,7 +300,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -277,7 +318,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -287,7 +328,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -305,7 +346,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "wired"
         },
         "error": null,
         "score": 100,
@@ -315,7 +356,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=wired"
           },
           {
             "id": "not-failed",
@@ -333,7 +374,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -343,7 +384,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -361,7 +402,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -371,7 +412,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -389,7 +430,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -399,7 +440,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -417,7 +458,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -427,7 +468,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -445,7 +486,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -455,7 +496,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -501,7 +542,7 @@
         "ok": true,
         "durationMs": 0,
         "result": {
-          "status": "live"
+          "status": "proven"
         },
         "error": null,
         "score": 100,
@@ -511,7 +552,7 @@
             "name": "available",
             "passed": true,
             "weight": 1,
-            "detail": "status=live"
+            "detail": "status=proven"
           },
           {
             "id": "not-failed",
@@ -542,5 +583,22 @@
         }
       }
     }
+  },
+  "proof": {
+    "agentBenchmark": {
+      "passed": true,
+      "scenarios": {
+        "agentLoop": true,
+        "multiAgent": true,
+        "longRunning": true,
+        "codeIntelligence": true,
+        "selfHealing": false,
+        "integrations": false
+      }
+    },
+    "browserE2e": {
+      "passed": true
+    },
+    "capabilityBenchmark": true
   }
 }

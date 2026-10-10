@@ -32,7 +32,7 @@
     "test:execution": "node --experimental-sqlite --test test/*.test.mjs",
     "test:phase2": "node --test test/phase2-core.test.mjs test/phase2-intelligence.test.mjs",
     "test:phase1": "tsx --test test/phase1-orchestrator.test.ts test/code-run-integration.test.ts test/model-router.test.ts test/recovery-contract.test.ts",
-    "test:frontend": "tsx --test test/backend-url.test.ts test/chat-stream.test.ts test/chat-recovery.test.ts test/account-security.test.ts test/auth-gate.test.ts test/device-approval-readiness.test.ts",
+    "test:frontend": "tsx --test test/backend-url.test.ts test/chat-stream.test.ts test/chat-recovery.test.ts test/chat-attachments.test.ts test/chat-thumbnails.test.ts test/project-cache.test.ts test/agent-mode-wiring.test.ts test/artifact-download.test.ts test/account-security.test.ts test/auth-gate.test.ts test/device-approval-readiness.test.ts",
     "test:backend": "node --experimental-sqlite --test backend/test/*.test.mjs",
     "create:admin": "node --experimental-sqlite scripts/create-admin.mjs",
     "start:backend": "node --experimental-sqlite backend/server.mjs",
