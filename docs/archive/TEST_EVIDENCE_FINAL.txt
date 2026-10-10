@@ -1,0 +1,25 @@
+Ai-Semo0o-Agent — Final Test Evidence
+Date: 2026-10-03
+Base: master / 3710317
+
+PASS:
+- npm ci --ignore-scripts
+- npm run typecheck
+- npm run test:backend (11/11)
+- npm run lint
+- npm run doctor -- --verbose (21/21)
+- npm test (all existing suites plus new idempotency test)
+- npm run build (17 static routes)
+- npm run test:browser-smoke (Chromium /chat)
+
+New regression coverage:
+- POST /runs accepts Idempotency-Key.
+- Same tenant + same key returns the original run and does not create a second run.
+- SQLite migration adds idempotency_key safely to existing databases.
+- Project roots default to a project-scoped directory under WORKSPACE_ROOT.
+
+Known non-PASS evidence:
+- npm audit reports 30 advisories: 19 high, 11 moderate. No --force remediation was applied.
+- Live Docker/Podman execution was not run because the Sandbox has no daemon.
+- Real external provider E2E was not claimed because production credentials/host are not part of this audit.
+- Native iOS/Android E2E was not run because no simulator/device is attached.
