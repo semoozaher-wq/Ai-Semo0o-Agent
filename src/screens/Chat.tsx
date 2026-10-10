@@ -28,6 +28,18 @@ import { formatRelativeTime } from '../utils/format';
 import { ProviderId } from '../types/model';
 import { Attachment, Conversation } from '../types/chat';
 
+/**
+ * Stable, build-time sentinel for the chat surface.
+ *
+ * `scripts/verify-web-bundle.mjs` asserts this exact token is present in the
+ * exported web bundle, so a STALE or OLD chat bundle can never be shipped
+ * silently again (the historical "old chat UI" regression, where a cached/old
+ * bundle kept rendering the pre-rail chat). It is attached to the root
+ * container as a `testID` (rendered as `data-testid` on web) so the bundler
+ * always keeps the literal. Do NOT change it without updating the verifier.
+ */
+export const CHAT_UI_BUNDLE_SENTINEL = 'semo0o-chat-ui-v2-rail-composer';
+
 interface ConversationsListProps {
   conversations: Conversation[];
   activeId: string | null;
@@ -218,7 +230,7 @@ export function Chat() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={styles.body}>
+        <View style={styles.body} testID={CHAT_UI_BUNDLE_SENTINEL}>
           {responsive.showSideRail ? (
             <View
               style={[
