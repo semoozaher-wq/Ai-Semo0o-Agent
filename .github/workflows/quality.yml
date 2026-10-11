@@ -85,6 +85,13 @@ jobs:
           sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser
           echo "CHROMIUM_BIN=chromium" >> "$GITHUB_ENV"
 
+      # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, so
+      # Chromium's namespace sandbox aborts with "No usable sandbox!". Enable
+      # Chromium's SUID sandbox (a REAL sandbox) instead of weakening security
+      # with --no-sandbox. Best-effort: a no-op when the helper is already setuid.
+      - name: Enable Chromium SUID sandbox (keeps the sandbox on)
+        run: sudo node scripts/enable-browser-sandbox.mjs || true
+
       - name: Browser integration smoke test
         run: node scripts/browser-smoke.mjs
 
