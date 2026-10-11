@@ -16,7 +16,15 @@ services:
     startCommand: node --experimental-sqlite backend/server.mjs
 
     healthCheckPath: /health
-    autoDeploy: true
+    # Gated CD: production deploys are triggered by .github/workflows/deploy.yml
+    # ONLY after BOTH the "CI" and "Quality" workflows are green for the same
+    # commit on master (via the RENDER_DEPLOY_HOOK secret). Push-based auto-deploy
+    # is therefore disabled so a red build can never reach production.
+    #
+    # Prefer the dashboard alternative? Set "Auto-Deploy: After CI Checks Pass" on
+    # the service and flip this back to `true`; Render then waits for the GitHub
+    # check suite (which includes CI + Quality) before deploying.
+    autoDeploy: false
 
     envVars:
       - key: NODE_VERSION
