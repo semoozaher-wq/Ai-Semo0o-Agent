@@ -115,6 +115,17 @@ export function validateEnv(env = process.env) {
   if (!LLM_KEY_VARS.some((key) => env[key])) warnings.push('NO_LLM_PROVIDER_CONFIGURED');
   if (env.TAVILY_API_KEY === '') warnings.push('TAVILY_API_KEY_EMPTY');
 
+  // Optional durable cloud persistence (Supabase/Neon/PostgreSQL). A malformed
+  // value is surfaced as a WARNING rather than a fatal error: the backend still
+  // boots on local SQLite, but the operator is told their cloud snapshots will
+  // NOT be uploaded (a silent typo would otherwise hide the loss of durability).
+  if (env.DATABASE_URL) {
+    let protocol = null;
+    try { protocol = new URL(env.DATABASE_URL).protocol; } catch { protocol = null; }
+    if (!protocol) warnings.push('DATABASE_URL_INVALID');
+    else if (!['postgres:', 'postgresql:'].includes(protocol)) warnings.push('DATABASE_URL_UNSUPPORTED_PROTOCOL');
+  }
+
   // Numeric tuning knobs: a malformed value is always an error (in every
   // environment) because it means the operator's intent was not applied.
   for (const key of validateNumericEnv(env)) errors.push(`INVALID_NUMERIC_${key}`);
