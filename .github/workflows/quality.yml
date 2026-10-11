@@ -69,31 +69,59 @@ jobs:
       - name: Web export
         run: npm run build
 
-      # The browser smoke test shells out to a Chromium-based binary. Prefer a
-      # preinstalled one (ubuntu-latest ships google-chrome); otherwise install it.
-      - name: Ensure a Chromium-based browser is available
+      # CRITICAL CI RULE: a real Chromium-based binary MUST be present AND
+      # resolvable BEFORE the SUID sandbox script runs. `resolveBrowserBinary()`
+      # in backend/browser/launcher.mjs consults only CHROME_BIN / CHROMIUM_BIN /
+      # BROWSER_BIN and a fixed PATH list -- it does NOT scan the Playwright
+      # cache -- so this step resolves the concrete path and exports it to
+      # $GITHUB_ENV. It reuses a preinstalled browser first, then falls back to
+      # google-chrome-stable, then to Playwright Chromium (with OS deps), and
+      # hard-fails if none can be resolved. That guarantees the
+      # BROWSER_SANDBOX_REQUIRED gate below can never trip on a missing binary.
+      - name: Install Chromium browser (required before sandbox activation)
         run: |
           set -euo pipefail
-          for bin in chromium chromium-browser google-chrome google-chrome-stable; do
-            if command -v "$bin" >/dev/null 2>&1; then
-              echo "CHROMIUM_BIN=$bin" >> "$GITHUB_ENV"
-              echo "Using preinstalled browser: $bin"
-              exit 0
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser
-          echo "CHROMIUM_BIN=chromium" >> "$GITHUB_ENV"
+          resolve_bin() {
+            for bin in chromium chromium-browser google-chrome google-chrome-stable; do
+              if command -v "$bin" >/dev/null 2>&1; then command -v "$bin"; return 0; fi
+            done
+            return 1
+          }
+          BIN="$(resolve_bin || true)"
+          if [ -z "${BIN:-}" ]; then
+            echo "No preinstalled Chromium found; installing google-chrome-stable..."
+            sudo apt-get update
+            sudo apt-get install -y google-chrome-stable \
+              || npx --yes playwright install --with-deps chromium
+            BIN="$(resolve_bin || true)"
+          fi
+          if [ -z "${BIN:-}" ]; then
+            echo "Resolving Playwright Chromium path..."
+            BIN="$(find "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" \
+              -maxdepth 3 -type f -name chrome -path '*chrome-linux*' 2>/dev/null | head -n1 || true)"
+          fi
+          if [ -z "${BIN:-}" ] || [ ! -x "$BIN" ]; then
+            echo "::error::Could not install or resolve a Chromium-based browser binary."
+            exit 1
+          fi
+          echo "CHROME_BIN=$BIN" >> "$GITHUB_ENV"
+          echo "CHROMIUM_BIN=$BIN" >> "$GITHUB_ENV"
+          echo "Resolved browser: $BIN"
 
       # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, so
       # Chromium's namespace sandbox aborts with "No usable sandbox!". Enable
       # Chromium's SUID sandbox (a REAL sandbox) instead of weakening security
-      # with --no-sandbox. NOT masked with `|| true`: the step above guarantees a
-      # browser is installed, so BROWSER_SANDBOX_REQUIRED turns a failure to
+      # with --no-sandbox. NOT masked with `|| true`: the install step above
+      # guarantees a binary exists, so BROWSER_SANDBOX_REQUIRED turns a failure to
       # enable the sandbox into a hard CI failure instead of a silent downgrade.
-      # (The var is passed inline because `sudo` resets the environment.)
+      #
+      # The resolved CHROME_BIN/CHROMIUM_BIN are passed INLINE through `sudo`
+      # because `sudo` resets the environment (env_reset) and would otherwise
+      # strip the values exported to $GITHUB_ENV -- which, for a Playwright-only
+      # install (no `google-chrome` on PATH), makes the script report "no browser
+      # found" and fail the gate.
       - name: Enable Chromium SUID sandbox (keeps the sandbox on)
-        run: sudo BROWSER_SANDBOX_REQUIRED=true node scripts/enable-browser-sandbox.mjs
+        run: sudo BROWSER_SANDBOX_REQUIRED=true CHROME_BIN="$CHROME_BIN" CHROMIUM_BIN="$CHROMIUM_BIN" node scripts/enable-browser-sandbox.mjs
 
       - name: Browser integration smoke test
         run: node scripts/browser-smoke.mjs
