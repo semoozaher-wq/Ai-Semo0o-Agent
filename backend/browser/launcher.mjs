@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, chownSync, copyFileSync, existsSync, lstatSync, realpathSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, copyFileSync, existsSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -106,12 +106,54 @@ function sandboxHelperCandidates(binary) {
   return helpers;
 }
 
-/** True when a root-owned, setuid (4755) sandbox helper sits next to the binary. */
+// The ELF magic number (`0x7f 'E' 'L' 'F'`). Chromium's sandbox helper is always
+// a native ELF executable. Verifying the signature BEFORE granting setuid-root
+// prevents a non-ELF file (for example a shell script dropped by a
+// lower-privileged user) from ever being elevated to setuid-root.
+const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+
+/** True when `file` is a regular, non-symlink file whose first 4 bytes are ELF. */
+export function isElfExecutable(file) {
+  try {
+    if (!lstatSync(file).isFile()) return false; // never follow/trust a symlink
+    const fd = openSync(file, 'r');
+    try {
+      const header = Buffer.alloc(4);
+      return readSync(fd, header, 0, 4, 0) === 4 && header.equals(ELF_MAGIC);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A directory is safe to install a setuid-root helper into only when it is owned
+ * by root and is not writable by group or other. Otherwise a lower-privileged
+ * user could swap the helper for a malicious binary before an admin runs the
+ * setup (or between this check and the browser launch), turning the setuid grant
+ * into a privilege-escalation primitive.
+ */
+export function isSafeHelperDirectory(dir) {
+  try {
+    const stats = lstatSync(dir);
+    return stats.isDirectory() && stats.uid === 0 && (stats.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when a root-owned, setuid (4755), genuine-ELF sandbox helper sits next to
+ * the binary. The ELF check keeps a non-ELF setuid file from being trusted as a
+ * working sandbox helper.
+ */
 export function isSuidSandboxReady(binary) {
   for (const helper of sandboxHelperCandidates(binary)) {
     try {
       const stats = lstatSync(helper);
-      if (stats.isFile() && (stats.mode & 0o4000) !== 0 && stats.uid === 0) return true;
+      if (stats.isFile() && (stats.mode & 0o4000) !== 0 && stats.uid === 0 && isElfExecutable(helper)) return true;
     } catch { /* helper absent */ }
   }
   return false;
@@ -128,12 +170,17 @@ export function isSuidSandboxReady(binary) {
 export function enableSuidSandbox(binary) {
   if (isSuidSandboxReady(binary)) return true;
   for (const dir of binaryDirs(binary)) {
+    // Only ever elevate a helper inside a root-owned, non-group/world-writable
+    // directory. Granting setuid-root to a file an unprivileged user could have
+    // planted -- or can later replace -- would be a privilege-escalation vector.
+    if (!isSafeHelperDirectory(dir)) continue;
     const hyphen = path.join(dir, 'chrome-sandbox');
     const underscore = path.join(dir, 'chrome_sandbox');
     try {
       // Some builds ship the helper as `chrome_sandbox`; Chromium expects
-      // `chrome-sandbox`. Materialise it (never following a symlink source).
-      if (!existsSync(hyphen) && existsSync(underscore) && lstatSync(underscore).isFile()) {
+      // `chrome-sandbox`. Materialise it only from a genuine ELF helper (never
+      // following a symlink source).
+      if (!existsSync(hyphen) && isElfExecutable(underscore)) {
         copyFileSync(underscore, hyphen);
       }
     } catch { /* not writable */ }
@@ -141,6 +188,8 @@ export function enableSuidSandbox(binary) {
       try {
         const stats = lstatSync(helper);
         if (!stats.isFile()) continue; // never chmod a symlink
+        // Verify the ELF signature before granting setuid-root.
+        if (!isElfExecutable(helper)) continue;
         chownSync(helper, 0, 0);
         chmodSync(helper, 0o4755);
       } catch { /* not privileged enough / absent */ }
