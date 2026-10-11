@@ -1551,11 +1551,14 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   assertEnv();
   // Resolve the SQLite path WITHOUT opening it, so a durable cloud snapshot can be
   // restored into an empty (freshly redeployed) container BEFORE the database is
-  // opened. When DATABASE_URL is unset, or the optional `pg` driver is absent, or
-  // the cloud is unreachable, this is a safe no-op and the backend boots on local
-  // SQLite exactly as before.
+  // opened. When DATABASE_URL is unset, or the `pg` driver is absent, or the cloud
+  // is unreachable, this is a safe no-op and the backend boots on local SQLite
+  // exactly as before.
+  //
+  // The environment is passed EXPLICITLY (rather than relying on the default) so the
+  // cloud layer can never observe a different env than the one validated above.
   const databaseFile = resolveDatabaseFile();
-  const cloud = await startCloudPersistence({ databaseFile });
+  const cloud = await startCloudPersistence({ databaseFile, env: process.env });
   const db = new Database(databaseFile);
   // Optional first-owner bootstrap from environment variables. This lets a host
   // like Render create the very first account from the dashboard (no Shell), and
@@ -1622,8 +1625,19 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   process.once('SIGINT', shutdown);
   app.server.listen(port, host, () => {
     console.log(`backend listening on ${host}:${port}`);
-    console.log(`backend database: ${db.file}`);
-    if (cloud.enabled) console.log(`backend cloud persistence: enabled (${cloud.config?.redacted ?? 'configured'})`);
-    else console.log(`backend cloud persistence: disabled (${cloud.reason})`);
+    // SQLite is the OPERATIONAL store; PostgreSQL (when configured) is the durable
+    // snapshot layer on top of it. Label BOTH explicitly so an operator never
+    // mistakes the SQLite path for a failure to use PostgreSQL.
+    console.log(`backend operational store (sqlite): ${db.file}`);
+    if (cloud.enabled) {
+      console.log(`backend cloud persistence: ENABLED -> ${cloud.config?.redacted ?? 'configured'} (restore: ${cloud.restore?.reason ?? 'n/a'})`);
+    } else if (process.env.DATABASE_URL) {
+      // DATABASE_URL is set but persistence is OFF. This is almost always a
+      // misconfiguration (missing `pg` driver, malformed URL, ...) and silently
+      // running SQLite-only would lose all data on the next redeploy. Warn loudly.
+      console.warn(`backend cloud persistence: DISABLED (${cloud.reason}) although DATABASE_URL is set — durable snapshots are NOT being uploaded!`);
+    } else {
+      console.log('backend cloud persistence: disabled (DATABASE_URL not set)');
+    }
   });
 }
