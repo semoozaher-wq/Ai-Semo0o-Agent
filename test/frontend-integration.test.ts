@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 
 import { BackendApiClient, backendApi, createMemoryTokenStorage } from '../src/services/api/client';
-import type { ApiSession, ApiUser } from '../src/services/api/client';
+import type { ApiChatStreamFrame, ApiEvent, ApiSession, ApiUser } from '../src/services/api/client';
 import type { RestoreResult } from '../src/services/api/session-restore';
 import { accountScopeFor, clearAccountScope, getAccountScope } from '../src/services/storage';
 import { useAuthStore } from '../src/store/useAuthStore';
@@ -365,4 +365,79 @@ test('the storage layer derives every physical key through the scope resolver', 
   assert.ok(source.includes("import { scopeStorageKey } from './scope'"), 'must import the resolver');
   const derivations = source.match(/scopeStorageKey\(key\)/g) ?? [];
   assert.equal(derivations.length, 2, 'both Web + Native stores must scope their keys');
+});
+
+// -----------------------------------------------------------------------------
+// B2. SSE resilience: the real client reconnects + resumes after a dropped
+//     stream, and recovers a dropped chat answer by fetching the durable row.
+// -----------------------------------------------------------------------------
+
+function createSseBackend(): { server: Server; state: { conversationFetches: number; eventResumes: (string | undefined)[] } } {
+  const state = { conversationFetches: 0, eventResumes: [] as (string | undefined)[] };
+  const server = createServer((req, res) => {
+    const url = req.url ?? '';
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const json = (status: number, payload: unknown) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(payload)); };
+    if (token !== TOKEN) return json(401, { error: 'UNAUTHORIZED' });
+    if (req.method === 'GET' && url === '/runs/run1/events') {
+      const last = req.headers['last-event-id'];
+      state.eventResumes.push(typeof last === 'string' ? last : undefined);
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      if (last === '2') return res.end('id: 3\ndata: {"n":3}\n\nevent: close\ndata: {"status":"completed"}\n\n');
+      // Deliver two events, then close the stream WITHOUT a terminal frame
+      // (exactly what a proxy timeout looks like) so the client must reconnect.
+      return res.end('id: 1\ndata: {"n":1}\n\nid: 2\ndata: {"n":2}\n\n');
+    }
+    if (req.method === 'POST' && url === '/chat/stream') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      // Start frame + one token, then drop the socket before the answer finishes.
+      return res.end('id: 1\nevent: start\ndata: {"conversationId":"c1","assistantMessageId":"m1"}\n\nid: 2\nevent: token\ndata: {"text":"partial "}\n\n');
+    }
+    if (req.method === 'GET' && url === '/conversations/c1') {
+      state.conversationFetches += 1;
+      const message = state.conversationFetches === 1
+        ? { id: 'm1', content: 'partial more', status: 'streaming' }
+        : { id: 'm1', content: 'partial more done', status: 'complete' };
+      return json(200, { messages: [message] });
+    }
+    return json(404, { error: 'NOT_FOUND' });
+  });
+  return { server, state };
+}
+
+test('real BackendApiClient: streamEvents reconnects and resumes from the last event id', async () => {
+  const { server, state } = createSseBackend();
+  const base = await listen(server);
+  const client = new BackendApiClient(base, createMemoryTokenStorage(TOKEN));
+  client.setSession({ token: TOKEN, expiresAt: '2030-01-01T00:00:00.000Z' }, USER);
+  try {
+    const events: ApiEvent[] = [];
+    await client.streamEvents('run1', (event) => events.push(event));
+    const numbers = events.map((event) => (event as { n?: number }).n).filter((n): n is number => n !== undefined);
+    assert.deepEqual(numbers, [1, 2, 3], 'no event may be lost or duplicated across the reconnect');
+    assert.deepEqual(state.eventResumes, [undefined, '2'], 'the reconnect must send Last-Event-ID: 2');
+  } finally {
+    await close(server);
+  }
+});
+
+test('real BackendApiClient: chatStream recovers a dropped answer by fetching the durable message', async () => {
+  const { server, state } = createSseBackend();
+  const base = await listen(server);
+  const client = new BackendApiClient(base, createMemoryTokenStorage(TOKEN));
+  client.setSession({ token: TOKEN, expiresAt: '2030-01-01T00:00:00.000Z' }, USER);
+  try {
+    const frames: ApiChatStreamFrame[] = [];
+    await client.chatStream({ message: 'hi' }, (frame) => frames.push(frame));
+    const types = frames.map((frame) => frame.type);
+    assert.equal(types[0], 'start');
+    assert.equal(types[1], 'token');
+    assert.ok(types.filter((type) => type === 'resume').length >= 1, 'recovery must emit at least one resume frame');
+    assert.equal(types.at(-1), 'done');
+    assert.equal(frames.find((frame) => frame.type === 'resume')?.text, 'partial more');
+    assert.equal(frames.at(-1)?.text, 'partial more done');
+    assert.ok(state.conversationFetches >= 2, 'recovery must poll the durable message until terminal');
+  } finally {
+    await close(server);
+  }
 });
