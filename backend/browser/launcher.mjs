@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, chownSync, closeSync, copyFileSync, existsSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, copyFileSync, existsSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { createConnection } from 'node:net';
 
@@ -23,15 +23,79 @@ const CANDIDATE_BINARIES = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ];
 
-// Resolved on every call (not cached at import) so env overrides take effect
-// even when they are set after this module is loaded.
-function candidateBinaries() {
-  return [process.env.CHROME_BIN, process.env.CHROMIUM_BIN, process.env.BROWSER_BIN, ...CANDIDATE_BINARIES];
+// -----------------------------------------------------------------------------
+// Playwright self-discovery (LAST-RESORT layer).
+//
+// `resolveBrowserBinary()` historically consulted only CHROME_BIN / CHROMIUM_BIN /
+// BROWSER_BIN and a fixed PATH list. That means a deployment which installed the
+// browser through Playwright (`npx playwright install chromium`) could still fail
+// to find it unless the CI/deploy step explicitly exported CHROME_BIN. To make the
+// backend self-sufficient, we scan Playwright's own browser cache as a final
+// fallback. It is deliberately LAST: an explicit operator override always wins,
+// and a missing cache simply returns null so the launcher keeps failing closed
+// (never pretending a browser exists).
+// -----------------------------------------------------------------------------
+
+// Playwright's default cache root per platform (mirrors `playwright`'s own
+// resolution). PLAYWRIGHT_BROWSERS_PATH overrides it.
+export function playwrightCacheRoot(env = process.env) {
+  const configured = env.PLAYWRIGHT_BROWSERS_PATH;
+  if (configured) return configured;
+  if (process.platform === 'win32') {
+    const local = env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local');
+    return path.join(local, 'ms-playwright');
+  }
+  if (process.platform === 'darwin') return path.join(homedir(), 'Library', 'Caches', 'ms-playwright');
+  return path.join(homedir(), '.cache', 'ms-playwright');
 }
 
-function onPath(name) {
-  const extensions = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+// The executable path INSIDE a revisioned Playwright chromium build directory,
+// per platform. Newer Playwright ships `chrome-linux64`; older ships
+// `chrome-linux`. macOS ships `chrome-mac` / `chrome-mac-arm64`.
+function playwrightRelativeBinaries() {
+  if (process.platform === 'win32') return [path.join('chrome-win64', 'chrome.exe'), path.join('chrome-win', 'chrome.exe')];
+  if (process.platform === 'darwin') return [
+    path.join('chrome-mac-arm64', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+    path.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+  ];
+  return [path.join('chrome-linux64', 'chrome'), path.join('chrome-linux', 'chrome')];
+}
+
+// Ordered Playwright chromium candidate paths: every `chromium-<revision>` (and
+// `chromium_headless_shell-<revision>`) build directory, newest revision first,
+// each expanded to the platform's executable path.
+export function playwrightChromiumCandidates(env = process.env) {
+  const root = playwrightCacheRoot(env);
+  let entries;
+  try { entries = readdirSync(root, { withFileTypes: true }); } catch { return []; }
+  const builds = entries
+    .filter((entry) => entry.isDirectory() && /^chromium(_headless_shell)?-\d+$/.test(entry.name))
+    .map((entry) => ({ name: entry.name, revision: Number(entry.name.slice(entry.name.lastIndexOf('-') + 1)) }))
+    .sort((a, b) => b.revision - a.revision);
+  const candidates = [];
+  for (const build of builds) {
+    for (const relative of playwrightRelativeBinaries()) candidates.push(path.join(root, build.name, relative));
+  }
+  return candidates;
+}
+
+// First existing Playwright-managed Chromium, or null. The final fallback layer.
+export function findPlaywrightChromium(env = process.env) {
+  for (const candidate of playwrightChromiumCandidates(env)) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+// Resolved on every call (not cached at import) so env overrides take effect
+// even when they are set after this module is loaded.
+function candidateBinaries(env = process.env) {
+  return [env.CHROME_BIN, env.CHROMIUM_BIN, env.BROWSER_BIN, ...CANDIDATE_BINARIES];
+}
+
+function onPath(name, env = process.env) {
+  const extensions = process.platform === 'win32' ? (env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
+  for (const dir of (env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
     for (const extension of extensions) {
       const candidate = path.join(dir, name + extension);
@@ -41,28 +105,48 @@ function onPath(name) {
   return null;
 }
 
-function firstExistingBinary() {
-  for (const candidate of candidateBinaries()) {
+// The full, ordered candidate list:
+//   1. explicit operator overrides (CHROME_BIN / CHROMIUM_BIN / BROWSER_BIN),
+//   2. bare names resolved on PATH,
+//   3. the fixed well-known install locations,
+//   4. the Playwright browser cache (self-discovery, last resort).
+export function browserBinaryCandidates(env = process.env) {
+  const resolved = [];
+  for (const candidate of candidateBinaries(env)) {
     if (!candidate) continue;
     if (candidate.includes(path.sep)) {
-      if (existsSync(candidate)) return candidate;
+      resolved.push(candidate);
     } else {
       // A bare name must actually resolve on PATH; otherwise the launcher would
       // claim a browser is available and then fail to spawn it.
-      const resolved = onPath(candidate);
-      if (resolved) return resolved;
+      const found = onPath(candidate, env);
+      if (found) resolved.push(found);
     }
+  }
+  resolved.push(...playwrightChromiumCandidates(env));
+  return resolved;
+}
+
+function firstExistingBinary(env = process.env) {
+  for (const candidate of browserBinaryCandidates(env)) {
+    if (candidate && existsSync(candidate)) return candidate;
   }
   return null;
 }
 
 export function browserBinaryAvailable() {
-  return Boolean(firstExistingBinary());
+  return Boolean(firstExistingBinary(process.env));
 }
 
-/** Absolute path to the browser binary that would be launched, or null. */
+/**
+ * Absolute path to the browser binary that would be launched, or null.
+ *
+ * Resolution order: explicit env overrides -> PATH -> fixed install locations ->
+ * the Playwright browser cache (self-discovery). When nothing is found this
+ * returns null so the caller fails closed instead of launching a bogus binary.
+ */
 export function resolveBrowserBinary() {
-  return firstExistingBinary();
+  return firstExistingBinary(process.env);
 }
 
 // Chromium stderr signatures that mean "the sandbox is unusable here" (as
