@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { launchLocalChromium, enableSuidSandbox, isSuidSandboxReady, isElfExecutable, isSafeHelperDirectory } from '../browser/launcher.mjs';
+import {
+  launchLocalChromium,
+  enableSuidSandbox,
+  isSuidSandboxReady,
+  isElfExecutable,
+  isSafeHelperDirectory,
+  playwrightCacheRoot,
+  playwrightChromiumCandidates,
+  findPlaywrightChromium,
+  browserBinaryCandidates,
+  resolveBrowserBinary,
+} from '../browser/launcher.mjs';
 
 /**
  * Guards the AppArmor / user-namespace sandbox handling in the browser launcher.
@@ -163,4 +174,95 @@ test('isSafeHelperDirectory: false for a file and for a writable directory', { s
     await chmod(dir, 0o700).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// -----------------------------------------------------------------------------
+// Playwright self-discovery (the last-resort browser layer).
+//
+// The backend must find a Playwright-installed Chromium on its own, WITHOUT a
+// CI/deploy step exporting CHROME_BIN. These tests build fake Playwright caches
+// (the real layout: <root>/chromium-<revision>/<platform>/chrome) and pin the
+// resolution order: explicit override -> PATH -> fixed paths -> Playwright cache.
+// -----------------------------------------------------------------------------
+
+// The executable path Playwright uses inside a chromium build, for this platform.
+const PW_RELATIVE = process.platform === 'win32'
+  ? path.join('chrome-win64', 'chrome.exe')
+  : process.platform === 'darwin'
+    ? path.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium')
+    : path.join('chrome-linux64', 'chrome');
+
+async function withFakePlaywrightCache(builds, run) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pw-cache-'));
+  const saved = {
+    pw: process.env.PLAYWRIGHT_BROWSERS_PATH,
+    bin: process.env.CHROME_BIN,
+    chromium: process.env.CHROMIUM_BIN,
+    browser: process.env.BROWSER_BIN,
+  };
+  try {
+    for (const build of builds) {
+      const file = path.join(root, build.name, build.relative ?? PW_RELATIVE);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, '#!/bin/sh\n', { mode: 0o755 });
+    }
+    process.env.PLAYWRIGHT_BROWSERS_PATH = root;
+    delete process.env.CHROME_BIN;
+    delete process.env.CHROMIUM_BIN;
+    delete process.env.BROWSER_BIN;
+    return await run(root);
+  } finally {
+    if (saved.pw === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH; else process.env.PLAYWRIGHT_BROWSERS_PATH = saved.pw;
+    if (saved.bin === undefined) delete process.env.CHROME_BIN; else process.env.CHROME_BIN = saved.bin;
+    if (saved.chromium === undefined) delete process.env.CHROMIUM_BIN; else process.env.CHROMIUM_BIN = saved.chromium;
+    if (saved.browser === undefined) delete process.env.BROWSER_BIN; else process.env.BROWSER_BIN = saved.browser;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('playwrightCacheRoot honours PLAYWRIGHT_BROWSERS_PATH and falls back to the platform default', () => {
+  assert.equal(playwrightCacheRoot({ PLAYWRIGHT_BROWSERS_PATH: '/custom/pw' }), '/custom/pw');
+  const fallback = playwrightCacheRoot({});
+  assert.ok(fallback.includes('ms-playwright'), `expected an ms-playwright path, got ${fallback}`);
+});
+
+test('playwrightChromiumCandidates lists the newest revision first and ignores non-chromium builds', async () => {
+  await withFakePlaywrightCache([{ name: 'chromium-1000' }, { name: 'chromium-2000' }, { name: 'firefox-1' }], async (root) => {
+    const candidates = playwrightChromiumCandidates();
+    assert.ok(candidates.length > 0, 'expected candidates');
+    assert.ok(candidates[0].startsWith(path.join(root, 'chromium-2000')), 'newest revision must come first');
+    assert.ok(candidates.every((candidate) => candidate.startsWith(root)), 'every candidate must live under the cache root');
+    assert.ok(!candidates.some((candidate) => candidate.includes('firefox')), 'non-chromium builds are ignored');
+  });
+});
+
+test('findPlaywrightChromium returns the executable inside the newest build', async () => {
+  await withFakePlaywrightCache([{ name: 'chromium-1234' }], async (root) => {
+    assert.equal(findPlaywrightChromium(), path.join(root, 'chromium-1234', PW_RELATIVE));
+  });
+});
+
+test('findPlaywrightChromium returns null for a missing cache (fail closed)', () => {
+  const missing = path.join(os.tmpdir(), `pw-missing-${process.pid}-${Date.now()}`);
+  assert.equal(findPlaywrightChromium({ PLAYWRIGHT_BROWSERS_PATH: missing }), null);
+});
+
+test('browserBinaryCandidates puts an explicit override first and the Playwright cache last', async () => {
+  await withFakePlaywrightCache([{ name: 'chromium-500' }], async (root) => {
+    const override = path.join(root, 'custom-chrome');
+    await writeFile(override, '#!/bin/sh\n', { mode: 0o755 });
+    const candidates = browserBinaryCandidates({ ...process.env, CHROME_BIN: override });
+    assert.equal(candidates[0], override, 'an explicit CHROME_BIN must win');
+    assert.ok(candidates.some((candidate) => candidate.includes('chromium-500')), 'the Playwright cache must be a candidate');
+    assert.ok(candidates.at(-1).startsWith(root), 'the Playwright cache must be the last resort');
+  });
+});
+
+test('resolveBrowserBinary prefers an explicit CHROME_BIN over the Playwright cache', async () => {
+  await withFakePlaywrightCache([{ name: 'chromium-777' }], async (root) => {
+    const override = path.join(root, 'override-chrome');
+    await writeFile(override, '#!/bin/sh\n', { mode: 0o755 });
+    process.env.CHROME_BIN = override;
+    assert.equal(resolveBrowserBinary(), override);
+  });
 });

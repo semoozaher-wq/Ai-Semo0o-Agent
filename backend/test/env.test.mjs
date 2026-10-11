@@ -49,3 +49,20 @@ test('env validation accepts a complete production configuration', () => {
 test('assertEnv throws a classified error on invalid production config', () => {
   assert.throws(() => assertEnv({ NODE_ENV: 'production' }), (error) => error.code === 'ENV_VALIDATION_FAILED' && error.errors.length > 0);
 });
+
+test('env validation accepts a well-formed DATABASE_URL without warnings about it', () => {
+  const result = validateEnv({ NODE_ENV: 'development', DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app?sslmode=require' });
+  assert.equal(result.ok, true);
+  assert.ok(!result.warnings.includes('DATABASE_URL_INVALID'));
+  assert.ok(!result.warnings.includes('DATABASE_URL_UNSUPPORTED_PROTOCOL'));
+});
+
+test('env validation warns (but does not fail) on a malformed or non-postgres DATABASE_URL', () => {
+  const malformed = validateEnv({ NODE_ENV: 'development', DATABASE_URL: 'not a url' });
+  assert.equal(malformed.ok, true, 'a bad optional URL must not take the backend down');
+  assert.ok(malformed.warnings.includes('DATABASE_URL_INVALID'));
+
+  const wrongProtocol = validateEnv({ NODE_ENV: 'development', DATABASE_URL: 'mysql://u:p@host/db' });
+  assert.equal(wrongProtocol.ok, true);
+  assert.ok(wrongProtocol.warnings.includes('DATABASE_URL_UNSUPPORTED_PROTOCOL'));
+});
