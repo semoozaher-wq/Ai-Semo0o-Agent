@@ -1,0 +1,152 @@
+# =============================================================================
+# deploy.yml — Production CD pipeline (Vercel frontend + Render backend).
+# =============================================================================
+#
+# GOAL
+#   Deploy to production ONLY after BOTH release gates are green for the SAME
+#   commit on `master`:
+#       * "CI"      (.github/workflows/ci.yml)      -> tests + audit gate
+#       * "Quality" (.github/workflows/quality.yml) -> SAST, lint, build, E2E
+#
+#   The workflow is chained off `workflow_run`, so it never runs on a pull
+#   request and never deploys a commit whose gates have not passed. When the
+#   gates are not (yet) green, or the deploy hooks are not configured, it is a
+#   SAFE NO-OP: it logs a clear notice and exits 0 instead of failing or
+#   deploying something unverified.
+#
+# REQUIRED SECRETS (Settings -> Secrets and variables -> Actions)
+#   * VERCEL_DEPLOY_HOOK  — a Vercel "Deploy Hook" URL for the frontend project.
+#   * RENDER_DEPLOY_HOOK  — a Render "Deploy Hook" URL for the backend service.
+#   If a hook is absent, that target is skipped (the other still deploys).
+#
+# ONE-TIME PLATFORM SETUP (so the gate is authoritative)
+#   * Vercel:  Project -> Settings -> Git -> disable automatic production
+#              deployments, then create a Deploy Hook and store it above.
+#   * Render:  render.yaml sets `autoDeploy: false`; create a Deploy Hook and
+#              store it above. (Alternatively, in the Render dashboard set
+#              "Auto-Deploy: After CI Checks Pass" — Render then waits for the
+#              GitHub check suite, which includes CI + Quality.)
+# =============================================================================
+name: Deploy
+
+on:
+  workflow_run:
+    # Fires when either gate finishes; the job below then requires BOTH to be
+    # green for the same commit before deploying.
+    workflows: ["CI", "Quality"]
+    types: [completed]
+    branches: [master]
+  # Manual re-deploy of a specific commit (defaults to the selected ref's HEAD).
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (leave empty to use the selected branch HEAD)"
+        required: false
+        default: ""
+
+# Never run two production deploys for the same commit concurrently; do not
+# cancel an in-flight deploy (it may already have triggered a provider hook).
+concurrency:
+  group: deploy-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+# Least privilege: read the repo + read Actions (to query the gate runs).
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gates:
+    name: Verify CI + Quality are green for this commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      deploy: ${{ steps.verify.outputs.deploy }}
+    steps:
+      - name: Resolve the target commit
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.sha }}" ]; then
+            SHA="${{ github.event.inputs.sha }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHA="${{ github.sha }}"
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          fi
+          echo "Resolved target commit: ${SHA}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Require BOTH CI and Quality to have succeeded for this exact commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.resolve.outputs.sha }}"
+          if [ -z "${SHA}" ]; then
+            echo "::warning::No commit resolved; skipping deploy."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          missing=0
+          for wf in ci.yml quality.yml; do
+            # Count completed, SUCCESSFUL runs of this workflow for this exact SHA.
+            count="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?head_sha=${SHA}&status=completed&per_page=100" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            echo "${wf}: ${count} successful completed run(s) for ${SHA}"
+            if [ "${count}" -lt 1 ]; then
+              echo "::warning::${wf} has no successful run for ${SHA}."
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "::notice::Refusing to deploy ${SHA}: both CI and Quality must be green for this exact commit. This is a safe no-op."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Both gates are green for ${SHA}; proceeding to deploy."
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-frontend:
+    name: Deploy frontend (Vercel)
+    needs: gates
+    if: needs.gates.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Trigger Vercel production deployment
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_DEPLOY_HOOK:-}" ]; then
+            echo "::notice::VERCEL_DEPLOY_HOOK is not configured; skipping the Vercel (frontend) deploy. Add the secret to enable gated CD."
+            exit 0
+          fi
+          echo "Triggering Vercel deploy hook for ${{ needs.gates.outputs.sha }}..."
+          curl -fsS -X POST "$VERCEL_DEPLOY_HOOK" > /dev/null
+          echo "Vercel deployment triggered successfully."
+
+  deploy-backend:
+    name: Deploy backend (Render)
+    needs: gates
+    if: needs.gates.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Trigger Render production deployment
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_DEPLOY_HOOK:-}" ]; then
+            echo "::notice::RENDER_DEPLOY_HOOK is not configured; skipping the Render (backend) deploy. Add the secret to enable gated CD."
+            exit 0
+          fi
+          echo "Triggering Render deploy hook for ${{ needs.gates.outputs.sha }}..."
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" > /dev/null
+          echo "Render deployment triggered successfully."

@@ -50,35 +50,27 @@ jobs:
       # google-chrome-stable, then to Playwright Chromium (with OS deps), and
       # hard-fails if none can be resolved. That guarantees the
       # BROWSER_SANDBOX_REQUIRED gate below can never trip on a missing binary.
-      - name: Install Chromium browser (required before sandbox activation)
+      - name: Install and Locate Chromium Browser
         run: |
           set -euo pipefail
-          resolve_bin() {
-            for bin in chromium chromium-browser google-chrome google-chrome-stable; do
-              if command -v "$bin" >/dev/null 2>&1; then command -v "$bin"; return 0; fi
-            done
-            return 1
-          }
-          BIN="$(resolve_bin || true)"
+          for bin in chromium chromium-browser google-chrome google-chrome-stable; do
+            if command -v "$bin" >/dev/null 2>&1; then
+              BIN="$(command -v "$bin")"
+              break
+            fi
+          done
           if [ -z "${BIN:-}" ]; then
-            echo "No preinstalled Chromium found; installing google-chrome-stable..."
-            sudo apt-get update
-            sudo apt-get install -y google-chrome-stable \
-              || npx --yes playwright install --with-deps chromium
-            BIN="$(resolve_bin || true)"
-          fi
-          if [ -z "${BIN:-}" ]; then
-            echo "Resolving Playwright Chromium path..."
-            BIN="$(find "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" \
-              -maxdepth 3 -type f -name chrome -path '*chrome-linux*' 2>/dev/null | head -n1 || true)"
+            echo "Installing Chromium via Playwright..."
+            npx --yes playwright install --with-deps chromium
+            BIN="$(find "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" -maxdepth 3 -type f -name chrome -path '*chrome-linux*' 2>/dev/null | head -n1 || true)"
           fi
           if [ -z "${BIN:-}" ] || [ ! -x "$BIN" ]; then
-            echo "::error::Could not install or resolve a Chromium-based browser binary."
+            echo "::error::Failed to locate a valid Chromium executable."
             exit 1
           fi
-          echo "CHROME_BIN=$BIN" >> "$GITHUB_ENV"
-          echo "CHROMIUM_BIN=$BIN" >> "$GITHUB_ENV"
-          echo "Resolved browser: $BIN"
+          echo "Found Chromium binary at: $BIN"
+          echo "CHROME_BIN=$BIN" >> $GITHUB_ENV
+          echo "CHROMIUM_BIN=$BIN" >> $GITHUB_ENV
 
       # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, so
       # Chromium's namespace sandbox aborts with "No usable sandbox!". Enable
@@ -93,8 +85,9 @@ jobs:
       # strip the values exported to $GITHUB_ENV -- which, for a Playwright-only
       # install (no `google-chrome` on PATH), makes the script report "no browser
       # found" and fail the gate.
-      - name: Enable Chromium SUID sandbox (keeps the sandbox on)
-        run: sudo BROWSER_SANDBOX_REQUIRED=true CHROME_BIN="$CHROME_BIN" CHROMIUM_BIN="$CHROMIUM_BIN" node scripts/enable-browser-sandbox.mjs
+      - name: Enable Chromium SUID sandbox
+        run: |
+          sudo BROWSER_SANDBOX_REQUIRED=true CHROME_BIN="$CHROME_BIN" CHROMIUM_BIN="$CHROMIUM_BIN" node scripts/enable-browser-sandbox.mjs
 
       - name: Run project tests
         run: npm test
