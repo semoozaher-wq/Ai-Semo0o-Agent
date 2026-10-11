@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { browserBinaryAvailable } from '../browser/launcher.mjs';
+import { browserBinaryAvailable, SANDBOX_ERROR_PATTERN } from '../browser/launcher.mjs';
 
 /**
  * End-to-end guard for the real browser E2E (scripts/browser-e2e.mjs).
@@ -25,12 +25,13 @@ const PNG_MAGIC = '89504e470d0a1a0a';
 function runBrowserE2e(outFile, screenshotFile) {
   return new Promise((resolve, reject) => {
     // When the test runs as root (e.g. inside a container) Chromium refuses to
-    // start without --no-sandbox, so the spawned E2E would fail with
-    // BROWSER_EXITED_EARLY. Mirror the red-team test's convention and enable it
-    // for this subprocess only, when root and not already set. The product
-    // default stays opt-in: backend/browser/launcher.mjs only adds --no-sandbox
-    // when BROWSER_NO_SANDBOX is explicitly 'true' (CI runners are non-root and
-    // never need this).
+    // use its sandbox, so the spawned E2E would fail to start. Mirror the
+    // red-team test's convention and allow --no-sandbox for this subprocess only,
+    // when root and not already set. The product default stays opt-in:
+    // backend/browser/launcher.mjs only adds --no-sandbox when BROWSER_NO_SANDBOX
+    // is explicitly 'true'. Non-root hosts keep the sandbox and, when user
+    // namespaces are restricted (AppArmor on Ubuntu 23.10+), fall back to the
+    // SUID sandbox instead of disabling it.
     const env = { ...process.env };
     if (typeof process.getuid === 'function' && process.getuid() === 0 && env.BROWSER_NO_SANDBOX === undefined) {
       env.BROWSER_NO_SANDBOX = 'true';
@@ -49,12 +50,21 @@ function runBrowserE2e(outFile, screenshotFile) {
   });
 }
 
-test('browser e2e: a real browser is launched and driven over CDP', { skip: browserBinaryAvailable() ? false : 'no browser binary configured (set CHROME_BIN/BROWSER_BIN)' }, async () => {
+test('browser e2e: a real browser is launched and driven over CDP', { skip: browserBinaryAvailable() ? false : 'no browser binary configured (set CHROME_BIN/BROWSER_BIN)' }, async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'browser-e2e-test-'));
   const outFile = path.join(dir, 'report.json');
   const screenshotFile = path.join(dir, 'screenshot.png');
   try {
     const { code, stdout, stderr } = await runBrowserE2e(outFile, screenshotFile);
+    // Honest skip: when the host cannot sandbox Chromium (AppArmor restricts
+    // unprivileged user namespaces on Ubuntu 23.10+, and the SUID sandbox helper
+    // is not set up), the browser genuinely cannot start. We never weaken the
+    // sandbox to force a pass -- we skip with the exact reason instead. Enable the
+    // SUID sandbox with: sudo node scripts/enable-browser-sandbox.mjs
+    if (code !== 0 && (SANDBOX_ERROR_PATTERN.test(`${stdout}\n${stderr}`) || /BROWSER_SANDBOX_UNAVAILABLE/.test(`${stdout}\n${stderr}`))) {
+      t.skip('Chromium cannot sandbox here (AppArmor-restricted user namespaces); run: sudo node scripts/enable-browser-sandbox.mjs');
+      return;
+    }
     assert.equal(code, 0, `browser e2e exited ${code}\n${stdout}\n${stderr}`);
     assert.match(stdout, /RESULT: browser-e2e passed=true/);
 
