@@ -24,6 +24,7 @@ import { buildExperienceSnapshot, summarizeExperience, recoveryPriorFromSnapshot
 import { learningSummary } from './agent/learning-loop.mjs';
 import { riskPolicy, degradedCapabilities, validateStartupConfig } from './agent/safety.mjs';
 import { createLLMRouter } from './llm/providers.mjs';
+import { callAIWithAdvancedFallback } from './util/ai-fallback.mjs';
 import { createAgentRunHandler } from './agent/runtime.mjs';
 import { modelCost, normalizeModelId } from './models/catalog.mjs';
 import { isRoutingSentinel } from './models/task-router.mjs';
@@ -66,6 +67,12 @@ import { FORMATS as CREATION_FORMATS, PALETTES as CREATION_PALETTES } from './cr
 
 const SERVICE_VERSION = '2.0.0';
 const SERVICE_STARTED_AT = Date.now();
+
+// The system instruction shared by both chat endpoints (POST /chat and
+// POST /chat/stream). It is sent as the leading `system` message so the primary
+// router honours it directly, and the multi-provider fallback layer extracts it
+// as the fallback model's `system_instruction` — one source of truth, no drift.
+const CHAT_SYSTEM_INSTRUCTION = 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.';
 
 // Structured request logging is opt-in so that development and the test suite stay
 // quiet. Operators enable it with LOG_FORMAT=json (or any LOG_LEVEL) in production.
@@ -418,7 +425,133 @@ async function streamCreationEvents(response, studio, jobId, tenantId, request) 
   }
 }
 
-export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = createLLMRouter(), rateLimiter, costFor = modelCost, modelRouter, secrets } = {}) {
+// ---------------------------------------------------------------------------
+// Multi-provider fallback layer (independent second tier).
+//
+// The primary router (llm/providers.mjs) already fails over between its own
+// providers (OpenAI -> Gemini -> Anthropic) and their models. This wrapper adds
+// a SECOND, INDEPENDENT tier — Groq -> Gemini -> OpenRouter, via
+// util/ai-fallback.mjs — so that when every primary provider/model is exhausted
+// the request still succeeds instead of surfacing an error to the user.
+//
+// It is applied ONCE, in createApp, so every consumer that shares the router
+// (chat endpoints, agent runtime, live tools, creation studio) inherits the
+// fallback automatically. `status()` and `plan()` are passed through untouched
+// so readiness probes and model routing keep reporting the primary providers.
+//
+// Set AI_FALLBACK_DISABLED=1 to opt out (e.g. in tests that assert the primary
+// router's failure behaviour).
+// ---------------------------------------------------------------------------
+
+// Collapse a router-style `messages` array into the (prompt, systemInstruction)
+// pair that callAIWithAdvancedFallback expects. System messages become the
+// system instruction; every other role is rendered into a single transcript so
+// multi-turn context is preserved for the fallback model.
+function flattenMessages(messages) {
+  const systemParts = [];
+  const turns = [];
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || typeof message !== 'object') continue;
+    const content = typeof message.content === 'string'
+      ? message.content
+      : Array.isArray(message.content)
+        ? message.content.map((part) => (typeof part === 'string' ? part : part?.text ?? '')).join('')
+        : '';
+    if (!content) continue;
+    if (message.role === 'system') { systemParts.push(content); continue; }
+    const label = message.role === 'assistant' ? 'Assistant' : message.role === 'tool' ? 'Tool' : 'User';
+    turns.push(`${label}: ${content}`);
+  }
+  return { prompt: turns.join('\n\n'), systemInstruction: systemParts.join('\n\n') };
+}
+
+const describeError = (error) => (error instanceof Error ? error.message : String(error));
+
+function fallbackDisabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.AI_FALLBACK_DISABLED ?? '').trim());
+}
+
+/**
+ * Wrap an LLM router with an independent multi-provider fallback tier.
+ *
+ * @param {object}   router              The primary router (llm/providers.mjs).
+ * @param {Function} [options.fallback]  Fallback caller; defaults to callAIWithAdvancedFallback.
+ * @param {boolean}  [options.enabled]   Disable the tier entirely (defaults to !AI_FALLBACK_DISABLED).
+ * @returns {object} A router-shaped object with the same status/plan/complete/stream surface.
+ */
+export function withMultiProviderFallback(router, { fallback = callAIWithAdvancedFallback, enabled = !fallbackDisabled() } = {}) {
+  if (!enabled || typeof fallback !== 'function') return router;
+
+  async function* fallbackStream(input, primaryError) {
+    const { prompt, systemInstruction } = flattenMessages(input?.messages);
+    if (!prompt.trim()) throw primaryError; // nothing to hand to the fallback
+    console.warn(`[AI Fallback] Primary stream failed before the first token (${describeError(primaryError)}); trying Groq -> Gemini -> OpenRouter.`);
+    const text = await fallback(prompt, systemInstruction);
+    yield { type: 'token', text };
+    yield {
+      type: 'done',
+      text,
+      usage: null,
+      provider: 'fallback',
+      model: input?.model ?? null,
+      requestedModel: input?.model ?? null,
+      substituted: true,
+      fallback: true,
+      fallbackReason: describeError(primaryError),
+    };
+  }
+
+  return {
+    ...router,
+
+    // Observability is unchanged: readiness and /models/status keep describing
+    // the primary providers (the fallback is a transparent safety net).
+    status: (...args) => (typeof router.status === 'function' ? router.status(...args) : []),
+    plan: (...args) => (typeof router.plan === 'function' ? router.plan(...args) : []),
+
+    async complete(input = {}) {
+      try {
+        return await router.complete(input);
+      } catch (primaryError) {
+        const { prompt, systemInstruction } = flattenMessages(input.messages);
+        if (!prompt.trim()) throw primaryError; // nothing to hand to the fallback
+        const toolsNote = Array.isArray(input.tools) && input.tools.length ? ' (tool-calling is unavailable in fallback mode)' : '';
+        console.warn(`[AI Fallback] Primary router exhausted (${describeError(primaryError)}); trying Groq -> Gemini -> OpenRouter${toolsNote}.`);
+        const text = await fallback(prompt, systemInstruction);
+        // Router-shaped result so every caller keeps working unchanged.
+        return {
+          text,
+          toolCalls: [],
+          usage: null,
+          provider: 'fallback',
+          model: input.model ?? null,
+          requestedModel: input.model ?? null,
+          substituted: true,
+          fallback: true,
+          fallbackReason: describeError(primaryError),
+        };
+      }
+    },
+
+    async *stream(input = {}) {
+      let started = false;
+      try {
+        for await (const frame of router.stream(input)) {
+          if (frame?.type === 'token') started = true;
+          yield frame;
+        }
+        return;
+      } catch (primaryError) {
+        // Only recover when NO token was emitted yet: once the client has seen
+        // partial text we cannot cleanly restart on another provider.
+        if (started) throw primaryError;
+        yield* fallbackStream(input, primaryError);
+      }
+    },
+  };
+}
+
+export function createApp({ db = new Database(), queue, codeRunner, liveTools, llm = withMultiProviderFallback(createLLMRouter()), rateLimiter, costFor = modelCost, modelRouter, secrets } = {}) {
   rateLimiter ??= new DistributedRateLimiter(db, { max: Number(process.env.RATE_LIMIT_MAX || 120) });
   // Known secret values are resolved once and shared by the queue (result_json)
   // and the agent runtime (evidence / events / checkpoint) so both persist
@@ -1082,7 +1215,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         let text = '';
         try {
           for await (const frame of llm.stream({ model, messages: [
-            { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
+            { role: 'system', content: CHAT_SYSTEM_INSTRUCTION },
             { role: 'user', content: built.content },
           ] })) {
             if (frame.type === 'token') { text += frame.text; writeFrame('token', { text: frame.text }); }
@@ -1125,7 +1258,7 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           : chat.createConversation({ tenantId: user.tenantId, userId: user.id, title: storedText.slice(0, 80), mode: 'chat' }).id;
         chat.appendMessage({ tenantId: user.tenantId, conversationId, userId: user.id, role: 'user', content: storedText, status: 'complete' });
         const result = await llm.complete({ model, messages: [
-          { role: 'system', content: 'You are the Semo0o assistant. Answer naturally and accurately. Do not execute tools, claim external actions, or provide a medical diagnosis. Reply in Arabic when the user writes Arabic.' },
+          { role: 'system', content: CHAT_SYSTEM_INSTRUCTION },
           { role: 'user', content: built.content },
         ] });
         const chatTokens = Number(result.usage?.totalTokens ?? result.usage?.total_tokens) || 0;
