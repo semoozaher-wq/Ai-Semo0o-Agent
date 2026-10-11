@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { launchLocalChromium, enableSuidSandbox, isSuidSandboxReady } from '../browser/launcher.mjs';
+import { launchLocalChromium, enableSuidSandbox, isSuidSandboxReady, isElfExecutable, isSafeHelperDirectory } from '../browser/launcher.mjs';
 
 /**
  * Guards the AppArmor / user-namespace sandbox handling in the browser launcher.
@@ -14,8 +14,17 @@ import { launchLocalChromium, enableSuidSandbox, isSuidSandboxReady } from '../b
  * NEVER work around that by disabling the sandbox (`--no-sandbox` weakens
  * security); it must surface a distinct, actionable error and prefer Chromium's
  * SUID sandbox instead. These tests use tiny fake "browsers" so they run anywhere.
+ *
+ * The SUID helper is always a native ELF executable, so the fake helpers below
+ * start with the ELF magic number: the launcher refuses to grant setuid-root to a
+ * non-ELF file or to a file in a group/world-writable directory (privilege
+ * escalation), and these tests pin that behaviour.
  */
 const isWindows = process.platform === 'win32';
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+// Minimal ELF header (only the 4-byte magic is inspected by the launcher).
+const ELF_HEADER = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]);
 
 async function withFakeBrowser(body, run) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-test-'));
@@ -48,16 +57,16 @@ test('launcher keeps a generic early exit as BROWSER_EXITED_EARLY (not a sandbox
   });
 });
 
-test('enableSuidSandbox makes the helper root-owned and setuid when privileged (no-op otherwise)', { skip: isWindows ? 'posix shell fake' : false }, async () => {
+test('enableSuidSandbox makes the ELF helper root-owned and setuid when privileged (no-op otherwise)', { skip: isWindows ? 'posix shell fake' : false }, async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-suid-'));
   try {
     const binary = path.join(dir, 'chrome');
     await writeFile(binary, '#!/bin/sh\n', { mode: 0o755 });
     // Some builds ship the helper as `chrome_sandbox`; Chromium expects `chrome-sandbox`.
-    await writeFile(path.join(dir, 'chrome_sandbox'), '#!/bin/sh\n', { mode: 0o755 });
+    await writeFile(path.join(dir, 'chrome_sandbox'), ELF_HEADER, { mode: 0o755 });
     assert.equal(isSuidSandboxReady(binary), false, 'a plain helper is not setuid');
     const ready = enableSuidSandbox(binary);
-    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    if (isRoot) {
       assert.equal(ready, true, 'root can enable the SUID sandbox');
       assert.equal(isSuidSandboxReady(binary), true);
     } else {
@@ -77,12 +86,12 @@ test('helper lookup follows a symlinked launcher to the real binary directory', 
   try {
     const realBinary = path.join(realDir, 'chrome');
     await writeFile(realBinary, '#!/bin/sh\n', { mode: 0o755 });
-    await writeFile(path.join(realDir, 'chrome_sandbox'), '#!/bin/sh\n', { mode: 0o755 });
+    await writeFile(path.join(realDir, 'chrome_sandbox'), ELF_HEADER, { mode: 0o755 });
     const link = path.join(linkDir, 'google-chrome');
     await symlink(realBinary, link);
     assert.equal(isSuidSandboxReady(link), false, 'a plain helper is not setuid yet');
     const ready = enableSuidSandbox(link);
-    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    if (isRoot) {
       assert.equal(ready, true, 'root can enable the SUID sandbox through the symlink');
       assert.equal(isSuidSandboxReady(link), true);
     } else {
@@ -91,5 +100,67 @@ test('helper lookup follows a symlinked launcher to the real binary directory', 
   } finally {
     await rm(realDir, { recursive: true, force: true });
     await rm(linkDir, { recursive: true, force: true });
+  }
+});
+
+test('enableSuidSandbox refuses to elevate a NON-ELF helper (privilege-escalation guard)', { skip: isWindows ? 'posix shell fake' : false }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-nonelf-'));
+  try {
+    const binary = path.join(dir, 'chrome');
+    await writeFile(binary, '#!/bin/sh\n', { mode: 0o755 });
+    // A shell script masquerading as the sandbox helper must never become setuid-root.
+    await writeFile(path.join(dir, 'chrome_sandbox'), '#!/bin/sh\necho pwned\n', { mode: 0o755 });
+    assert.equal(isElfExecutable(path.join(dir, 'chrome_sandbox')), false, 'a shell script is not ELF');
+    assert.equal(enableSuidSandbox(binary), false, 'a non-ELF helper is never elevated');
+    assert.equal(isSuidSandboxReady(binary), false, 'a non-ELF helper is never "ready"');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('enableSuidSandbox refuses a helper in a group/world-writable directory (privilege-escalation guard)', { skip: isWindows ? 'posix shell fake' : false }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-writable-'));
+  try {
+    const binary = path.join(dir, 'chrome');
+    await writeFile(binary, '#!/bin/sh\n', { mode: 0o755 });
+    await writeFile(path.join(dir, 'chrome_sandbox'), ELF_HEADER, { mode: 0o755 });
+    // A lower-privileged user could swap the helper here; never grant it setuid-root.
+    await chmod(dir, 0o777);
+    assert.equal(isSafeHelperDirectory(dir), false, 'a world-writable directory is unsafe');
+    assert.equal(enableSuidSandbox(binary), false, 'no helper is elevated in a writable directory');
+    assert.equal(isSuidSandboxReady(binary), false);
+  } finally {
+    await chmod(dir, 0o700).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('isElfExecutable: true for ELF, false for a script, a directory and a missing path', { skip: isWindows ? 'posix fake' : false }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-elf-'));
+  try {
+    const elf = path.join(dir, 'helper');
+    await writeFile(elf, ELF_HEADER, { mode: 0o755 });
+    const script = path.join(dir, 'script');
+    await writeFile(script, '#!/bin/sh\n', { mode: 0o755 });
+    assert.equal(isElfExecutable(elf), true);
+    assert.equal(isElfExecutable(script), false);
+    assert.equal(isElfExecutable(dir), false);
+    assert.equal(isElfExecutable(path.join(dir, 'nope')), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('isSafeHelperDirectory: false for a file and for a writable directory', { skip: isWindows ? 'posix fake' : false }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'launcher-dir-'));
+  try {
+    const file = path.join(dir, 'file');
+    await writeFile(file, 'x', { mode: 0o644 });
+    assert.equal(isSafeHelperDirectory(file), false, 'a file is not a directory');
+    await chmod(dir, 0o777);
+    assert.equal(isSafeHelperDirectory(dir), false, 'a group/world-writable directory is unsafe');
+  } finally {
+    await chmod(dir, 0o700).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
   }
 });
