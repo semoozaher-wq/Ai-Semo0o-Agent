@@ -3,7 +3,7 @@ import { access, mkdir, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { Database, id, now, hash } from './db/client.mjs';
+import { Database, id, now, hash, resolveDatabaseFile } from './db/client.mjs';
 import { authenticate, authenticateToken, createSession, createUser, revokeSession, requireRole, passwordHash } from './auth/security.mjs';
 import { assertRegistrationAllowed, describeAccessPolicy, emailVerificationRequired } from './auth/access.mjs';
 import { bootstrapFirstOwner } from './auth/bootstrap.mjs';
@@ -37,7 +37,9 @@ import { embeddingStatus } from './memory/embeddings.mjs';
 import { assertEnv } from './config/env.mjs';
 import { resolveBindHost } from './config/bind.mjs';
 import { applyRuntimeDefaults, resolveWritableWorkspaceRoot } from './config/runtime-defaults.mjs';
+import { startCloudPersistence } from './db/cloud-persistence.mjs';
 import { createTelemetry } from './observability/telemetry.mjs';
+import { createSseChannel, parseResumeCursor, logSse } from './sse/stream.mjs';
 import { isMetricsAuthorized, renderPrometheus } from './observability/metrics.mjs';
 import { analyze as selfImproveAnalyze, applyProposal, detectSignals, monitor as selfImproveMonitor, rejectProposal, rollbackProposal } from './self-improve/engine.mjs';
 import { getProposal, listEvents as listSelfImproveEvents, listProposals } from './self-improve/store.mjs';
@@ -347,22 +349,34 @@ function resolveWorkspaceRoot(requested, projectId) {
   return candidate;
 }
 
+const TERMINAL_RUN_STATUSES = Object.freeze(['completed', 'completed_with_warnings', 'failed', 'blocked', 'cancelled', 'unverified']);
+
+// Server-Sent Events for a run timeline. A client that (re)connects after a
+// network drop may send the standard `Last-Event-ID` header (or a `?since=`
+// query param); we resume from that cursor instead of replaying from zero, keep
+// the socket warm with comment heartbeats, and log the full lifecycle so a
+// dropped stream is observable instead of silent.
 async function streamRunEvents(response, db, runId, tenantId, request) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-  let cursor = 0;
-  let closed = false;
-  request.on('close', () => { closed = true; });
-  while (!closed) {
+  const channel = createSseChannel(response, { request, label: 'run-events' });
+  let cursor = parseResumeCursor(request, 0);
+  logSse(console, 'info', 'sse.open', { label: 'run-events', runId, resumeFrom: cursor });
+  channel.startHeartbeat();
+  while (!channel.closed) {
     const events = db.all('SELECT rowid AS sequence, payload_json FROM run_events WHERE run_id=? AND tenant_id=? AND rowid>? ORDER BY rowid ASC', runId, tenantId, cursor);
-    for (const item of events) { cursor = item.sequence; response.write(`id: ${item.sequence}\ndata: ${item.payload_json}\n\n`); }
+    for (const item of events) { cursor = item.sequence; channel.write({ id: item.sequence, data: item.payload_json }); }
     const run = db.get('SELECT status FROM runs WHERE id=? AND tenant_id=?', runId, tenantId);
-    if (!run || ['completed','completed_with_warnings','failed','blocked','cancelled','unverified'].includes(run.status)) {
-      response.write(`event: close\ndata: ${JSON.stringify({ status: run?.status ?? 'not_found' })}\n\n`);
-      response.end();
+    if (!run || TERMINAL_RUN_STATUSES.includes(run.status)) {
+      const status = run?.status ?? 'not_found';
+      logSse(console, 'info', 'sse.close', { label: 'run-events', runId, status, frames: channel.frames, heartbeats: channel.heartbeats });
+      channel.end(status);
+      channel.dispose();
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  logSse(console, 'info', 'sse.disconnect', { label: 'run-events', runId, cursor, frames: channel.frames, heartbeats: channel.heartbeats });
+  channel.dispose();
 }
 
 // Server-Sent Events for a Creation Studio job. Mirrors streamRunEvents but is
@@ -373,29 +387,33 @@ async function streamCreationEvents(response, studio, jobId, tenantId, request) 
   const initial = studio.events(jobId, tenantId, 0);
   if (!initial) throw new Error('CREATION_JOB_NOT_FOUND');
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-  let cursor = 0;
-  let closed = false;
-  request.on('close', () => { closed = true; });
+  const channel = createSseChannel(response, { request, label: 'creation-events' });
+  let cursor = parseResumeCursor(request, 0);
+  logSse(console, 'info', 'sse.open', { label: 'creation-events', jobId, resumeFrom: cursor });
+  channel.startHeartbeat();
   const flush = () => {
     const snapshot = studio.events(jobId, tenantId, cursor);
     if (!snapshot) return false;
-    for (const event of snapshot.events) { cursor = event.seq; response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`); }
+    for (const event of snapshot.events) { cursor = event.seq; channel.write({ id: event.seq, data: JSON.stringify(event) }); }
     return true;
   };
-  const unsubscribe = studio.subscribe(jobId, () => { if (!closed) flush(); }, tenantId) || (() => {});
+  const unsubscribe = studio.subscribe(jobId, () => { if (!channel.closed) flush(); }, tenantId) || (() => {});
   try {
     flush();
-    while (!closed) {
+    while (!channel.closed) {
       const job = studio.get(jobId, tenantId);
       if (!job || CREATION_TERMINAL_STATES.has(job.status)) {
         flush();
-        response.write(`event: close\ndata: ${JSON.stringify({ status: job?.status ?? 'not_found' })}\n\n`);
-        response.end();
+        const status = job?.status ?? 'not_found';
+        logSse(console, 'info', 'sse.close', { label: 'creation-events', jobId, status, frames: channel.frames, heartbeats: channel.heartbeats });
+        channel.end(status);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
+    logSse(console, 'info', 'sse.disconnect', { label: 'creation-events', jobId, cursor, frames: channel.frames, heartbeats: channel.heartbeats });
   } finally {
+    channel.dispose();
     unsubscribe();
   }
 }
@@ -1047,7 +1065,17 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
         // sweeps it to `interrupted` for retry — no silent data loss.
         const assistantMessage = chat.appendMessage({ tenantId: user.tenantId, conversationId, role: 'assistant', content: '', status: 'streaming', model });
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-        const writeFrame = (event, data) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        // The stream is wrapped in a channel that (a) numbers every frame with an
+        // `id:` so a client can resume, (b) emits comment heartbeats so an idle
+        // proxy never reaps the socket, and (c) turns writes into no-ops once the
+        // client has gone away. Crucially a client disconnect does NOT abort the
+        // generation: the full reply is still produced and persisted below, so a
+        // reconnecting client can recover it (resume-by-fetch) with zero loss.
+        const channel = createSseChannel(response, { request, label: 'chat-stream' });
+        let seq = 0;
+        const writeFrame = (event, data) => channel.write({ id: ++seq, event, data });
+        logSse(console, 'info', 'sse.open', { label: 'chat-stream', conversationId, assistantMessageId: assistantMessage.id, model });
+        channel.startHeartbeat();
         writeFrame('start', { conversationId, userMessageId: userMessage.id, assistantMessageId: assistantMessage.id });
         let usage = null;
         let provider = null;
@@ -1065,14 +1093,17 @@ export function createApp({ db = new Database(), queue, codeRunner, liveTools, l
           if (streamTokens > 0 || streamCost > 0) consumeQuota(db, user.tenantId, { tokens: streamTokens, costUsd: streamCost });
           chat.updateMessage({ tenantId: user.tenantId, messageId: assistantMessage.id, patch: { content: text, status: 'complete', provider, usage } });
           db.run('INSERT INTO audit_logs(id,tenant_id,action,resource_type,resource_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)', id('audit'), user.tenantId, 'chat.stream.completed', 'chat', user.id, JSON.stringify({ conversationId, provider, model, usage, chars: text.length }), now());
+          logSse(console, 'info', 'sse.close', { label: 'chat-stream', conversationId, assistantMessageId: assistantMessage.id, status: 'complete', chars: text.length, frames: channel.frames, heartbeats: channel.heartbeats, clientGone: channel.closed });
           writeFrame('done', { conversationId, assistantMessageId: assistantMessage.id, provider, usage, chars: text.length });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           // Preserve the partial text and record the failure so the client can retry.
           chat.updateMessage({ tenantId: user.tenantId, messageId: assistantMessage.id, patch: { content: text, status: 'error', error: errorMessage } });
+          logSse(console, 'error', 'sse.error', { label: 'chat-stream', conversationId, assistantMessageId: assistantMessage.id, error: errorMessage, chars: text.length, clientGone: channel.closed });
           writeFrame('error', { conversationId, assistantMessageId: assistantMessage.id, error: errorMessage });
         } finally {
-          response.end();
+          channel.end();
+          channel.dispose();
         }
         return;
       }
@@ -1518,7 +1549,14 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   // production secret check below stays fully enforced.
   applyRuntimeDefaults();
   assertEnv();
-  const db = new Database();
+  // Resolve the SQLite path WITHOUT opening it, so a durable cloud snapshot can be
+  // restored into an empty (freshly redeployed) container BEFORE the database is
+  // opened. When DATABASE_URL is unset, or the optional `pg` driver is absent, or
+  // the cloud is unreachable, this is a safe no-op and the backend boots on local
+  // SQLite exactly as before.
+  const databaseFile = resolveDatabaseFile();
+  const cloud = await startCloudPersistence({ databaseFile });
+  const db = new Database(databaseFile);
   // Optional first-owner bootstrap from environment variables. This lets a host
   // like Render create the very first account from the dashboard (no Shell), and
   // is a strict no-op unless BOOTSTRAP_ADMIN_EMAIL/PASSWORD are set AND the
@@ -1570,11 +1608,22 @@ if (process.argv[1]?.endsWith('backend/server.mjs')) {
   // FORCES 0.0.0.0 on Render (never 127.0.0.1/localhost) and whenever PORT is set;
   // only a plain local run keeps the loopback default.
   const host = resolveBindHost();
-  const shutdown = () => { app.scheduler.stop(); app.queue.stop(); app.server.close(() => db.close()); };
+  const shutdown = () => {
+    app.scheduler.stop();
+    app.queue.stop();
+    app.server.close(() => {
+      // Flush one final cloud snapshot before closing the database, so a graceful
+      // redeploy (Render sends SIGTERM) never loses the last writes. Best-effort:
+      // the process must still exit if the network is unavailable.
+      Promise.resolve(cloud.stop()).catch(() => {}).finally(() => db.close());
+    });
+  };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
   app.server.listen(port, host, () => {
     console.log(`backend listening on ${host}:${port}`);
     console.log(`backend database: ${db.file}`);
+    if (cloud.enabled) console.log(`backend cloud persistence: enabled (${cloud.config?.redacted ?? 'configured'})`);
+    else console.log(`backend cloud persistence: disabled (${cloud.reason})`);
   });
 }
