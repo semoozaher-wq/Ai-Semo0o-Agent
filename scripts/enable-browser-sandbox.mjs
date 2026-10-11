@@ -17,15 +17,32 @@
  * Run it with the privilege needed to chown/chmod the helper, e.g.:
  *   sudo node scripts/enable-browser-sandbox.mjs
  *
- * Exit codes: 0 = sandbox enabled (or already enabled); 1 = no browser found or
- * the helper could not be enabled (usually: not run as root).
+ * Exit codes:
+ *   0 = the SUID sandbox is enabled (or was already enabled); OR no browser is
+ *       installed at all and BROWSER_SANDBOX_REQUIRED is not set. The latter is a
+ *       DOCUMENTED no-op (there is nothing to sandbox; the browser smoke/E2E
+ *       steps self-skip), not a masked failure.
+ *   1 = a browser IS present but the helper could not be enabled (usually: not
+ *       run as root, a non-ELF/world-writable helper, or no privilege to
+ *       chown/chmod); OR no browser is present while BROWSER_SANDBOX_REQUIRED is
+ *       set (used by CI where a browser is guaranteed to be installed).
  */
 import { resolveBrowserBinary, isSuidSandboxReady, enableSuidSandbox } from '../backend/browser/launcher.mjs';
 
+const required = /^(1|true|yes|on)$/i.test(String(process.env.BROWSER_SANDBOX_REQUIRED ?? '').trim());
+
 const binary = resolveBrowserBinary();
 if (!binary) {
-  process.stderr.write('No Chromium/Chrome binary found (set CHROME_BIN/CHROMIUM_BIN/BROWSER_BIN).\n');
-  process.exit(1);
+  if (required) {
+    process.stderr.write(
+      'No Chromium/Chrome binary found, but BROWSER_SANDBOX_REQUIRED is set. Install a browser or set CHROME_BIN/CHROMIUM_BIN/BROWSER_BIN.\n',
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    'SKIPPED: no Chromium/Chrome binary found; nothing to sandbox (set BROWSER_SANDBOX_REQUIRED=1 to fail instead).\n',
+  );
+  process.exit(0);
 }
 if (isSuidSandboxReady(binary)) {
   process.stdout.write(`SUID sandbox already enabled for ${binary}\n`);
@@ -36,6 +53,6 @@ if (enableSuidSandbox(binary)) {
   process.exit(0);
 }
 process.stderr.write(
-  `Could not enable the SUID sandbox for ${binary}. Re-run with sudo/root: the helper must be root-owned and setuid (mode 4755).\n`,
+  `Could not enable the SUID sandbox for ${binary}. Re-run with sudo/root: the helper must be a root-owned, setuid (mode 4755) ELF binary inside a root-owned directory.\n`,
 );
 process.exit(1);
