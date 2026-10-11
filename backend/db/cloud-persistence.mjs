@@ -119,8 +119,12 @@ export async function loadDefaultDriver(logger = console) {
   try {
     const mod = await import('pg');
     return mod.default ?? mod;
-  } catch {
-    logger.warn?.('cloud-db: PostgreSQL driver "pg" is not installed; cloud persistence is disabled (local SQLite is unaffected). Install it with `npm install pg` to enable durable cloud snapshots.');
+  } catch (error) {
+    logger.warn?.(
+      'cloud-db: PostgreSQL driver "pg" could not be loaded '
+        + `(${error?.code ?? error?.message ?? 'unknown error'}); cloud persistence is disabled `
+        + '(local SQLite is unaffected). Install it with `npm install pg` to enable durable cloud snapshots.',
+    );
     return null;
   }
 }
