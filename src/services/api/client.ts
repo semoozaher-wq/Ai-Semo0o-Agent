@@ -1,5 +1,5 @@
 import { resolveBackendUrl } from './backend-url';
-import { consumeSse } from './sse';
+import { consumeSse, streamWithReconnect, isAbortError, defaultSleep } from './sse';
 import { restoreSessionWith } from './session-restore';
 import type { RestoreResult } from './session-restore';
 import { createAccountApi } from '../account/api';
@@ -496,21 +496,83 @@ class BackendApiClient {
   // normalised into an `ApiChatStreamFrame` (`start` | `token` | `done` | `error`).
   // The caller accumulates `token` frames; `start` carries the durable
   // conversation/assistant ids so the client can reconcile after a reload.
+  //
+  // RESILIENCE: if the socket drops mid-answer, the backend keeps generating and
+  // persists the FULL reply regardless, so we recover it by fetching the durable
+  // assistant message (`recoverChatStream`) rather than re-POSTing — which would
+  // start a second turn. The recovered text is delivered as a `resume` frame that
+  // REPLACES the caller's buffer, so no fragment is lost or duplicated.
   async chatStream(
     input: { message: string; model?: string; conversationId?: string; attachmentIds?: string[] },
     onFrame: (frame: ApiChatStreamFrame) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     if (!this.enabled) throw new Error('BACKEND_API_NOT_CONFIGURED');
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/stream`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
-      body: JSON.stringify(input),
-      ...(signal === undefined ? {} : { signal }),
-    });
-    await consumeSse(response, ({ event, data }) => {
-      onFrame({ type: event, ...(data as Record<string, unknown>) } as ApiChatStreamFrame);
-    });
+    const url = `${this.baseUrl.replace(/\/$/, '')}/chat/stream`;
+    let started: { conversationId?: string; assistantMessageId?: string } = {};
+    let terminal = false;
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+        body: JSON.stringify(input),
+        ...(signal === undefined ? {} : { signal }),
+      });
+      await consumeSse(response, (event) => {
+        if (event.event === 'start') started = event.data as { conversationId?: string; assistantMessageId?: string };
+        if (event.event === 'done' || event.event === 'error') terminal = true;
+        onFrame({ type: event.event, ...(event.data as Record<string, unknown>) } as ApiChatStreamFrame);
+      });
+    } catch (error) {
+      // A client-side abort is intentional (the user pressed stop) -> propagate.
+      if (signal?.aborted || isAbortError(error)) throw error;
+      // The socket dropped before we knew the durable ids -> nothing to reconcile.
+      if (!started.conversationId || !started.assistantMessageId) throw error;
+      await this.recoverChatStream(started.conversationId, started.assistantMessageId, onFrame, signal);
+      return;
+    }
+    // The stream ended without a terminal frame (e.g. a proxy closed a 200
+    // stream): recover from the durable row so the answer still completes.
+    if (!terminal && started.conversationId && started.assistantMessageId) {
+      await this.recoverChatStream(started.conversationId, started.assistantMessageId, onFrame, signal);
+    }
+  }
+  /**
+   * Resume-by-fetch: poll the durable assistant message until it reaches a
+   * terminal status, emitting a `resume` frame with the FULL text each time so
+   * the caller's buffer is replaced (never appended). Bounded by `maxAttempts`
+   * with exponential backoff; a transient fetch failure just retries.
+   */
+  private async recoverChatStream(
+    conversationId: string,
+    assistantMessageId: string,
+    onFrame: (frame: ApiChatStreamFrame) => void,
+    signal?: AbortSignal,
+    { maxAttempts = 12, baseDelayMs = 400, maxDelayMs = 4_000 }: { maxAttempts?: number; baseDelayMs?: number; maxDelayMs?: number } = {},
+  ): Promise<void> {
+    let attempt = 0;
+    let delay = baseDelayMs;
+    for (;;) {
+      if (signal?.aborted) return;
+      attempt += 1;
+      let message: { id: string; content: string; status: string; error?: string | null } | undefined;
+      try {
+        const conversation = await this.request<{ messages: { id: string; content: string; status: string; error?: string | null }[] }>(`/conversations/${encodeURIComponent(conversationId)}`);
+        message = conversation.messages.find((item) => item.id === assistantMessageId);
+      } catch {
+        if (signal?.aborted || attempt >= maxAttempts) return;
+        await defaultSleep(delay, signal);
+        delay = Math.min(maxDelayMs, delay * 2);
+        continue;
+      }
+      if (!message) return;
+      onFrame({ type: 'resume', conversationId, assistantMessageId, text: message.content, status: message.status, chars: message.content.length } as ApiChatStreamFrame);
+      if (message.status === 'complete') { onFrame({ type: 'done', conversationId, assistantMessageId, text: message.content, chars: message.content.length } as ApiChatStreamFrame); return; }
+      if (message.status === 'error' || message.status === 'interrupted') { onFrame({ type: 'error', conversationId, assistantMessageId, error: message.error ?? message.status } as ApiChatStreamFrame); return; }
+      if (attempt >= maxAttempts) { onFrame({ type: 'done', conversationId, assistantMessageId, text: message.content, chars: message.content.length } as ApiChatStreamFrame); return; }
+      await defaultSleep(delay, signal);
+      delay = Math.min(maxDelayMs, delay * 2);
+    }
   }
   async listConversations(): Promise<{ conversations: ApiChatConversation[] }> { return this.request<{ conversations: ApiChatConversation[] }>('/conversations'); }
   async getRecoverableChats(): Promise<{ conversations: ApiRecoverableConversation[] }> { return this.request<{ conversations: ApiRecoverableConversation[] }>('/chat/recoverable'); }
@@ -565,8 +627,17 @@ class BackendApiClient {
   async pause(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/pause`, { method: 'POST' }); }
   async resume(runId: string): Promise<Record<string, unknown>> { return this.request(`/runs/${encodeURIComponent(runId)}/resume`, { method: 'POST' }); }
   async streamEvents(runId: string, onEvent: (event: ApiEvent) => void, signal?: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`, { headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
-    await consumeSse(response, ({ data }) => onEvent(data as ApiEvent));
+    const url = `${this.baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(runId)}/events`;
+    await streamWithReconnect({
+      signal,
+      // Resume from the last event id after a drop so no timeline event is lost.
+      connect: (lastEventId) => fetch(url, {
+        headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...(lastEventId ? { 'last-event-id': lastEventId } : {}) },
+        ...(signal === undefined ? {} : { signal }),
+      }),
+      isTerminal: (event) => event.event === 'close',
+      onEvent: (event) => onEvent(event.data as ApiEvent),
+    });
   }
   // --- Creation Studio -----------------------------------------------------
   async getCreationCapabilities(): Promise<ApiCreationCapabilities> { return this.request<ApiCreationCapabilities>('/creation/capabilities'); }
@@ -614,8 +685,16 @@ class BackendApiClient {
     return this.request<ApiRealVideoResult>('/creation/video/generate', { method: 'POST', body: JSON.stringify(input) });
   }
   async streamCreationEvents(id: string, onEvent: (event: ApiCreationEvent) => void, signal?: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/events`, { headers: { accept: 'text/event-stream', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, ...(signal === undefined ? {} : { signal }) });
-    await consumeSse(response, ({ data }) => onEvent(data as ApiCreationEvent));
+    const url = `${this.baseUrl.replace(/\/$/, '')}/creation/jobs/${encodeURIComponent(id)}/events`;
+    await streamWithReconnect({
+      signal,
+      connect: (lastEventId) => fetch(url, {
+        headers: { accept: 'text/event-stream', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...(lastEventId ? { 'last-event-id': lastEventId } : {}) },
+        ...(signal === undefined ? {} : { signal }),
+      }),
+      isTerminal: (event) => event.event === 'close',
+      onEvent: (event) => onEvent(event.data as ApiCreationEvent),
+    });
   }
 }
 
