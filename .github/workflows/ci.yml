@@ -44,10 +44,12 @@ jobs:
       # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, so
       # Chromium's namespace sandbox aborts with "No usable sandbox!". Enable
       # Chromium's SUID sandbox (a REAL sandbox) instead of weakening security
-      # with --no-sandbox. Best-effort: a no-op when the helper is already setuid
-      # or no browser is installed (the browser E2E then skips honestly).
+      # with --no-sandbox. The step is NOT masked with `|| true`: a browser IS
+      # present on the runner, so a failure to enable the sandbox must fail CI
+      # rather than silently ship an unsandboxed browser. The script itself is a
+      # documented no-op (exit 0) only when no browser is installed at all.
       - name: Enable Chromium SUID sandbox (keeps the sandbox on)
-        run: sudo node scripts/enable-browser-sandbox.mjs || true
+        run: sudo node scripts/enable-browser-sandbox.mjs
 
       - name: Run project tests
         run: npm test
