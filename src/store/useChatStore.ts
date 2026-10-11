@@ -90,6 +90,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           if (frame.type === 'start' && typeof frame.conversationId === 'string') {
             const backendConversationId = frame.conversationId;
             set((state) => ({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, backendId: backendConversationId } : item) }));
+          } else if (frame.type === 'resume' && typeof frame.text === 'string') {
+            // Resume-by-fetch after a dropped socket: the backend persisted the
+            // FULL reply, so REPLACE our buffer (never append) to avoid dupes.
+            streamed = frame.text;
+            patchMessage(conversationId, assistantId, { content: streamed, status: 'streaming' });
           } else if (frame.type === 'token' && typeof frame.text === 'string') {
             streamed += frame.text;
             patchMessage(conversationId, assistantId, { content: streamed, status: 'streaming' });
