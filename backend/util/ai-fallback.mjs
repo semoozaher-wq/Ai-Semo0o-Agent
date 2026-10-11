@@ -1,31 +1,26 @@
-// ai-fallback.mjs
+// backend/util/ai-fallback.mjs
 // ---------------------------------------------------------------------------
 // Multi-provider AI fallback: Groq -> Gemini -> OpenRouter (first configured wins).
 //
-// Hardened version. What changed vs. the original snippet:
-//   1. MODEL FIX (critical): the original used models that Google/Groq have
-//      SHUT DOWN, so every call returned HTTP 404:
-//        - Groq  `llama-3.3-70b-versatile`  -> shut down 2026-08-16
-//          replacement: `openai/gpt-oss-120b`
-//        - Gemini `gemini-1.5-flash`         -> shut down 2025-09-29
-//          replacement: `gemini-3.5-flash-lite` (current stable Flash-Lite)
-//      Models are now overridable via env (GROQ_MODEL / GEMINI_MODEL /
-//      OPENROUTER_MODEL) so a future shutdown is a config change, not a code fix.
-//   2. RETRY + BACKOFF: transient failures (408/409/425/429/5xx) are retried per
-//      provider with exponential backoff, honouring the server's `Retry-After`
-//      header and Gemini's `RetryInfo.retryDelay`. Auth/bad-request errors are
-//      NOT retried (they would fail identically).
-//   3. TIMEOUT: every request is bounded (default 20s) via AbortController so a
-//      hung provider can never stall the server.
-//   4. SECRETS: keys come ONLY from process.env. The Gemini key travels in the
-//      `x-goog-api-key` header (never in the URL/query string), so it cannot
-//      leak into logs or error messages.
-//   5. DIAGNOSTICS: errors are truncated and a structured per-provider failure
-//      list is attached to the final error.
+// This is the independent, second-tier provider chain used by the server when
+// the primary LLM router (llm/providers.mjs: OpenAI/Gemini/Anthropic) exhausts
+// every one of its providers/models. It is wired into the server by
+// `withMultiProviderFallback` in server.mjs, so every consumer (chat, agent
+// runtime, live tools, creation studio) benefits automatically.
 //
-// Usage:
-//   import { callAIWithAdvancedFallback } from './ai-fallback.mjs';
-//   const text = await callAIWithAdvancedFallback('Hello', 'You are helpful.');
+// Hardening notes:
+//   1. MODEL SAFETY: models are overridable via env (GROQ_MODEL / GEMINI_MODEL /
+//      OPENROUTER_MODEL) so a future provider shutdown is a config change, not a
+//      code fix. Defaults are current, served models:
+//        - Groq       : openai/gpt-oss-120b   (replaces llama-3.3-70b-versatile)
+//        - Gemini     : gemini-3.5-flash-lite (replaces gemini-1.5-flash)
+//        - OpenRouter : mistralai/mistral-7b-instruct:free
+//   2. RETRY + BACKOFF: transient failures (408/409/425/429/5xx) are retried per
+//      provider with exponential backoff, honouring `Retry-After` and Gemini's
+//      `RetryInfo.retryDelay`. Auth/bad-request errors are never retried.
+//   3. TIMEOUT: every request is bounded via AbortController.
+//   4. SECRETS: keys come ONLY from process.env; the Gemini key travels in the
+//      `x-goog-api-key` header (never in the URL/query string).
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = Math.max(1_000, Number(process.env.AI_TIMEOUT_MS ?? 20_000));
@@ -79,7 +74,6 @@ function buildProviders() {
       name: 'Groq',
       key: process.env.GROQ_API_KEY,
       url: 'https://api.groq.com/openai/v1/chat/completions', // OpenAI-compatible
-      // llama-3.3-70b-versatile was shut down 2026-08-16 -> gpt-oss-120b.
       model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
       headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }),
       body: (model, prompt, systemInstruction) => ({
@@ -94,7 +88,6 @@ function buildProviders() {
     {
       name: 'Gemini',
       key: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
-      // gemini-1.5-flash was shut down 2025-09-29 -> current Flash-Lite.
       model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
       url: (model) =>
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -111,8 +104,6 @@ function buildProviders() {
       name: 'OpenRouter',
       key: process.env.OPENROUTER_API_KEY,
       url: 'https://openrouter.ai/api/v1/chat/completions',
-      // OpenRouter `:free` slugs rotate frequently — set OPENROUTER_MODEL explicitly
-      // and verify it against https://openrouter.ai/models?max_price=0
       model: process.env.OPENROUTER_MODEL || 'mistralai/mistral-7b-instruct:free',
       headers: (key) => ({
         Authorization: `Bearer ${key}`,
@@ -188,6 +179,14 @@ async function requestProvider(provider, prompt, systemInstruction) {
   throw lastError ?? new Error('AI_REQUEST_FAILED');
 }
 
+/**
+ * Call the first configured AI provider that answers, in order
+ * Groq -> Gemini -> OpenRouter. Throws only when every configured provider fails.
+ *
+ * @param {string} prompt            The user prompt.
+ * @param {string} [systemInstruction] Optional system instruction / persona.
+ * @returns {Promise<string>} The model's text reply.
+ */
 export async function callAIWithAdvancedFallback(prompt, systemInstruction = '') {
   const providers = buildProviders().filter((provider) => provider.key);
 
